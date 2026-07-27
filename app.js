@@ -37,6 +37,13 @@ const state = {
 const raw = await (await fetch("data/scan.json")).json()
 const scanTime = new Date(raw.generatedAt).getTime()
 
+// llm summaries are optional — the ui degrades to first-prompt snippets without them
+const summaries = await fetch("data/summaries.json")
+  .then((r) => (r.ok ? r.json() : null))
+  .catch(() => null)
+const sessSummary = (id) => summaries?.sessions?.[id]
+const daySummary = (date, project) => summaries?.days?.[`${date}|${project}`]
+
 function normalizeCwd(cwd) {
   if (!cwd) return "(unknown)"
   let p = cwd.replace(/^\/Users\/[^/]+\//, "")
@@ -275,7 +282,7 @@ function renderDays() {
         const rowKey = `${date}|${project}`
         const open = state.openRows.has(rowKey)
         const detail = open
-          ? `<div class="proj-detail">${[...data.sessions.entries()]
+          ? `<div class="proj-detail">${dayNote(date, project)}${[...data.sessions.entries()]
               .sort((a, b) => a[1].min - b[1].min)
               .map(([idx, span]) => sessLine(sessions[idx], span))
               .join("")}</div>`
@@ -315,11 +322,20 @@ function renderDays() {
 }
 
 function sessLine(s, span) {
+  const sum = sessSummary(s.id)
+  const text = sum ? esc(sum) : s.firstPrompt ? esc(s.firstPrompt) : "<em>no prompt captured</em>"
+  const hover = sum && s.firstPrompt ? ` title="opening prompt: ${esc(s.firstPrompt)}"` : ""
   return `<div class="sess">
     <span class="sess-time">${fmtClock(span.min)} – ${fmtClock(span.max)}</span>
     <span class="sess-src">${s.source === "claude" ? "claude" : "codex"}</span>
-    <span class="sess-prompt">${s.firstPrompt ? esc(s.firstPrompt) : "<em>no prompt captured</em>"}</span>
+    <span class="sess-prompt${sum ? " is-summary" : ""}"${hover}>${text}</span>
   </div>`
+}
+
+// per-project day rollup, shown above the session list when the summarizer has run
+function dayNote(date, project) {
+  const sum = daySummary(date, project)
+  return sum ? `<p class="day-summary">${esc(sum)}</p>` : ""
 }
 
 // ---------- project detail view ----------
@@ -360,6 +376,7 @@ function renderProject() {
           <span class="day-date">${label}</span><span class="day-dow">${dow}</span>
           <span class="day-stats"><span><b>${fmtDur(f)}</b> you</span><span><b>${fmtDur(data.all.size)}</b> agents</span></span>
         </div>
+        ${dayNote(date, project)}
         ${svg}
         <div>${sess}</div>
       </div>`
@@ -553,7 +570,10 @@ function renderThreads() {
     return `<div class="thread-card">
       <span class="proj-name proj-link" data-open-project="${esc(c.project)}"><span class="dot" style="background:${engColor(eng)}"></span>${esc(dispName(c.project))}</span>
       <div class="thread-when">${fmtAgo(c.latest.end)}${note}</div>
-      ${c.latest.firstPrompt ? `<div class="thread-snippet">${esc(c.latest.firstPrompt)}</div>` : ""}
+      ${(() => {
+        const snip = sessSummary(c.latest.id) ?? c.latest.firstPrompt
+        return snip ? `<div class="thread-snippet">${esc(snip)}</div>` : ""
+      })()}
     </div>`
   }
 

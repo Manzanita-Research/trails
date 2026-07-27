@@ -22,6 +22,8 @@ A working prototype on real data:
   - **Threads** — in motion / waiting on you / resting / dormant, plus a divergence pocket for catching ideas mid-thread.
 - Triage lives in the "Sort projects" panel: projects auto-file by repo org, reassign to engagements as needed. Assignments persist in localStorage.
 
+- `scripts/summarize.ts` — an Effect pipeline that turns each session into a one-line contribution summary (Kimi K3 on Workers AI, through Cloudflare AI Gateway), then joins sessions into per-project day rollups. Incremental — reruns only pay for new sessions. The UI picks up `data/summaries.json` automatically and falls back to first-prompt snippets without it.
+
 Run it:
 
 ```bash
@@ -29,6 +31,16 @@ bun scripts/scan.ts && bun scripts/serve.ts
 ```
 
 Then open http://localhost:7412.
+
+To enable summaries, create an AI Gateway in the Cloudflare dash (AI → AI Gateway), make an API token with Workers AI + AI Gateway permissions, and put these in `.env`:
+
+```
+TRAILS_CF_ACCOUNT_ID=...
+TRAILS_CF_GATEWAY=...
+TRAILS_CF_TOKEN=...
+```
+
+Then `bun scripts/summarize.ts` (try `--limit 20` first, `--dry` prints a digest without calling the API).
 
 ## Where it's going
 

@@ -122,6 +122,8 @@ function cleanSnippet(text: string): string {
 interface SessionMeta {
   id: string
   source: "claude" | "codex"
+  // absolute path to the source jsonl, so the summarizer can reread it without re-discovery
+  path: string
   cwd: string | null
   branch: string | null
   start: string | null
@@ -143,6 +145,7 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
   const meta: SessionMeta = {
     id,
     source,
+    path: filePath,
     cwd: null,
     branch: null,
     start: null,

@@ -221,6 +221,16 @@ button { font: inherit; color: inherit; }
 }
 .sess-prompt { color: var(--ink-2); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sess-prompt em { color: var(--muted); font-style: italic; }
+.sess-prompt.is-summary { color: var(--ink); white-space: normal; line-height: 1.45; }
+.day-summary {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  max-width: 72ch;
+  margin: 2px 0 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--baseline);
+}
 
 /* ---------- project detail ---------- */
 
