@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "trails",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["scripts/serve.ts"],
+      "port": 7412
+    }
+  ]
+}
