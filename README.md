@@ -13,34 +13,29 @@ A memory system for parallel, agent-heavy, ADHD-shaped work. Not a time tracker 
 
 ## What exists now
 
-A working prototype on real data:
+A working app on real data — Vite + React frontend, a Cloudflare Worker for inference, Effect pipelines for the data work:
 
-- `scripts/scan.ts` — walks `~/.claude/projects` and `~/.codex/sessions`, emits metadata-only JSON (per-minute activity, user-event minutes, cwd, branch, first prompt snippet — never transcript bodies). ~500 sessions in ~25s.
-- `index.html` / `app.js` / `styles.css` — three views over the scan:
+- `scripts/scan.ts` — walks `~/.claude/projects` and `~/.codex/sessions`, emits metadata-only JSON (per-minute activity, user-event minutes, cwd, branch, first prompt snippet — never transcript bodies) to `public/data/scan.json`. ~500 sessions in ~25s.
+- `src/` — the React app, three views over the scan:
   - **Days** — one card per human-shaped day: parallel project lanes, solid marks where you were present, pale wash where agents ran alone.
   - **Week** — attention-hours per engagement rolled into day-credits (¼ ≥ 1h, ½ ≥ 2.5h, full ≥ 5.5h), the way billing actually works.
   - **Threads** — in motion / waiting on you / resting / dormant, plus a divergence pocket for catching ideas mid-thread.
-- Triage lives in the "Sort projects" panel: projects auto-file by repo org, reassign to engagements as needed. Assignments persist in localStorage.
-
-- `scripts/summarize.ts` — an Effect pipeline that turns each session into a one-line contribution summary (Kimi K3 on Workers AI, through Cloudflare AI Gateway), then joins sessions into per-project day rollups. Incremental — reruns only pay for new sessions. The UI picks up `data/summaries.json` automatically and falls back to first-prompt snippets without it.
+- Triage lives in the "Sort projects" panel: projects auto-file by repo org, reassign to engagements as needed. Assignments, renames, and settings persist in localStorage.
+- `worker/index.ts` — a Worker with a Workers AI binding (`env.AI`). `POST /api/summarize` takes `{system, user}` and runs Kimi K2.5 (`@cf/moonshotai/kimi-k2.5`). No API keys anywhere: in dev the binding proxies through wrangler's OAuth login (`"remote": true` in `wrangler.jsonc`); deployed, it's native.
+- `scripts/summarize.ts` — an Effect pipeline that digests each session transcript (bounded extract, never the full log), asks the worker for a one-line contribution summary, then joins sessions into per-project day rollups. Incremental — reruns only pay for new sessions. The UI picks up `public/data/summaries.json` automatically and falls back to first-prompt snippets without it.
 
 Run it:
 
 ```bash
-bun scripts/scan.ts && bun scripts/serve.ts
+bun run scan   # build public/data/scan.json
+bun run dev    # vite + worker on http://localhost:7412
 ```
 
-Then open http://localhost:7412.
+Then, with the dev server up, `bun run summarize` (`--limit 20` to sample first, `--dry` prints a digest without calling the model). Point `TRAILS_WORKER_URL` at a deployed worker to summarize against prod.
 
-To enable summaries, create an AI Gateway in the Cloudflare dash (AI → AI Gateway), make an API token with Workers AI + AI Gateway permissions, and put these in `.env`:
+`bun run deploy` builds and ships the whole thing (static app + worker) with wrangler.
 
-```
-TRAILS_CF_ACCOUNT_ID=...
-TRAILS_CF_GATEWAY=...
-TRAILS_CF_TOKEN=...
-```
-
-Then `bun scripts/summarize.ts` (try `--limit 20` first, `--dry` prints a digest without calling the API).
+Note on models: Kimi K3 proper (`moonshotai/kimi-k3`) is a third-party partner model on Cloudflare — it needs AI Gateway Unified Billing credits enabled on the account. Until then trails uses `@cf/moonshotai/kimi-k2.5`, hosted natively on Workers AI, which the OAuth login covers with zero setup. Switching later is a one-line change in `worker/index.ts`.
 
 ## Where it's going
 

@@ -1,5 +1,7 @@
 # jem's real session data — stays local (moves to a proper store later)
-data/
+public/data/
 .env
 node_modules/
+dist/
+.wrangler/
 .DS_Store

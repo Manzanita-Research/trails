@@ -4,63 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>trails</title>
-  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="wordmark">
-      <span class="wordmark-name">trails</span>
-      <span class="wordmark-sub">where your days actually went</span>
-    </div>
-    <nav class="tabs" id="tabs">
-      <button class="tab is-active" data-view="days">Days</button>
-      <button class="tab" data-view="week">Week</button>
-      <button class="tab" data-view="threads">Threads</button>
-    </nav>
-    <div class="controls">
-      <button class="control-btn" id="sort-toggle">Sort projects</button>
-      <button class="control-btn" id="settings-toggle" aria-label="settings">settings</button>
-      <div id="settings-pop" class="settings-pop" hidden>
-        <label class="control">
-          <span>day starts</span>
-          <select id="boundary">
-            <option value="4">4 am</option>
-            <option value="5">5 am</option>
-            <option value="6" selected>6 am</option>
-            <option value="7">7 am</option>
-          </select>
-        </label>
-        <label class="control" title="Minutes of presence credited around each prompt you typed — reading, reviewing, thinking. Tune it until day totals feel honest.">
-          <span>attention halo</span>
-          <select id="halo">
-            <option value="0">none</option>
-            <option value="5">± 5 min</option>
-            <option value="10" selected>± 10 min</option>
-            <option value="15">± 15 min</option>
-          </select>
-        </label>
-      </div>
-    </div>
-  </header>
-
-  <main id="main">
-    <section id="view-days" class="view"></section>
-    <section id="view-week" class="view" hidden></section>
-    <section id="view-threads" class="view" hidden></section>
-    <section id="view-project" class="view" hidden></section>
-  </main>
-
-  <aside id="sort-panel" class="sort-panel" hidden>
-    <div class="sort-head">
-      <h2>Sort projects into engagements</h2>
-      <button class="close-btn" id="sort-close">✕</button>
-    </div>
-    <p class="sort-hint">Everything starts auto-sorted by repo org. Reassign anything that landed wrong — this feeds the Week billing view.</p>
-    <div id="sort-list"></div>
-  </aside>
-
-  <div id="tooltip" class="tooltip" hidden></div>
-
-  <script src="app.js" type="module"></script>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

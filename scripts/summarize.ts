@@ -1,15 +1,13 @@
 // trails summarizer — turns each scanned session into a one-line contribution
-// summary via an LLM (kimi k3 on workers ai, through cloudflare ai gateway),
-// then joins sessions into per-project day summaries. incremental: already-
-// summarized sessions are skipped, so rerunning only pays for what's new.
+// summary via kimi k3 on workers ai, then joins sessions into per-project day
+// summaries. incremental: already-summarized sessions are skipped, so
+// rerunning only pays for what's new.
+//
+// talks to the worker's /api/summarize endpoint, which holds the AI binding —
+// no api keys anywhere; `bun run dev` proxies the binding through wrangler's
+// oauth login. point TRAILS_WORKER_URL at a deployed worker to run against prod.
 //
 // usage: bun scripts/summarize.ts [--limit N] [--force] [--dry]
-//
-// config via env (bun auto-loads .env):
-//   TRAILS_CF_ACCOUNT_ID  cloudflare account id
-//   TRAILS_CF_GATEWAY     ai gateway id (create one in dash → AI → AI Gateway)
-//   TRAILS_CF_TOKEN       api token with Workers AI + AI Gateway permissions
-//   TRAILS_MODEL          optional, default workers-ai/@cf/moonshotai/kimi-k3
 
 import { Effect, Schedule } from "effect"
 import { createReadStream, existsSync, readFileSync, writeFileSync } from "node:fs"
@@ -24,26 +22,13 @@ const LIMIT = (() => {
 const FORCE = args.includes("--force")
 const DRY = args.includes("--dry")
 
-const DATA_DIR = join(import.meta.dir, "../data")
+const DATA_DIR = join(import.meta.dir, "../public/data")
 const SCAN_PATH = join(DATA_DIR, "scan.json")
 const OUT_PATH = join(DATA_DIR, "summaries.json")
 const BOUNDARY_MIN = 6 * 60
 
-const ACCOUNT = process.env.TRAILS_CF_ACCOUNT_ID
-const GATEWAY = process.env.TRAILS_CF_GATEWAY
-const TOKEN = process.env.TRAILS_CF_TOKEN
-const MODEL = process.env.TRAILS_MODEL ?? "workers-ai/@cf/moonshotai/kimi-k3"
-
-if (!DRY && (!ACCOUNT || !GATEWAY || !TOKEN)) {
-  console.error(
-    "missing config — put these in trails/.env:\n" +
-      "  TRAILS_CF_ACCOUNT_ID=...\n  TRAILS_CF_GATEWAY=...\n  TRAILS_CF_TOKEN=...\n" +
-      "(token needs Workers AI + AI Gateway permissions; gateway is created in dash → AI → AI Gateway)",
-  )
-  process.exit(1)
-}
-
-const GATEWAY_URL = `https://gateway.ai.cloudflare.com/v1/${ACCOUNT}/${GATEWAY}/compat/chat/completions`
+const WORKER_URL = process.env.TRAILS_WORKER_URL ?? "http://localhost:7412"
+const MODEL = "@cf/moonshotai/kimi-k3" // recorded in the output; the worker owns the actual choice
 
 // ---------- types ----------
 
@@ -147,24 +132,16 @@ const retryPolicy = Schedule.exponential("2 seconds").pipe(Schedule.intersect(Sc
 function chat(system: string, user: string): Effect.Effect<string, Error> {
   return Effect.tryPromise({
     try: async (signal) => {
-      const res = await fetch(GATEWAY_URL, {
+      const res = await fetch(`${WORKER_URL}/api/summarize`, {
         method: "POST",
         signal,
-        headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 2048, // kimi k3 spends tokens reasoning before it answers
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system, user }),
       })
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
       const body: any = await res.json()
-      const text = body.choices?.[0]?.message?.content?.trim()
-      if (!text) throw new Error(`empty completion: ${JSON.stringify(body).slice(0, 300)}`)
-      return text
+      if (!body.text) throw new Error(`empty completion: ${JSON.stringify(body).slice(0, 300)}`)
+      return body.text as string
     },
     catch: (e) => (e instanceof Error ? e : new Error(String(e))),
   }).pipe(Effect.timeout("120 seconds"), Effect.retry(retryPolicy))

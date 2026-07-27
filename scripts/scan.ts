@@ -1,7 +1,7 @@
 // trails scanner — walks local Claude Code + Codex session logs and emits
 // metadata-only JSON (no transcript content beyond a short first-prompt snippet).
 //
-// usage: bun scripts/scan.ts [--since 2026-06-22] [--out data/scan.json]
+// usage: bun scripts/scan.ts [--since 2026-06-22] [--out public/data/scan.json]
 
 import { readdirSync, statSync, mkdirSync, writeFileSync, createReadStream } from "node:fs"
 import { join, sep, basename, relative } from "node:path"
@@ -19,7 +19,7 @@ const argVal = (flag: string, fallback: string) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback
 }
 const SINCE = argVal("--since", "2026-06-22")
-const OUT = argVal("--out", join(import.meta.dir, "../data/scan.json"))
+const OUT = argVal("--out", join(import.meta.dir, "../public/data/scan.json"))
 const sinceMs = new Date(`${SINCE}T00:00:00-07:00`).getTime()
 
 // ---------- discovery ----------

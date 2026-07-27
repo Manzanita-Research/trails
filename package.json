@@ -1,5 +1,29 @@
 {
+  "name": "trails",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "deploy": "vite build && wrangler deploy",
+    "check": "tsc --noEmit",
+    "scan": "bun scripts/scan.ts",
+    "summarize": "bun scripts/summarize.ts"
+  },
   "dependencies": {
-    "effect": "^3.22.0"
+    "effect": "^3.22.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.47.0",
+    "@cloudflare/workers-types": "^5.20260727.1",
+    "@types/bun": "^1.3.14",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "wrangler": "^4.114.0"
   }
 }
