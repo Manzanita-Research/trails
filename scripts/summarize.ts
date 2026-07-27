@@ -28,7 +28,7 @@ const OUT_PATH = join(DATA_DIR, "summaries.json")
 const BOUNDARY_MIN = 6 * 60
 
 const WORKER_URL = process.env.TRAILS_WORKER_URL ?? "http://localhost:7412"
-const MODEL = "@cf/moonshotai/kimi-k3" // recorded in the output; the worker owns the actual choice
+const MODEL = "@cf/moonshotai/kimi-k2.5" // recorded in the output; the worker owns the actual choice
 
 // ---------- types ----------
 
@@ -226,7 +226,7 @@ const program = Effect.gen(function* () {
           Effect.sync(() => console.error(`  skip ${sess.id}: ${String(e).slice(0, 200)}`)),
         ),
       ),
-    { concurrency: 4 },
+    { concurrency: 10 },
   )
   save()
   console.log(`summarized ${done} sessions`)
@@ -266,7 +266,7 @@ const program = Effect.gen(function* () {
       }).pipe(
         Effect.catchAll((e) => Effect.sync(() => console.error(`  skip ${key}: ${String(e).slice(0, 200)}`))),
       ),
-    { concurrency: 4 },
+    { concurrency: 10 },
   )
   save()
   console.log(`joined ${joined} project-days → ${OUT_PATH}`)
