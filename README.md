@@ -33,13 +33,24 @@ bun run dev    # vite + worker on http://localhost:7412
 
 Then, with the dev server up, `bun run summarize` (`--limit 20` to sample first, `--dry` prints a digest without calling the model). Point `TRAILS_WORKER_URL` at a deployed worker to summarize against prod.
 
+To keep the index current automatically, register `scripts/session-end.ts` as a global Claude Code `SessionEnd` hook (in `~/.claude/settings.json`, so it fires for every project):
+
+```json
+{
+  "type": "command",
+  "command": "nohup \"$HOME/.bun/bin/bun\" \"$HOME/code/manzanita-research/trails/scripts/session-end.ts\" >> \"$HOME/code/manzanita-research/trails/.hook.log\" 2>&1 < /dev/null &"
+}
+```
+
+It detaches immediately (never delays session exit), serializes bursts of parallel sessions ending with a lockfile, rescans, and summarizes new sessions when the dev server is up — otherwise summaries catch up on a later run. Progress lands in `.hook.log`.
+
 `bun run deploy` builds and ships the whole thing (static app + worker) with wrangler.
 
 Note on models: Kimi K3 proper (`moonshotai/kimi-k3`) is a third-party partner model on Cloudflare — it needs AI Gateway Unified Billing credits enabled on the account. Until then trails uses `@cf/moonshotai/kimi-k2.5`, hosted natively on Workers AI, which the OAuth login covers with zero setup. Switching later is a one-line change in `worker/index.ts`.
 
 ## Where it's going
 
-1. **Session hooks** — on `SessionEnd`, append the session's metadata to trails' store and summarize the session's core contribution with a small `claude -p` call (what changed, what's open, what question was being chased). No more full-log rescans.
+1. **Incremental hooks** — the `SessionEnd` hook exists (above) but still full-rescans; next step is appending just the ended session to the store so it stays O(1) as history grows.
 2. **Real store** — move from a scan blob to an append-only local store (SQLite or JSONL per day), backfill once from local logs + the records R2 archive for anything already offloaded.
 3. **Akasha bridge** — daily rollups written to `~/.manzanita/akasha/222-temporal/` in the vault's conventions.
 4. **Invoice export** — week view → a plain-text day-credit summary you can paste to a client.
