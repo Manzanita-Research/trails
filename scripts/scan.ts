@@ -3,7 +3,16 @@
 //
 // usage: bun scripts/scan.ts [--since 2026-06-22] [--out public/data/scan.json]
 
-import { readdirSync, statSync, mkdirSync, writeFileSync, createReadStream } from "node:fs"
+import {
+  readdirSync,
+  statSync,
+  mkdirSync,
+  writeFileSync,
+  createReadStream,
+  openSync,
+  readSync,
+  closeSync,
+} from "node:fs"
 import { join, sep, basename, relative } from "node:path"
 import { homedir } from "node:os"
 import readline from "node:readline"
@@ -11,8 +20,9 @@ import readline from "node:readline"
 const HOME = homedir()
 const CLAUDE_ROOT = join(HOME, ".claude/projects")
 // sessions restored from the records R2 archive (scripts/backfill.ts) — same
-// project-dir layout; predates the live logs, so the --since filter is skipped
-const BACKFILL_ROOT = join(HOME, ".manzanita/trails/backfill/claude")
+// layouts as the live roots; predates the live logs, so the --since filter is skipped
+const BACKFILL_CLAUDE = join(HOME, ".manzanita/trails/backfill/claude")
+const BACKFILL_CODEX = join(HOME, ".manzanita/trails/backfill/codex")
 const CODEX_ROOT = join(HOME, ".codex/sessions")
 const ZONE = "America/Los_Angeles"
 
@@ -47,6 +57,7 @@ function claudeFiles(root: string, skipSince = false): string[] {
     }
     for (const name of entries) {
       if (!name.endsWith(".jsonl")) continue // skips subagent dirs too
+      if (name.startsWith("agent-")) continue // old flat-layout subagent transcripts
       const fp = join(full, name)
       try {
         if (skipSince || statSync(fp).mtimeMs >= sinceMs) files.push(fp)
@@ -56,7 +67,7 @@ function claudeFiles(root: string, skipSince = false): string[] {
   return files
 }
 
-function codexFiles(): string[] {
+function codexFiles(root: string, skipSince = false): string[] {
   // date-partitioned: YYYY/MM/DD/rollout-*.jsonl — filter by path date, cheap
   const files: string[] = []
   const sinceDate = SINCE.replaceAll("-", "/")
@@ -73,13 +84,13 @@ function codexFiles(): string[] {
         if (e.name === "subagents") continue
         visit(full)
       } else if (e.name.endsWith(".jsonl")) {
-        const rel = relative(CODEX_ROOT, full)
+        const rel = relative(root, full)
         const datePart = rel.split(sep).slice(0, 3).join("/")
-        if (datePart >= sinceDate) files.push(full)
+        if (skipSince || datePart >= sinceDate) files.push(full)
       }
     }
   }
-  visit(CODEX_ROOT)
+  visit(root)
   return files
 }
 
@@ -159,6 +170,20 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
     activity: [],
   }
 
+  // pre-mid-2026 codex stored subagent rollouts flat beside real sessions — the
+  // session_meta on line 1 is the only reliable tell. peek it cheaply up front:
+  // bailing out mid-stream leaks the readline pipeline and tanks the whole scan.
+  if (source === "codex") {
+    const fd = openSync(filePath, "r")
+    const buf = Buffer.alloc(131072)
+    const n = readSync(fd, buf, 0, buf.length, 0)
+    closeSync(fd)
+    const head = buf.toString("utf8", 0, n)
+    const nl = head.indexOf("\n")
+    const first = nl >= 0 ? head.slice(0, nl) : head
+    if (first.includes('"thread_source":"subagent"')) return null
+  }
+
   const rl = readline.createInterface({ input: createReadStream(filePath), crlfDelay: Infinity })
   let lineNo = 0
   for await (const line of rl) {
@@ -224,20 +249,23 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
 
 const t0 = performance.now()
 const claude = claudeFiles(CLAUDE_ROOT)
+const codex = codexFiles(CODEX_ROOT)
 // a session can exist both live and backfilled — the live copy wins
-const liveIds = new Set(claude.map((f) => basename(f)))
-const backfill = claudeFiles(BACKFILL_ROOT, true).filter((f) => !liveIds.has(basename(f)))
-const codex = codexFiles()
+const liveClaude = new Set(claude.map((f) => basename(f)))
+const liveCodex = new Set(codex.map((f) => basename(f)))
+const backClaude = claudeFiles(BACKFILL_CLAUDE, true).filter((f) => !liveClaude.has(basename(f)))
+const backCodex = codexFiles(BACKFILL_CODEX, true).filter((f) => !liveCodex.has(basename(f)))
 console.log(
-  `scanning ${claude.length} claude files (+${backfill.length} backfilled), ${codex.length} codex files since ${SINCE}...`,
+  `scanning ${claude.length} claude files (+${backClaude.length} backfilled), ${codex.length} codex files (+${backCodex.length} backfilled) since ${SINCE}...`,
 )
 
 const sessions: SessionMeta[] = []
 const CONCURRENCY = 8
 const queue: [string, "claude" | "codex"][] = [
   ...claude.map((f) => [f, "claude"] as [string, "claude"]),
-  ...backfill.map((f) => [f, "claude"] as [string, "claude"]),
+  ...backClaude.map((f) => [f, "claude"] as [string, "claude"]),
   ...codex.map((f) => [f, "codex"] as [string, "codex"]),
+  ...backCodex.map((f) => [f, "codex"] as [string, "codex"]),
 ]
 let idx = 0
 await Promise.all(

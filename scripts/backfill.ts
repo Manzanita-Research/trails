@@ -18,7 +18,7 @@ import { homedir } from "node:os"
 const HOME = homedir()
 const STATE = join(HOME, ".config/records/state.json")
 const BUCKET = "records-session-logs"
-const DEST = join(HOME, ".manzanita/trails/backfill/claude")
+const DEST = join(HOME, ".manzanita/trails/backfill")
 const REPO = join(import.meta.dir, "..")
 const DRY = process.argv.includes("--dry")
 
@@ -37,9 +37,10 @@ const sha256 = (path: string) =>
 
 const download = (key: string, rec: Uploaded) =>
   Effect.gen(function* () {
-    // key: sessions/<project-dir>/<session>.jsonl → DEST/<project-dir>/<session>.jsonl
+    // claude keys: sessions/<project-dir>/<session>.jsonl → DEST/claude/<project-dir>/<session>.jsonl
+    // codex keys:  sessions/codex/YYYY/MM/DD/rollout-*.jsonl → DEST/codex/YYYY/MM/DD/rollout-*.jsonl
     const relPath = key.slice("sessions/".length)
-    const target = join(DEST, relPath)
+    const target = join(DEST, relPath.startsWith("codex/") ? relPath : join("claude", relPath))
 
     if (existsSync(target) && statSync(target).size === rec.size) return "kept"
 
