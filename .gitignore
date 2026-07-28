@@ -4,4 +4,7 @@ public/data/
 node_modules/
 dist/
 .wrangler/
+.hook.log
+.hook.lock
+.hook.rerun
 .DS_Store
