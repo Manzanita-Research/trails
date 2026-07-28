@@ -33,16 +33,24 @@ bun run dev    # vite + worker on http://localhost:7412
 
 Then, with the dev server up, `bun run summarize` (`--limit 20` to sample first, `--dry` prints a digest without calling the model). Point `TRAILS_WORKER_URL` at a deployed worker to summarize against prod.
 
-To keep the index current automatically, register `scripts/session-end.ts` as a global Claude Code `SessionEnd` hook (in `~/.claude/settings.json`, so it fires for every project):
+To keep the index current automatically, register `scripts/session-end-detach.sh` as a global `SessionEnd` hook in both agent CLIs. Claude Code, in `~/.claude/settings.json`:
 
 ```json
-{
-  "type": "command",
-  "command": "nohup \"$HOME/.bun/bin/bun\" \"$HOME/code/manzanita-research/trails/scripts/session-end.ts\" >> \"$HOME/code/manzanita-research/trails/.hook.log\" 2>&1 < /dev/null &"
-}
+{ "type": "command", "command": "/bin/sh \"$HOME/code/manzanita-research/trails/scripts/session-end-detach.sh\"" }
 ```
 
-It detaches immediately (never delays session exit), serializes bursts of parallel sessions ending with a lockfile, rescans, and summarizes new sessions when the dev server is up — otherwise summaries catch up on a later run. Progress lands in `.hook.log`.
+Codex, in `~/.codex/config.toml` (SessionEnd also fires after 30 idle minutes there):
+
+```toml
+[[hooks.SessionEnd]]
+
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = "/bin/sh /Users/jem/code/manzanita-research/trails/scripts/session-end-detach.sh"
+timeout = 3
+```
+
+The wrapper detaches the real runner (`scripts/session-end.ts`) immediately — Codex caps SessionEnd hooks at 3 seconds and Claude shouldn't wait on a ~40s rescan either. The runner serializes bursts of parallel sessions ending with a lockfile, rescans, and summarizes new sessions when the dev server is up — otherwise summaries catch up on a later run. Progress lands in `.hook.log`.
 
 `bun run deploy` builds and ships the whole thing (static app + worker) with wrangler.
 
