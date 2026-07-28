@@ -23,6 +23,7 @@ A working app on real data — Vite + React frontend, a Cloudflare Worker for in
 - Triage lives in the "Sort projects" panel: projects auto-file by repo org, reassign to engagements as needed. Assignments, renames, and settings persist in localStorage.
 - `worker/index.ts` — a Worker with a Workers AI binding (`env.AI`). `POST /api/summarize` takes `{system, user}` and runs Kimi K2.5 (`@cf/moonshotai/kimi-k2.5`). No API keys anywhere: in dev the binding proxies through wrangler's OAuth login (`"remote": true` in `wrangler.jsonc`); deployed, it's native.
 - `scripts/summarize.ts` — an Effect pipeline that digests each session transcript (bounded extract, never the full log), asks the worker for a one-line contribution summary, then joins sessions into per-project day rollups. Incremental — reruns only pay for new sessions. The UI picks up `public/data/summaries.json` automatically and falls back to first-prompt snippets without it.
+- `scripts/backfill.ts` — restores history that Claude Code's old 30-day cleanup deleted from disk but [records](https://github.com/manzanita-research/records) had already archived to R2. Reads the archiver's `~/.config/records/state.json` for exact object keys, downloads main-session transcripts (subagent rollouts skipped) into `~/.manzanita/trails/backfill/`, and verifies each against the archiver's recorded sha256. No keys — wrangler reads the bucket through its OAuth login. Idempotent: reruns skip files already present at the right size. The scanner indexes the backfill roots alongside the live logs, live copy winning when a session exists in both.
 
 Run it:
 
@@ -32,6 +33,8 @@ bun run dev    # vite + worker on http://localhost:7412
 ```
 
 Then, with the dev server up, `bun run summarize` (`--limit 20` to sample first, `--dry` prints a digest without calling the model). Point `TRAILS_WORKER_URL` at a deployed worker to summarize against prod.
+
+One-time, if you have a records archive: `bun scripts/backfill.ts` (`--dry` lists what it would fetch), then rescan and summarize as usual — restored sessions flow through the same pipeline.
 
 To keep the index current automatically, register `scripts/session-end-detach.sh` as a global `SessionEnd` hook in both agent CLIs. Claude Code, in `~/.claude/settings.json`:
 
@@ -59,6 +62,6 @@ Note on models: Kimi K3 proper (`moonshotai/kimi-k3`) is a third-party partner m
 ## Where it's going
 
 1. **Incremental hooks** — the `SessionEnd` hook exists (above) but still full-rescans; next step is appending just the ended session to the store so it stays O(1) as history grows.
-2. **Real store** — move from a scan blob to an append-only local store (SQLite or JSONL per day), backfill once from local logs + the records R2 archive for anything already offloaded.
+2. **Real store** — move from a scan blob to an append-only local store (SQLite or JSONL per day). The R2 backfill (above) already restored the archived history; the store just needs to ingest it once.
 3. **Akasha bridge** — daily rollups written to `~/.manzanita/akasha/222-temporal/` in the vault's conventions.
 4. **Invoice export** — week view → a plain-text day-credit summary you can paste to a client.
