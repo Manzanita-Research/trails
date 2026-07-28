@@ -10,6 +10,9 @@ import readline from "node:readline"
 
 const HOME = homedir()
 const CLAUDE_ROOT = join(HOME, ".claude/projects")
+// sessions restored from the records R2 archive (scripts/backfill.ts) — same
+// project-dir layout; predates the live logs, so the --since filter is skipped
+const BACKFILL_ROOT = join(HOME, ".manzanita/trails/backfill/claude")
 const CODEX_ROOT = join(HOME, ".codex/sessions")
 const ZONE = "America/Los_Angeles"
 
@@ -24,18 +27,18 @@ const sinceMs = new Date(`${SINCE}T00:00:00-07:00`).getTime()
 
 // ---------- discovery ----------
 
-function claudeFiles(): string[] {
+function claudeFiles(root: string, skipSince = false): string[] {
   const files: string[] = []
   let projectDirs: string[] = []
   try {
-    projectDirs = readdirSync(CLAUDE_ROOT)
+    projectDirs = readdirSync(root)
   } catch {
     return files
   }
   for (const dir of projectDirs) {
     // CodexBar's automated /usage probe sessions are noise, not work
     if (dir.endsWith("-Library-Application-Support-CodexBar-ClaudeProbe")) continue
-    const full = join(CLAUDE_ROOT, dir)
+    const full = join(root, dir)
     let entries: string[] = []
     try {
       entries = readdirSync(full)
@@ -46,7 +49,7 @@ function claudeFiles(): string[] {
       if (!name.endsWith(".jsonl")) continue // skips subagent dirs too
       const fp = join(full, name)
       try {
-        if (statSync(fp).mtimeMs >= sinceMs) files.push(fp)
+        if (skipSince || statSync(fp).mtimeMs >= sinceMs) files.push(fp)
       } catch {}
     }
   }
@@ -220,14 +223,20 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
 // ---------- run ----------
 
 const t0 = performance.now()
-const claude = claudeFiles()
+const claude = claudeFiles(CLAUDE_ROOT)
+// a session can exist both live and backfilled — the live copy wins
+const liveIds = new Set(claude.map((f) => basename(f)))
+const backfill = claudeFiles(BACKFILL_ROOT, true).filter((f) => !liveIds.has(basename(f)))
 const codex = codexFiles()
-console.log(`scanning ${claude.length} claude files, ${codex.length} codex files since ${SINCE}...`)
+console.log(
+  `scanning ${claude.length} claude files (+${backfill.length} backfilled), ${codex.length} codex files since ${SINCE}...`,
+)
 
 const sessions: SessionMeta[] = []
 const CONCURRENCY = 8
 const queue: [string, "claude" | "codex"][] = [
   ...claude.map((f) => [f, "claude"] as [string, "claude"]),
+  ...backfill.map((f) => [f, "claude"] as [string, "claude"]),
   ...codex.map((f) => [f, "codex"] as [string, "codex"]),
 ]
 let idx = 0
