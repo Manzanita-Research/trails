@@ -2,7 +2,7 @@
 
 export interface RawSession {
   id: string
-  source: "claude" | "codex"
+  source: "claude" | "codex" | "omp" | "pi"
   path: string
   cwd: string | null
   branch: string | null

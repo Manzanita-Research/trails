@@ -15,7 +15,7 @@ A memory system for parallel, agent-heavy, ADHD-shaped work. Not a time tracker 
 
 A working app on real data — Vite + React frontend, a Cloudflare Worker for inference, Effect pipelines for the data work:
 
-- `scripts/scan.ts` — walks `~/.claude/projects` and `~/.codex/sessions`, emits metadata-only JSON (per-minute activity, user-event minutes, cwd, branch, first prompt snippet — never transcript bodies) to `public/data/scan.json`. ~500 sessions in ~25s.
+- `scripts/scan.ts` — walks `~/.claude/projects`, `~/.codex/sessions`, `~/.omp/agent/sessions`, and `~/.pi/agent/sessions`, emitting metadata-only JSON (per-minute activity, user-event minutes, cwd, branch, first prompt snippet — never transcript bodies) to `public/data/scan.json`. ~500 sessions in ~25s.
 - `src/` — the React app, three views over the scan:
   - **Days** — one card per human-shaped day: parallel project lanes, solid marks where you were present, pale wash where agents ran alone.
   - **Week** — attention-hours per engagement rolled into day-credits (¼ ≥ 1h, ½ ≥ 2.5h, full ≥ 5.5h), the way billing actually works.
@@ -36,7 +36,7 @@ Then, with the dev server up, `bun run summarize` (`--limit 20` to sample first,
 
 One-time, if you have a records archive: `bun scripts/backfill.ts` (`--dry` lists what it would fetch), then rescan and summarize as usual — restored sessions flow through the same pipeline.
 
-To keep the index current automatically, register `scripts/session-end-detach.sh` as a global `SessionEnd` hook in both agent CLIs. Claude Code, in `~/.claude/settings.json`:
+To keep the index current automatically, register the appropriate session-end integration. Claude Code, in `~/.claude/settings.json`:
 
 ```json
 { "type": "command", "command": "/bin/sh \"$HOME/code/manzanita-research/trails/scripts/session-end-detach.sh\"" }
@@ -52,6 +52,15 @@ type = "command"
 command = "/bin/sh /Users/jem/code/manzanita-research/trails/scripts/session-end-detach.sh"
 timeout = 3
 ```
+
+omp uses a drop-in extension:
+
+```bash
+ln -s "$HOME/code/manzanita-research/trails/scripts/omp-session-end.ts" \
+  "$HOME/.omp/agent/extensions/trails-session-end.ts"
+```
+
+Forked omp sessions count only activity after their fork point. pi has no hook; its sessions ride along on the next rescan.
 
 The wrapper detaches the real runner (`scripts/session-end.ts`) immediately — Codex caps SessionEnd hooks at 3 seconds and Claude shouldn't wait on a ~40s rescan either. The runner serializes bursts of parallel sessions ending with a lockfile, rescans, and summarizes new sessions when the dev server is up — otherwise summaries catch up on a later run. Progress lands in `.hook.log`.
 

@@ -1,5 +1,5 @@
-// trails scanner — walks local Claude Code + Codex session logs and emits
-// metadata-only JSON (no transcript content beyond a short first-prompt snippet).
+// trails scanner — walks local Claude Code, Codex, omp, and pi session logs
+// and emits metadata-only JSON (no transcript content beyond a short first-prompt snippet).
 //
 // usage: bun scripts/scan.ts [--since 2026-06-22] [--out public/data/scan.json]
 
@@ -17,6 +17,8 @@ import { join, sep, basename, relative } from "node:path"
 import { homedir } from "node:os"
 import readline from "node:readline"
 
+type Source = "claude" | "codex" | "omp" | "pi"
+
 const HOME = homedir()
 const CLAUDE_ROOT = join(HOME, ".claude/projects")
 // sessions restored from the records R2 archive (scripts/backfill.ts) — same
@@ -24,6 +26,8 @@ const CLAUDE_ROOT = join(HOME, ".claude/projects")
 const BACKFILL_CLAUDE = join(HOME, ".manzanita/trails/backfill/claude")
 const BACKFILL_CODEX = join(HOME, ".manzanita/trails/backfill/codex")
 const CODEX_ROOT = join(HOME, ".codex/sessions")
+const OMP_ROOT = join(HOME, ".omp/agent/sessions")
+const PI_ROOT = join(HOME, ".pi/agent/sessions")
 const ZONE = "America/Los_Angeles"
 
 const args = process.argv.slice(2)
@@ -37,7 +41,7 @@ const sinceMs = new Date(`${SINCE}T00:00:00-07:00`).getTime()
 
 // ---------- discovery ----------
 
-function claudeFiles(root: string, skipSince = false): string[] {
+function projectDirFiles(root: string, skipSince = false): string[] {
   const files: string[] = []
   let projectDirs: string[] = []
   try {
@@ -135,7 +139,7 @@ function cleanSnippet(text: string): string {
 
 interface SessionMeta {
   id: string
-  source: "claude" | "codex"
+  source: Source
   // absolute path to the source jsonl, so the summarizer can reread it without re-discovery
   path: string
   cwd: string | null
@@ -149,11 +153,13 @@ interface SessionMeta {
   activity: [string, number, number, number][]
 }
 
-async function inspect(filePath: string, source: "claude" | "codex"): Promise<SessionMeta | null> {
+async function inspect(filePath: string, source: Source): Promise<SessionMeta | null> {
   const id =
     source === "claude"
       ? basename(filePath, ".jsonl")
-      : basename(filePath, ".jsonl").replace(/^rollout-[0-9T-]+-/, "")
+      : source === "codex"
+        ? basename(filePath, ".jsonl").replace(/^rollout-[0-9T-]+-/, "")
+        : basename(filePath, ".jsonl").replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_/, "")
 
   const buckets = new Map<string, [string, number, number, number]>()
   const meta: SessionMeta = {
@@ -186,9 +192,17 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
 
   const rl = readline.createInterface({ input: createReadStream(filePath), crlfDelay: Infinity })
   let lineNo = 0
+  let cutoff: string | null = null
   for await (const line of rl) {
     lineNo++
     if (!line) continue
+    if ((source === "omp" || source === "pi") && lineNo <= 2 && line.includes('"type":"session"')) {
+      try {
+        const entry = JSON.parse(line)
+        meta.cwd ??= entry.cwd ?? null
+        if (entry.parentSession) cutoff = entry.timestamp
+      } catch {}
+    }
     if (!meta.cwd) {
       const m = CWD_RE.exec(line)
       if (m) meta.cwd = m[1]
@@ -201,22 +215,26 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
     const isUser =
       source === "claude"
         ? line.includes('"type":"user"') && !line.includes('"toolUseResult"') && !line.includes('"isMeta":true')
-        : line.includes('"user_message"')
+        : source === "codex"
+          ? line.includes('"user_message"')
+          : line.includes('"type":"message"') && line.includes('"role":"user"')
 
     if (isUser && !meta.firstPrompt && lineNo < 400) {
       try {
         const entry = JSON.parse(line)
-        let text: string | null = null
-        if (source === "claude") {
-          const c = entry.message?.content
-          if (typeof c === "string") text = c
-          else if (Array.isArray(c)) text = c.find((b: any) => b.type === "text")?.text ?? null
-        } else {
-          text = entry.payload?.message ?? null
-        }
-        if (text && !text.startsWith("Caveat:") && !text.includes("command-name")) {
-          const cleaned = cleanSnippet(text)
-          if (cleaned.length > 2) meta.firstPrompt = cleaned
+        if (!(cutoff && entry.timestamp < cutoff)) {
+          let text: string | null = null
+          if (source === "claude" || source === "omp" || source === "pi") {
+            const c = entry.message?.content
+            if (typeof c === "string") text = c
+            else if (Array.isArray(c)) text = c.find((b: { type?: string; text?: string }) => b.type === "text")?.text ?? null
+          } else {
+            text = entry.payload?.message ?? null
+          }
+          if (text && !text.startsWith("Caveat:") && !text.includes("command-name")) {
+            const cleaned = cleanSnippet(text)
+            if (cleaned.length > 2) meta.firstPrompt = cleaned
+          }
         }
       } catch {}
     }
@@ -224,6 +242,7 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
     const tsMatch = TS_RE.exec(line)
     if (!tsMatch) continue
     const ts = tsMatch[1]
+    if (cutoff && ts < cutoff) continue
     const parts = localParts(ts)
     if (!parts) continue
     meta.events++
@@ -248,24 +267,28 @@ async function inspect(filePath: string, source: "claude" | "codex"): Promise<Se
 // ---------- run ----------
 
 const t0 = performance.now()
-const claude = claudeFiles(CLAUDE_ROOT)
+const claude = projectDirFiles(CLAUDE_ROOT)
 const codex = codexFiles(CODEX_ROOT)
+const omp = projectDirFiles(OMP_ROOT)
+const pi = projectDirFiles(PI_ROOT)
 // a session can exist both live and backfilled — the live copy wins
 const liveClaude = new Set(claude.map((f) => basename(f)))
 const liveCodex = new Set(codex.map((f) => basename(f)))
-const backClaude = claudeFiles(BACKFILL_CLAUDE, true).filter((f) => !liveClaude.has(basename(f)))
+const backClaude = projectDirFiles(BACKFILL_CLAUDE, true).filter((f) => !liveClaude.has(basename(f)))
 const backCodex = codexFiles(BACKFILL_CODEX, true).filter((f) => !liveCodex.has(basename(f)))
 console.log(
-  `scanning ${claude.length} claude files (+${backClaude.length} backfilled), ${codex.length} codex files (+${backCodex.length} backfilled) since ${SINCE}...`,
+  `scanning ${claude.length} claude files (+${backClaude.length} backfilled), ${codex.length} codex files (+${backCodex.length} backfilled), ${omp.length} omp files, ${pi.length} pi files since ${SINCE}...`,
 )
 
 const sessions: SessionMeta[] = []
 const CONCURRENCY = 8
-const queue: [string, "claude" | "codex"][] = [
-  ...claude.map((f) => [f, "claude"] as [string, "claude"]),
-  ...backClaude.map((f) => [f, "claude"] as [string, "claude"]),
-  ...codex.map((f) => [f, "codex"] as [string, "codex"]),
-  ...backCodex.map((f) => [f, "codex"] as [string, "codex"]),
+const queue: [string, Source][] = [
+  ...claude.map((f) => [f, "claude"] as [string, Source]),
+  ...backClaude.map((f) => [f, "claude"] as [string, Source]),
+  ...codex.map((f) => [f, "codex"] as [string, Source]),
+  ...backCodex.map((f) => [f, "codex"] as [string, Source]),
+  ...omp.map((f) => [f, "omp"] as [string, Source]),
+  ...pi.map((f) => [f, "pi"] as [string, Source]),
 ]
 let idx = 0
 await Promise.all(

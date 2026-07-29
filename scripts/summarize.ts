@@ -34,7 +34,7 @@ const MODEL = "@cf/moonshotai/kimi-k2.5" // recorded in the output; the worker o
 
 interface Session {
   id: string
-  source: "claude" | "codex"
+  source: "claude" | "codex" | "omp" | "pi"
   path: string
   cwd: string | null
   branch: string | null
@@ -44,6 +44,8 @@ interface Session {
   userEvents: number
   activity: [string, number, number, number][]
 }
+
+type TextBlock = { type?: string; text?: string }
 
 interface Summaries {
   generatedAt: string
@@ -72,27 +74,35 @@ function digestSession(sess: Session): Effect.Effect<string | null, Error> {
       let userCount = 0
       const lastAgent: string[] = [] // ring of last 3 assistant messages
       const rl = readline.createInterface({ input: createReadStream(sess.path), crlfDelay: Infinity })
+      let lineNo = 0
+      let cutoff: string | null = null
       for await (const line of rl) {
+        lineNo++
         if (!line) continue
         try {
           if (sess.source === "claude") {
             if (line.includes('"type":"user"') && !line.includes('"toolUseResult"') && !line.includes('"isMeta":true')) {
               const entry = JSON.parse(line)
               const c = entry.message?.content
-              const text = typeof c === "string" ? c : Array.isArray(c) ? c.find((b: any) => b.type === "text")?.text : null
+              const text =
+                typeof c === "string"
+                  ? c
+                  : Array.isArray(c)
+                    ? c.find((b: TextBlock) => b.type === "text")?.text
+                    : null
               if (text && !text.startsWith("Caveat:") && !text.includes("command-name")) {
                 userCount++
                 if (userMsgs.length < MAX_USER_MSGS) userMsgs.push(clean(text).slice(0, MAX_USER_LEN))
               }
             } else if (line.includes('"type":"assistant"') && line.includes('"text"')) {
               const entry = JSON.parse(line)
-              const text = entry.message?.content?.find?.((b: any) => b.type === "text")?.text
+              const text = entry.message?.content?.find?.((b: TextBlock) => b.type === "text")?.text
               if (text) {
                 lastAgent.push(clean(text).slice(0, MAX_AGENT_LEN))
                 if (lastAgent.length > 3) lastAgent.shift()
               }
             }
-          } else {
+          } else if (sess.source === "codex") {
             if (line.includes('"user_message"')) {
               const entry = JSON.parse(line)
               const text = entry.payload?.message
@@ -103,6 +113,38 @@ function digestSession(sess: Session): Effect.Effect<string | null, Error> {
             } else if (line.includes('"agent_message"')) {
               const entry = JSON.parse(line)
               const text = entry.payload?.message
+              if (text) {
+                lastAgent.push(clean(text).slice(0, MAX_AGENT_LEN))
+                if (lastAgent.length > 3) lastAgent.shift()
+              }
+            }
+          } else {
+            if (lineNo <= 2 && line.includes('"type":"session"')) {
+              const entry = JSON.parse(line)
+              if (entry.parentSession) cutoff = entry.timestamp
+            }
+            if (line.includes('"type":"message"') && line.includes('"role":"user"')) {
+              const entry = JSON.parse(line)
+              if (cutoff && entry.timestamp < cutoff) continue
+              const c = entry.message?.content
+              const text =
+                typeof c === "string"
+                  ? c
+                  : Array.isArray(c)
+                    ? c.find((b: TextBlock) => b.type === "text")?.text
+                    : null
+              if (text && !text.startsWith("Caveat:") && !text.includes("command-name")) {
+                userCount++
+                if (userMsgs.length < MAX_USER_MSGS) userMsgs.push(clean(text).slice(0, MAX_USER_LEN))
+              }
+            } else if (
+              line.includes('"type":"message"') &&
+              line.includes('"role":"assistant"') &&
+              line.includes('"text"')
+            ) {
+              const entry = JSON.parse(line)
+              if (cutoff && entry.timestamp < cutoff) continue
+              const text = entry.message?.content?.find?.((b: TextBlock) => b.type === "text")?.text
               if (text) {
                 lastAgent.push(clean(text).slice(0, MAX_AGENT_LEN))
                 if (lastAgent.length > 3) lastAgent.shift()
