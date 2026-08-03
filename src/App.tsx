@@ -1,10 +1,12 @@
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   buildDays,
   computeTopOrgs,
   engagementList,
   engagementOf,
+  engColor,
   fmtClock,
+  fmtDur,
   nameOf,
   prepSessions,
   type RawSession,
@@ -33,6 +35,7 @@ export function App({ scan, summaries }: { scan: Scan; summaries: Summaries | nu
   const [lastListView, setLastListView] = useState<ListView>("days")
   const [projectKey, setProjectKey] = useState<string | null>(null)
   const [sortOpen, setSortOpen] = useState(false)
+  const [dayIdx, setDayIdx] = useState(0)
 
   const sessions = useMemo(() => prepSessions(scan.sessions as RawSession[]), [scan])
   const scanTime = useMemo(() => new Date(scan.generatedAt).getTime(), [scan])
@@ -46,6 +49,22 @@ export function App({ scan, summaries }: { scan: Scan; summaries: Summaries | nu
   }, [sessions])
 
   const tooltipRef = useRef<HTMLDivElement>(null)
+
+  // arrow keys page between days when the days view is up
+  useEffect(() => {
+    if (view !== "days") return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return
+      setDayIdx((i) => {
+        const next = e.key === "ArrowLeft" ? i + 1 : i - 1
+        return Math.max(0, Math.min(days.length - 1, next))
+      })
+    }
+    addEventListener("keydown", onKey)
+    return () => removeEventListener("keydown", onKey)
+  }, [view, days.length])
 
   const t: Trails = {
     sessions,
@@ -62,6 +81,14 @@ export function App({ scan, summaries }: { scan: Scan; summaries: Summaries | nu
       setProjectKey(project)
       setView("project")
       setSortOpen(false)
+      scrollTo({ top: 0 })
+    },
+    openDay: (date) => {
+      const i = days.findIndex(([d]) => d === date)
+      if (i < 0) return
+      setDayIdx(i)
+      setView("days")
+      setLastListView("days")
       scrollTo({ top: 0 })
     },
     assign: (project, engId) => setAssignments({ ...assignments, [project]: engId }),
@@ -88,11 +115,11 @@ export function App({ scan, summaries }: { scan: Scan; summaries: Summaries | nu
       tip.hidden = true
       return
     }
-    const { p, a, b, kind } = hit.dataset
+    const { p, a, b } = hit.dataset
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    tip.innerHTML = `<b>${esc(t.dispName(p!))}</b> · ${fmtClock(+a!)}–${fmtClock(+b! + 1)}<br>${
-      kind === "you" ? "you were here, prompting" : "agents running"
-    }`
+    tip.innerHTML = `<span class="sq" style="background:${engColor(t.engOf(p!))}"></span><b>${esc(
+      t.dispName(p!),
+    )}</b> · ${fmtClock(+a!)}–${fmtClock(+b! + 1)} · ${fmtDur(+b! - +a! + 1)}`
     tip.hidden = false
     tip.style.left = `${Math.min(e.clientX + 14, innerWidth - 340)}px`
     tip.style.top = `${e.clientY + 16}px`
@@ -114,7 +141,7 @@ export function App({ scan, summaries }: { scan: Scan; summaries: Summaries | nu
           setHalo={setHalo}
         />
         <main id="main">
-          {view === "days" && <DaysView />}
+          {view === "days" && <DaysView dayIdx={dayIdx} onDayIdx={setDayIdx} />}
           {view === "week" && <WeekView />}
           {view === "threads" && <ThreadsView />}
           {view === "project" && projectKey && (

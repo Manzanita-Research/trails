@@ -20,15 +20,15 @@ export function HourGrid({
   withLabels?: boolean
 }) {
   const items = []
-  for (let h = boundary; h <= boundary + 24; h += 3) {
+  for (let h = boundary; h <= boundary + 24; h += 4) {
     const x = X(h * 60)
     const hh = h % 24
     const lbl = hh === 0 ? "12am" : hh === 12 ? "noon" : hh < 12 ? `${hh}am` : `${hh - 12}pm`
     items.push(
       <g key={h}>
-        <line x1={x} y1={topPad - 6} x2={x} y2={H - 12} stroke="var(--hairline)" strokeWidth={1} />
+        <line x1={x} y1={topPad} x2={x} y2={H - (withLabels ? 24 : 8)} stroke="var(--hairline)" strokeWidth={1} />
         {withLabels && (
-          <text x={x} y={topPad - 9} fill="var(--muted)" fontSize={10} textAnchor="middle">
+          <text x={x} y={H - 6} fill="var(--quiet)" fontSize={11.5} textAnchor="middle">
             {lbl}
           </text>
         )}
@@ -65,12 +65,11 @@ export function LaneMarks({
           data-b={b}
           data-kind="agent"
           x={X(a)}
-          y={y + 3}
+          y={y + 4}
           width={Math.max(2, X(b + 1) - X(a))}
-          height={laneH - 6}
-          rx={2}
+          height={laneH - 8}
           fill={color}
-          opacity={0.28}
+          opacity={0.22}
         />
       ))}
       {runsOf(data.user).map(([a, b]) => (
@@ -82,14 +81,35 @@ export function LaneMarks({
           data-b={b}
           data-kind="you"
           x={X(a)}
-          y={y + 1.5}
+          y={y}
           width={Math.max(2.5, X(b + 1) - X(a))}
-          height={laneH - 3}
-          rx={2.5}
+          height={laneH}
           fill={color}
         />
       ))}
     </>
+  )
+}
+
+// hour labels under a stack of aligned strips, offset by the row-label column
+export function TicksRow({ boundary }: { boundary: number }) {
+  const items = []
+  for (let h = boundary; h <= boundary + 24; h += 4) {
+    const hh = h % 24
+    const lbl = hh === 0 ? "12am" : hh === 12 ? "noon" : hh < 12 ? `${hh}am` : `${hh - 12}pm`
+    items.push(
+      <span key={h} style={{ position: "absolute", left: `${((h * 60 - boundary * 60) / 1440) * 100}%`, transform: "translateX(-50%)" }}>
+        {lbl}
+      </span>,
+    )
+  }
+  return (
+    <div className="wk-ticks">
+      <span />
+      <div style={{ position: "relative", height: 20, fontSize: "0.78rem", color: "var(--quiet)", fontVariantNumeric: "tabular-nums" }}>
+        {items}
+      </div>
+    </div>
   )
 }
 

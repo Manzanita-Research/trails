@@ -4,5 +4,5 @@ import { cloudflare } from "@cloudflare/vite-plugin"
 
 export default defineConfig({
   plugins: [react(), cloudflare()],
-  server: { port: 7412 },
+  server: { port: Number(process.env.PORT) || 7412 },
 })

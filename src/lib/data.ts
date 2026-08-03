@@ -129,11 +129,54 @@ export function shiftDate(dateStr: string, days: number): string {
 }
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const DOW_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const MON_FULL = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+]
 
 export function labelDate(dateStr: string): { dow: string; label: string } {
   const d = new Date(`${dateStr}T12:00:00Z`)
   return { dow: DOW[(d.getUTCDay() + 6) % 7], label: `${MON[d.getUTCMonth()]} ${d.getUTCDate()}` }
+}
+
+// "Friday, July 24" — the day page display heading
+export function fullDate(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00Z`)
+  return `${DOW_FULL[(d.getUTCDay() + 6) % 7]}, ${MON_FULL[d.getUTCMonth()]} ${d.getUTCDate()}`
+}
+
+// "thursday" — pager links
+export function dowName(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00Z`)
+  return DOW_FULL[(d.getUTCDay() + 6) % 7].toLowerCase()
+}
+
+// the local workday that "now" belongs to, honoring the morning boundary
+export function workdayToday(boundary: number): string {
+  const now = new Date()
+  const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  return now.getHours() < boundary ? shiftDate(iso, -1) : iso
+}
+
+// ---------- day credits ----------
+
+export function credit(mins: number): number {
+  const h = mins / 60
+  if (h >= 5.5) return 1
+  if (h >= 2.5) return 0.5
+  if (h >= 1) return 0.25
+  return 0
+}
+
+export const creditWord: Record<number, string> = { 1: "full day", 0.5: "half day", 0.25: "quarter day" }
+
+// 2.75 → "2¾" — week totals in day-credits
+export function fmtCredits(n: number): string {
+  const whole = Math.floor(n)
+  const frac = { 0.25: "¼", 0.5: "½", 0.75: "¾" }[Math.round((n - whole) * 4) / 4] ?? ""
+  return whole ? `${whole}${frac}` : frac || "0"
 }
 
 export function buildDays(sessions: Session[], boundary: number): [string, DayMap][] {
@@ -193,8 +236,9 @@ export function runsOf(minuteSet: Set<number>): [number, number][] {
 
 // ---------- formatting ----------
 
+// nbsp (\u00a0) between parts so a duration never breaks across lines, wherever it lands
 export const fmtDur = (m: number): string =>
-  m >= 60 ? `${Math.floor(m / 60)}h ${String(Math.round(m % 60)).padStart(2, "0")}m` : `${Math.round(m)}m`
+  m >= 60 ? `${Math.floor(m / 60)}h ${String(Math.round(m % 60)).padStart(2, "0")}m` : `${Math.round(m)}m`
 
 export function fmtClock(dispMin: number): string {
   const m = dispMin % 1440
@@ -202,6 +246,12 @@ export function fmtClock(dispMin: number): string {
   const mm = String(m % 60).padStart(2, "0")
   const h12 = h24 % 12 === 0 ? 12 : h24 % 12
   return `${h12}:${mm} ${h24 < 12 ? "am" : "pm"}`
+}
+
+// "08:31" — tabular session-log times
+export function fmtClock24(dispMin: number): string {
+  const m = dispMin % 1440
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`
 }
 
 export function fmtAgo(ts: string, now: number): string {
