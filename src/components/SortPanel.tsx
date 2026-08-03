@@ -1,7 +1,9 @@
+import { useState } from "react"
 import { useTrails } from "../lib/ctx"
 
 export function SortPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useTrails()
+  const [savingProject, setSavingProject] = useState<string | null>(null)
 
   // one row per project, busiest first
   const byProject = new Map<string, { org: string; userEvents: number }>()
@@ -12,13 +14,19 @@ export function SortPanel({ open, onClose }: { open: boolean; onClose: () => voi
   }
   const rows = [...byProject.entries()].sort((a, b) => b[1].userEvents - a[1].userEvents)
 
-  const onChange = (project: string, value: string) => {
-    if (value === "__new__") {
-      const name = prompt("Name the engagement (a client, a practice, a life area):")?.trim()
-      if (!name) return
-      t.assign(project, t.addEngagement(name))
-    } else {
-      t.assign(project, value)
+  const onChange = async (project: string, value: string) => {
+    setSavingProject(project)
+    try {
+      if (value === "__new__") {
+        const name = prompt("Name the engagement (a client, a practice, a life area):")?.trim()
+        if (!name) return
+        const engagementId = await t.addEngagement(name)
+        await t.assign(project, engagementId)
+      } else {
+        await t.assign(project, value)
+      }
+    } finally {
+      setSavingProject(null)
     }
   }
 
@@ -43,7 +51,11 @@ export function SortPanel({ open, onClose }: { open: boolean; onClose: () => voi
               </button>
               <span className="proj-org">{org}</span>
             </div>
-            <select value={t.engOf(project).id} onChange={(e) => onChange(project, e.target.value)}>
+            <select
+              value={t.engOf(project).id}
+              disabled={savingProject === project}
+              onChange={(event) => void onChange(project, event.target.value)}
+            >
               {t.engs.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name}

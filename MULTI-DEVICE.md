@@ -1,175 +1,130 @@
 # Multi-device architecture
 
-**Status:** Proposed  
-**Decision:** Run Trails on an always-on Mac Mini behind Tailscale. Keep Cloudflare as an optional, narrowly scoped inference provider rather than the canonical data store.
+**Status:** Implemented on `feat/tailscale-hub`  
+**Decision:** One always-on Mac Mini owns Trails behind Tailscale. Cloudflare is an authenticated inference relay, not canonical storage.
 
-## Summary
-
-Trails should be a local-first, single-owner service. The Mac Mini hosts the application, ingestion API, SQLite database, shared UI state, and summaries. Each work machine runs a small collector that submits normalized session observations over the tailnet.
+## System
 
 ```mermaid
 flowchart LR
-  A[MacBook Pro collector] -->|Tailscale HTTPS| M[Mac Mini: Trails + SQLite]
-  B[Other MacBook Pro collector] -->|Tailscale HTTPS| M
-  C[VPS or future device collector] -->|Tailscale HTTPS| M
-  M --> U[Trails UI on the tailnet]
-  M -->|bounded digest only| W[Cloudflare Worker: Workers AI]
-  W -->|summary| M
+  A[MacBook collector<br/>one-shot every 60s] -->|Tailscale HTTPS<br/>normalized observations| M[Mac Mini<br/>standalone trails binary]
+  B[Other Mac collector<br/>one-shot every 60s] -->|Tailscale HTTPS| M
+  M --> D[(SQLite WAL<br/>canonical state)]
+  M --> K[Daily serialized backups]
+  T[Tailnet browser] -->|Tailscale Serve| M
+  M -->|Bearer token<br/>bounded input| W[Cloudflare Worker<br/>Workers AI relay]
+  W -->|summary + model| M
 ```
 
-Tailscale supplies the private network and access boundary. It does not run or store Trails; the Mac Mini does.
+Tailscale supplies the private network and HTTPS access boundary. It does not run or store Trails. The Mini process binds only to `127.0.0.1:7412`; the installer refuses a non-loopback server and a conflicting Tailscale Serve root.
 
-## How Trails is stored today
+## Standalone distribution
 
-There is no application database yet.
+`bun run build` creates `dist/trails-darwin-arm64` and `dist/trails-darwin-x64`. Each executable embeds:
 
-### Raw session logs
+- the Bun runtime
+- `bun:sqlite`
+- the compiled CLI, collector, API, and summary supervisor
+- the complete `dist/client` React build and fonts
 
-`scripts/scan.ts` reads local agent logs from:
+Target Macs run the matching file without Bun, Node, a source checkout, or sidecar assets. Source and release machines require Bun 1.3.14 or newer.
 
-- `~/.claude/projects`
-- `~/.codex/sessions`
-- `~/.omp/agent/sessions`
-- `~/.pi/agent/sessions`
+## Canonical Mini state
 
-It writes `public/data/scan.json`, containing session IDs, agent source, absolute transcript paths, working directories, branches, timestamps, per-minute activity, and a short first-prompt snippet. It does not copy complete transcript bodies into the scan.
+`trails serve` opens `~/.manzanita/trails/trails.sqlite` with WAL, foreign keys, and a five-second busy timeout. Ordered migrations create:
 
-### Summaries
+- machine-scoped sessions and minute activity
+- server-owned settings, project assignments, display names, engagements, and pocket items
+- session/day summaries
+- durable, guarded inference jobs
 
-`scripts/summarize.ts` rereads each local transcript, constructs a bounded digest, calls `/api/summarize`, and writes `public/data/summaries.json`.
+Every bootstrap-visible change increments one monotonic revision. Replayed ingestion, last-seen timestamps, duplicate engagement creation, and exact preference no-ops do not. Browsers poll `/api/bootstrap?after=<revision>` while visible and retain the last snapshot through temporary failures.
 
-The digest can include the first 20 user messages, truncated to 400 characters each, and the final three assistant messages, truncated to 600 characters each. Complete transcripts are not sent to the inference service.
+There is no scan-blob or localStorage compatibility path. Transcript history is re-ingested from source logs.
 
-### Browser state
+## Periodic collectors
 
-Assignments, engagement names, settings, and divergence-pocket items are stored under the `trails.*` browser `localStorage` namespace. Every browser therefore has an independent copy; state does not synchronize across devices.
+`com.manzanita.trails.collector` runs `trails collect --once` at load and every 60 seconds. It is not a resident daemon and has no KeepAlive loop.
 
-### R2 archive
+Each run:
 
-The existing R2 integration belongs to the separate `records` archive. Trails can restore archived transcripts from it during backfill, but R2 is not Trails' live store.
+1. Acquires the state-specific PID lock for the entire cycle.
+2. Discovers live Claude, Codex, omp, and pi logs plus Claude/Codex restored roots.
+3. Compares size/mtime fingerprints; a new target or machine identity deliberately empties the effective fingerprint set.
+4. Parses changed files concurrently, eight at a time.
+5. Validates canonical protocol records and uploads batches of at most 50 sequentially.
+6. Retries network errors, 408, 429, and 5xx responses three times on exponential two-second spacing.
+7. Atomically checkpoints only ignored files proven stable and parsed files whose accepted batch matches the pre/post stat.
 
-## What Cloudflare does today
+Live copies win over restored duplicates. Claude/Codex subagents and CodexBar probes are excluded. Malformed individual JSONL lines are skipped; unreadable files and terminal upload failures remain uncheckpointed and make the command nonzero after other files finish. omp/pi forks ignore replayed parent entries older than the child session header.
 
-The Worker exposes one route:
+Collector state is mode 0600 at `~/.local/state/trails/collector-state.json`. Repeatable `--source-root source=/absolute/path` replaces the defaults. A custom `--state` derives a custom lock and never reads or creates the real state directory.
+
+## Wire privacy
+
+The collector sends:
+
+- source-local session ID, source, cwd, and branch
+- canonical start/end timestamps and event totals
+- short first prompt
+- LA-local minute buckets
+- a bounded summary digest
+
+It never sends a transcript path or body. The Mini scopes identity by `(machine_id, source, source_session_id)`, hashes decoded records in fixed field order, and exposes only global SQLite IDs to browsers. Browser bootstrap contains no source session ID, digest, or path.
+
+## Summary work
+
+Ingest settles a changed digest for five minutes, then the supervisor checks due SQLite jobs every 30 seconds and processes at most two concurrently. Network requests time out at 120 seconds and never hold a database transaction.
+
+Session jobs capture a digest hash. Day jobs capture a generation and an ordered member hash. A completion or failure mutates state only if those guards still match; a newer ingest cannot be overwritten by a stale model response. Failures retain the durable row with exact exponential minute backoff capped at one hour. One-member day summaries copy without a model; zero-member rebuilds remove stale summaries.
+
+The Cloudflare Worker accepts only:
 
 ```text
 POST /api/summarize
+Authorization: Bearer <TRAILS_AI_TOKEN>
+{"kind":"session"|"day","input":"..."}
 ```
 
-That route invokes Workers AI and returns text. The repository defines no D1 database, R2 binding, KV namespace, Durable Object, or queue.
+The Worker owns both system prompts and `@cf/moonshotai/kimi-k2.5`. Input is capped at 9,000 characters for sessions and 12,000 for days. The tracked Wrangler configuration contains no token or static assets. A missing Mini AI config disables inference without disabling Trails; an unsafe or malformed present config is a startup error.
 
-During local development, Vite serves the UI and generated JSON locally while Wrangler proxies the Workers AI binding through Cloudflare. During deployment, the React application, Worker, `scan.json`, and `summaries.json` are built into one Cloudflare deployment.
+## launchd operations
 
-This means the deployed application is a snapshot:
+The compiled installer manages only these labels:
 
-- Local session hooks update local JSON files, not deployed assets.
-- A new deployment is required to publish later scans.
-- Generated scan data includes project paths, branches, activity, and prompt snippets.
-- `worker/index.ts` does not authenticate the summarization endpoint.
+| Label | Schedule | Command |
+|---|---|---|
+| `com.manzanita.trails.server` | RunAtLoad, restart after failure | `trails serve --port 7412` |
+| `com.manzanita.trails.collector` | RunAtLoad, every 60s | `trails collect --once` |
+| `com.manzanita.trails.backup` | 03:00 daily | `trails backup --output-dir … --retain 14` |
 
-Deploying the current application as-is is therefore not a multi-device storage architecture and is not an appropriate privacy boundary.
+Program arguments and working directories are absolute. Logs are mode 0600 under `~/.local/state/trails`. `install --dry-run` performs preflight and prints the complete plan without writing files or changing processes. A real server install requires Tailscale; a real collector install requires collector configuration.
 
-## Recommended architecture
+The installer bootouts, bootstraps, and kickstarts only its exact labels. It never edits Claude, Codex, omp, or pi configuration.
 
-### Device collectors
+## Backup and restore
 
-Every work machine runs a small Trails collector that:
+`trails backup` uses SQLite serialization, not a copy of the WAL-mode main file. It writes and fsyncs a mode-0600 temporary snapshot, atomically renames it, and prunes only matching Trails backup names after success. The daily launchd job retains 14 snapshots.
 
-1. Reads only that machine's agent logs.
-2. Performs an initial historical import.
-3. Parses only the ended session after a session-shutdown hook.
-4. Submits a normalized, idempotent record to the Mini.
-5. Optionally constructs the bounded AI digest locally, leaving raw transcripts on the source machine.
+Restore is intentionally manual: stop the server label, remove stale WAL/SHM sidecars, place the verified snapshot at the canonical database path with mode 0600, and bootstrap the server label. A restored copy should pass `PRAGMA integrity_check` before it becomes the only copy.
 
-Session identity must include its origin:
+## Failure modes
 
-```text
-machine_id + source + session_id
-```
+- **Mini unavailable:** collectors retry on their next scheduled run; browser views retain the latest loaded snapshot but mutations cannot complete.
+- **Collector file changes during parsing:** the file is not checkpointed and is retried next run.
+- **Collector crash:** the next process steals only a lock whose recorded PID is dead.
+- **Inference disabled or unavailable:** collection and UI continue; summary jobs remain pending or back off durably.
+- **Stale inference response:** hash/generation guards discard it without touching the replacement job.
+- **Tailscale conflict:** installation stops before writing when `/` already proxies somewhere else.
+- **Database loss:** transcript-derived sessions can be re-ingested, but user-authored preferences and pocket state require a backup.
 
-This prevents collisions and retains provenance. The existing Claude, Codex, and omp session-end hooks can become collector triggers; they currently launch a full local rescan.
+## Alternatives rejected
 
-### Mac Mini service
-
-Run one production Bun process on the Mini, bound to `127.0.0.1`. It should provide:
-
-- the built React application
-- `POST /api/ingest`
-- read APIs for sessions, days, and summaries
-- APIs for project assignments, engagement names, settings, and thread state
-- summarization coordination
-- a SQLite database at `~/.manzanita/trails/trails.sqlite`
-
-A likely initial schema:
-
-- `machines`
-- `sessions`
-- `session_activity`
-- `session_summaries`
-- `day_summaries`
-- `project_assignments`
-- `engagements`
-- `thread_state`
-- `settings`
-
-SQLite in WAL mode is sufficient. The workload is small, writes are naturally centralized, and ordinary file-level backup remains possible.
-
-### Tailscale access
-
-Use Tailscale Serve to reverse-proxy the localhost service to a tailnet-only HTTPS address:
-
-```bash
-tailscale serve --bg http://127.0.0.1:7412
-```
-
-The exact syntax should be checked against the installed Tailscale version. The resulting application is available to authorized tailnet devices without exposing a LAN port or public internet endpoint.
-
-### Cloudflare inference
-
-Cloudflare can remain a small inference relay:
-
-1. The collector or Mini creates the bounded digest.
-2. The Mini sends that digest to the Worker.
-3. Workers AI returns a summary.
-4. The Mini stores the summary in SQLite.
-
-Before deploying that relay, protect it with a service token or Cloudflare Access machine credential. A later local model on the Mini could replace it without changing the storage architecture.
-
-## Alternatives considered
-
-### Full Cloudflare application
-
-A complete hosted design would use Worker + D1 + Access + device uploaders. It offers high availability but introduces hosted personal data, authentication, deployment state, and Cloudflare-specific storage. It may suit a public Manzanita product later; it is unnecessary for three personal Macs now.
-
-### Raw transcript synchronization
-
-Syncthing or `rsync` into per-machine directories on the Mini could prove aggregation quickly, but it would duplicate raw logs and retain path-layout, partial-write, deletion, collision, and full-rescan problems. It is a temporary experiment, not the durable store.
-
-### Multi-master SQLite replication
-
-This adds conflict resolution without a requirement for peer-to-peer writes. The Mini should own the database; other machines submit immutable session observations and mutable UI changes through its API.
-
-## Privacy boundary
-
-- Raw transcripts remain on their source machines and in the existing owner-controlled archive.
-- Normalized metadata travels only over the tailnet.
-- Only bounded digests travel to the inference provider.
-- The Mini stores derived metadata, summaries, and user-authored state.
-- The SQLite database must be backed up because user-authored assignments and thread state are not fully derivable from transcripts.
-
-## Availability tradeoff
-
-When the Mini is unavailable, Trails is unavailable. That is acceptable for an always-on home server and avoids running a public personal-data service. A read-only client cache could be added later if offline access becomes important.
-
-## Build order
-
-1. **Network proof:** Run the current application on the Mini and expose it with Tailscale Serve. This proves access but still shows only the Mini's scan and keeps browser state separate.
-2. **Central store:** Add the Bun server and SQLite schema; import the current scan, summaries, and browser state.
-3. **Device ingestion:** Add machine identity, historical import, and idempotent incremental session submission.
-4. **Shared UI state:** Move persistent `localStorage` fields to server-backed state while leaving navigation-only state local.
-5. **AI hardening:** Protect the Cloudflare inference relay or replace it with local inference.
-6. **Operations:** Run the Mini service under `launchd` and back up the SQLite database.
+- **Full Cloudflare app:** unnecessary hosted personal state, authentication, and vendor-specific storage for a few personal Macs.
+- **Raw transcript synchronization:** duplicates private logs and preserves partial-write, path-layout, deletion, and collision problems.
+- **Multi-master SQLite:** introduces conflict resolution without a peer-to-peer write requirement.
+- **Session-end hooks:** the previous full-rescan hooks missed pi and coupled agent shutdown to repository scripts; periodic idempotent one-shots cover every source and survive binary installation.
 
 ## Decision statement
 
-> Trails is a local-first, single-owner service hosted on the user's always-on machine and reached through Tailscale. Cloudflare is an optional inference provider, not the canonical data store.
+> Trails is a local-first, single-owner service hosted on the user's always-on machine and reached through Tailscale. Cloudflare is an authenticated inference provider, not the canonical data store.

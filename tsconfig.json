@@ -10,5 +10,5 @@
     "isolatedModules": true,
     "types": ["vite/client", "@cloudflare/workers-types", "bun"]
   },
-  "include": ["src", "worker", "scripts", "vite.config.ts"]
+  "include": ["cli", "collector", "server", "shared", "src", "worker", "scripts", "test", "vite.config.ts"]
 }

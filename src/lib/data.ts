@@ -1,35 +1,13 @@
 // pure data helpers — everything derived from the scan lives here, ui-free
+import { computeTopOrgs, nameOf, normalizeCwd, orgOf, shiftDate } from "../../shared/domain"
+import type { BootstrapSessionV1, BootstrapV1 } from "../../shared/protocol"
 
-export interface RawSession {
-  id: string
-  source: "claude" | "codex" | "omp" | "pi"
-  path: string
-  cwd: string | null
-  branch: string | null
-  start: string
-  end: string
-  events: number
-  userEvents: number
-  firstPrompt: string | null
-  // [localDate, minuteOfDay, eventCount, userEventCount]
-  activity: [string, number, number, number][]
-}
+export { computeTopOrgs, nameOf, normalizeCwd, orgOf, shiftDate }
 
-export interface Scan {
-  generatedAt: string
-  timezone: string
-  since: string
-  sessions: RawSession[]
-}
+export type RawSession = BootstrapSessionV1
+export type Summaries = BootstrapV1["summaries"]
 
-export interface Summaries {
-  generatedAt: string
-  model: string
-  sessions: Record<string, string>
-  days: Record<string, string>
-}
-
-export interface Session extends RawSession {
+export type Session = RawSession & {
   idx: number
   project: string
   org: string
@@ -51,30 +29,8 @@ export type DayMap = Map<string, DayProject>
 
 // ---------- naming ----------
 
-export function normalizeCwd(cwd: string | null): string {
-  if (!cwd) return "(unknown)"
-  let p = cwd.replace(/^\/Users\/[^/]+\//, "")
-  const wt = p.indexOf("/.claude/worktrees/")
-  if (wt >= 0) p = p.slice(0, wt)
-  return p
-}
 
-export function orgOf(path: string): string {
-  const seg = path.split("/")
-  if (seg[0] === "code") return seg[1] ?? "code"
-  if (seg[0] === "Documents" && seg[1] === "Codex") return "codex cloud"
-  if (seg[0] === "Library") return "icloud"
-  if (seg[0] === ".local" || seg[0] === ".config") return "dotfiles"
-  return seg[0] || "(unknown)"
-}
-
-export function nameOf(path: string): string {
-  const seg = path.split("/").filter(Boolean)
-  if (seg[0] === "Documents" && seg[1] === "Codex") return seg[3] ?? seg[2] ?? path
-  return seg[seg.length - 1] ?? path
-}
-
-export function prepSessions(raw: RawSession[]): Session[] {
+export function prepSessions(raw: ReadonlyArray<RawSession>): Session[] {
   return raw.map((s, i) => {
     const project = normalizeCwd(s.cwd)
     return {
@@ -89,16 +45,21 @@ export function prepSessions(raw: RawSession[]): Session[] {
 
 // ---------- engagements ----------
 
-export function computeTopOrgs(sessions: Session[]): string[] {
-  const focus = new Map<string, number>()
-  for (const s of sessions) focus.set(s.org, (focus.get(s.org) ?? 0) + s.userEvents)
-  return [...focus.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([o]) => o)
-}
 
-export function engagementList(topOrgs: string[], extras: string[]): Engagement[] {
-  const list: Engagement[] = topOrgs.map((org, i) => ({ id: `org:${org}`, name: org, slot: i + 1 }))
-  for (const name of extras) {
-    list.push({ id: `custom:${name}`, name, slot: list.length < 8 ? list.length + 1 : null })
+export function engagementList(
+  topOrgs: string[],
+  customEngagements: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  assignments: Record<string, string>,
+): Engagement[] {
+  const list: Engagement[] = topOrgs.map((org, index) => ({ id: `org:${org}`, name: org, slot: index + 1 }))
+  const topIds = new Set(list.map((engagement) => engagement.id))
+  const assignedOrgIds = [...new Set(Object.values(assignments).filter((id) => id.startsWith("org:")))]
+  for (const id of assignedOrgIds) {
+    if (!topIds.has(id)) list.push({ id, name: id.slice(4), slot: null })
+  }
+  for (const [index, engagement] of customEngagements.entries()) {
+    const slot = topOrgs.length + index + 1
+    list.push({ ...engagement, slot: slot <= 8 ? slot : null })
   }
   list.push({ id: "elsewhere", name: "elsewhere", slot: null })
   return list
@@ -122,11 +83,6 @@ export const engColor = (eng: Engagement): string => (eng.slot ? `var(--s${eng.s
 
 // ---------- day building ----------
 
-export function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(`${dateStr}T12:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
-}
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 const DOW_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

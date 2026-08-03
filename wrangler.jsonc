@@ -3,11 +3,6 @@
   "name": "trails",
   "main": "worker/index.ts",
   "compatibility_date": "2026-07-01",
-  "assets": {
-    "not_found_handling": "single-page-application"
-  },
-  // workers ai binding — in dev this proxies to the real api via wrangler's oauth login,
-  // so summarization needs no keys anywhere
   "ai": {
     "binding": "AI",
     "remote": true
