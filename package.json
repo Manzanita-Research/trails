@@ -11,8 +11,8 @@
     "collect": "bun cli/main.ts collect --once",
     "test": "bun test",
     "check": "tsc --noEmit",
-    "worker:dev": "wrangler dev",
-    "worker:deploy": "wrangler deploy"
+    "worker:dev": "wrangler dev --config wrangler.jsonc",
+    "worker:deploy": "wrangler deploy --config wrangler.jsonc"
   },
   "dependencies": {
     "effect": "^3.22.0",

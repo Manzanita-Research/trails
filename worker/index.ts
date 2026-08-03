@@ -30,7 +30,7 @@ export const worker = {
     const url = new URL(request.url)
     if (url.pathname !== "/api/summarize") return new Response("not found", { status: 404 })
     if (request.method !== "POST") return Response.json({ error: "method not allowed" }, { status: 405 })
-    if (request.headers.get("authorization") !== `Bearer ${env.TRAILS_AI_TOKEN}`) {
+    if (!env.TRAILS_AI_TOKEN || request.headers.get("authorization") !== `Bearer ${env.TRAILS_AI_TOKEN}`) {
       return Response.json({ error: "unauthorized" }, { status: 401 })
     }
 

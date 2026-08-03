@@ -81,6 +81,14 @@ describe("authenticated inference Worker", () => {
     expect(malformedButAuthorized.status).toBe(400)
     expect(await json(malformedButAuthorized)).toEqual({ error: "invalid request" })
     expect(calls).toHaveLength(0)
+
+    const missingSecretEnv = { ...env, TRAILS_AI_TOKEN: undefined } as unknown as Env
+    const missingSecret = await worker.fetch(
+      summarizeRequest("not json", { token: "undefined" }),
+      missingSecretEnv,
+    )
+    expect(missingSecret.status).toBe(401)
+    expect(await json(missingSecret)).toEqual({ error: "unauthorized" })
   })
 
   test("rejects arbitrary body shapes and prompt fields", async () => {
