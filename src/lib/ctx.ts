@@ -13,6 +13,7 @@ export interface Trails {
   engOf: (project: string) => Engagement
   dispName: (project: string) => string
   openProject: (project: string) => void
+  openDay: (date: string) => void
   assign: (project: string, engId: string) => void
   addEngagement: (name: string) => string
   rename: (project: string, name: string | null) => void

@@ -38,9 +38,9 @@ export function SortPanel({ open, onClose }: { open: boolean; onClose: () => voi
         {rows.map(([project, { org }]) => (
           <div key={project} className="sort-row">
             <div className="names">
-              <span className="proj-name proj-link" onClick={() => t.openProject(project)}>
+              <button className="proj-link" onClick={() => t.openProject(project)}>
                 {t.dispName(project)}
-              </span>
+              </button>
               <span className="proj-org">{org}</span>
             </div>
             <select value={t.engOf(project).id} onChange={(e) => onChange(project, e.target.value)}>

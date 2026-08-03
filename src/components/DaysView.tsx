@@ -1,39 +1,85 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { Ticks } from "./SessLine"
 import {
+  credit,
+  creditWord,
+  dowName,
   engColor,
+  fmtClock24,
   fmtDur,
   focusMinutes,
-  labelDate,
+  fullDate,
+  shiftDate,
   type DayMap,
-  type DayProject,
 } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { HourGrid, LaneMarks, makeX, useWidth } from "./timeline"
-import { DayNote, SessLine } from "./SessLine"
 
-function DayTimeline({ dayProjects, widthPx }: { dayProjects: DayMap; widthPx: number }) {
+const LABEL_W = 150
+const LANE_H = 15
+const LANE_GAP = 8
+
+function DayTimeline({
+  dayProjects,
+  widthPx,
+  cutoff,
+  active,
+  onPick,
+}: {
+  dayProjects: DayMap
+  widthPx: number
+  cutoff?: number
+  active?: string | null
+  onPick?: (project: string) => void
+}) {
   const t = useTrails()
-  const labelW = 190
-  const plotW = Math.max(320, widthPx - labelW)
-  const laneH = 16
-  const laneGap = 6
-  const topPad = 18
+  const plotW = Math.max(320, widthPx - LABEL_W)
   const projects = [...dayProjects.entries()].sort((a, b) => Math.min(...a[1].all) - Math.min(...b[1].all))
-  const H = topPad + projects.length * (laneH + laneGap) + 14
-  const X = makeX(labelW, plotW, t.boundary)
+  const H = projects.length * (LANE_H + LANE_GAP) - LANE_GAP + 34
+  const X = makeX(LABEL_W, plotW, t.boundary)
+  const cutX = cutoff !== undefined ? X(cutoff) : null
+  // marks always end at the cutoff, so only the right side is clear — no room there, no label
+  const cutLabel = cutX !== null && cutX < widthPx - 120
 
   return (
     <svg className="day-svg" width={widthPx} height={H} viewBox={`0 0 ${widthPx} ${H}`} role="img" aria-label="activity timeline">
-      <HourGrid X={X} topPad={topPad} H={H} boundary={t.boundary} />
-      {projects.map(([project, data], i) => {
-        const y = topPad + i * (laneH + laneGap)
-        const name = t.dispName(project)
-        return (
-          <g key={project}>
-            <text x={labelW - 10} y={y + laneH - 4} fill="var(--ink-2)" fontSize={11.5} textAnchor="end">
-              {name.length > 24 ? name.slice(0, 23) + "…" : name}
+      <HourGrid X={X} topPad={0} H={H} boundary={t.boundary} />
+      {cutX !== null && cutoff !== undefined && (
+        <g>
+          <line x1={cutX} y1={0} x2={cutX} y2={H - 24} stroke="var(--quiet)" strokeWidth={1} strokeDasharray="2 5" />
+          {cutLabel && (
+            <text x={cutX + 7} y={10} fill="var(--quiet)" fontSize={11}>
+              indexed to {fmtClock24(cutoff)}
             </text>
-            <LaneMarks data={data} X={X} y={y} laneH={laneH} color={engColor(t.engOf(project))} project={project} />
+          )}
+        </g>
+      )}
+      {projects.map(([project, data], i) => {
+        const y = i * (LANE_H + LANE_GAP)
+        const name = t.dispName(project)
+        const isActive = project === active
+        return (
+          <g key={project} className="lane" onClick={() => onPick?.(project)}>
+            {/* one full-width hit area per row, so hover reads the whole lane,
+                not just the painted marks — rows tile with half the gap each */}
+            <rect
+              className="lane-hit"
+              x={0}
+              y={y - LANE_GAP / 2}
+              width={widthPx}
+              height={LANE_H + LANE_GAP}
+              fill="transparent"
+            />
+            <text
+              x={0}
+              y={y + LANE_H - 3}
+              fill={isActive ? "var(--ink)" : "var(--quiet)"}
+              fontSize={12.5}
+              fontWeight={isActive ? 600 : 400}
+            >
+              {name.length > 20 ? name.slice(0, 19) + "…" : name}
+            </text>
+            <LaneMarks data={data} X={X} y={y} laneH={LANE_H} color={engColor(t.engOf(project))} project={project} />
           </g>
         )
       })}
@@ -41,149 +87,183 @@ function DayTimeline({ dayProjects, widthPx }: { dayProjects: DayMap; widthPx: n
   )
 }
 
-function ProjRow({
-  date,
-  project,
-  data,
-  focus,
-  open,
-  onToggle,
+function Pager({
+  older,
+  newer,
+  idx,
+  onDayIdx,
+  foot,
 }: {
-  date: string
-  project: string
-  data: DayProject
-  focus: number
-  open: boolean
-  onToggle: () => void
+  older?: [string, DayMap]
+  newer?: [string, DayMap]
+  idx: number
+  onDayIdx: (i: number) => void
+  foot?: boolean
 }) {
-  const t = useTrails()
-  const eng = t.engOf(project)
   return (
-    <div className="proj-row">
-      <button className="proj-summary" onClick={onToggle}>
-        <span className="dot" style={{ background: engColor(eng) }} />
-        <span
-          className="proj-name proj-link"
-          onClick={(e) => {
-            e.stopPropagation()
-            t.openProject(project)
-          }}
-        >
-          {t.dispName(project)}
-        </span>
-        <span className="proj-org">{eng.name}</span>
-        <span className="proj-meta">
-          <span>
-            <b>{fmtDur(focus)}</b> you
-          </span>
-          <span className="quiet">{fmtDur(data.all.size)} agents</span>
-          <span className="quiet">
-            {data.sessions.size} session{data.sessions.size === 1 ? "" : "s"}
-          </span>
-        </span>
-        <span className="proj-caret">{open ? "▾" : "▸"}</span>
+    <nav className={foot ? "pager pager-foot" : "pager"} aria-label="adjacent days">
+      <button disabled={!older} title={older ? "or press ←" : undefined} onClick={() => older && onDayIdx(idx + 1)}>
+        {older ? `← ${dowName(older[0])}` : "← older"}
       </button>
-      {open && (
-        <div className="proj-detail">
-          <DayNote date={date} project={project} />
-          {[...data.sessions.entries()]
-            .sort((a, b) => a[1].min - b[1].min)
-            .map(([idx, span]) => (
-              <SessLine key={idx} sess={t.sessions[idx]} span={span} />
-            ))}
-        </div>
-      )}
-    </div>
+      <button disabled={!newer} title={newer ? "or press →" : undefined} onClick={() => newer && onDayIdx(idx - 1)}>
+        {newer ? `${dowName(newer[0])} →` : "newer →"}
+      </button>
+    </nav>
   )
 }
 
-function DayCard({ date, projMap, widthPx }: { date: string; projMap: DayMap; widthPx: number }) {
-  const t = useTrails()
-  const [openRows, setOpenRows] = useState<Set<string>>(new Set())
-  const { dow, label } = labelDate(date)
-  const focus = focusMinutes([...projMap.values()].map((p) => p.user), t.halo)
-  const agentMin = new Set([...projMap.values()].flatMap((p) => [...p.all])).size
-  const sessCount = new Set([...projMap.values()].flatMap((p) => [...p.sessions.keys()])).size
-
-  const byEng = new Map<string, { name: string; color: string; sets: Set<number>[] }>()
-  for (const [project, data] of projMap) {
-    const eng = t.engOf(project)
-    if (!byEng.has(eng.id)) byEng.set(eng.id, { name: eng.name, color: engColor(eng), sets: [] })
-    byEng.get(eng.id)!.sets.push(data.user)
-  }
-  const chips = [...byEng.values()]
-    .map((c) => ({ ...c, focus: focusMinutes(c.sets, t.halo) }))
-    .filter((c) => c.focus > 0)
-    .sort((a, b) => b.focus - a.focus)
-
-  const rows = [...projMap.entries()]
-    .map(([project, data]) => ({ project, data, focus: focusMinutes([data.user], t.halo) }))
-    .sort((a, b) => b.focus - a.focus)
-
-  return (
-    <article className="day-card">
-      <div className="day-head">
-        <span className="day-date">{label}</span>
-        <span className="day-dow">{dow}</span>
-        <span className="day-stats">
-          <span>
-            <b>{fmtDur(focus)}</b> your attention
-          </span>
-          <span>
-            <b>{fmtDur(agentMin)}</b> agents active
-          </span>
-          <span>
-            <b>{sessCount}</b> sessions
-          </span>
-        </span>
-      </div>
-      <div className="day-engagements">
-        {chips.map((c) => (
-          <span key={c.name} className="eng-chip">
-            <span className="dot" style={{ background: c.color }} />
-            {c.name} <b>{fmtDur(c.focus)}</b>
-          </span>
-        ))}
-      </div>
-      <DayTimeline dayProjects={projMap} widthPx={widthPx} />
-      <div className="proj-rows">
-        {rows.map(({ project, data, focus: f }) => {
-          const key = `${date}|${project}`
-          return (
-            <ProjRow
-              key={key}
-              date={date}
-              project={project}
-              data={data}
-              focus={f}
-              open={openRows.has(key)}
-              onToggle={() => {
-                const next = new Set(openRows)
-                next.has(key) ? next.delete(key) : next.add(key)
-                setOpenRows(next)
-              }}
-            />
-          )
-        })}
-      </div>
-    </article>
-  )
-}
-
-export function DaysView() {
+export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: number) => void }) {
   const t = useTrails()
   const [ref, width] = useWidth<HTMLElement>()
-  const widthPx = Math.min(1032, width) - 42
+  const widthPx = Math.min(1100, width)
+  const headRef = useRef<HTMLDivElement>(null)
+  const notesRef = useRef<HTMLDivElement>(null)
+  const [activeProj, setActiveProj] = useState<string | null>(null)
+  const [stuck, setStuck] = useState(false)
+
+  // which way the page turn travels: older days settle in from the left (the
+  // past), newer from the right — no direction on first arrival. pinned per
+  // date so mid-animation re-renders (scroll spy) can't drop the class
+  const prevIdxRef = useRef(dayIdx)
+  const pageDirRef = useRef<{ date: string; dir: "older" | "newer" | null }>({ date: "", dir: null })
+  useEffect(() => {
+    prevIdxRef.current = dayIdx
+  }, [dayIdx])
+
+  // the day header sticks under the topbar; the topbar's height varies (it wraps
+  // on narrow screens), so it's measured into a css var rather than hardcoded
+  useEffect(() => {
+    const bar = document.querySelector<HTMLElement>(".topbar")
+    if (!bar) return
+    const set = () => document.documentElement.style.setProperty("--topbar-h", `${bar.offsetHeight}px`)
+    set()
+    const ro = new ResizeObserver(set)
+    ro.observe(bar)
+    return () => ro.disconnect()
+  }, [])
+
+  // scroll spy: the lane whose story is under the header reads as the active row
+  useEffect(() => {
+    const measure = () => {
+      const head = headRef.current
+      if (!head) return
+      const r = head.getBoundingClientRect()
+      const topPx = parseFloat(getComputedStyle(head).top)
+      setStuck(Number.isFinite(topPx) && r.top <= topPx + 1)
+      const line = r.bottom + 28
+      let cur: string | null = null
+      for (const el of notesRef.current?.querySelectorAll<HTMLElement>(".note") ?? []) {
+        if (el.getBoundingClientRect().top <= line) cur = el.dataset.project ?? null
+        else break
+      }
+      setActiveProj(cur)
+    }
+    let raf = 0
+    const onEvt = () => {
+      if (!raf)
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          measure()
+        })
+    }
+    measure()
+    addEventListener("scroll", onEvt, { passive: true })
+    addEventListener("resize", onEvt)
+    return () => {
+      cancelAnimationFrame(raf)
+      removeEventListener("scroll", onEvt)
+      removeEventListener("resize", onEvt)
+    }
+  }, [dayIdx])
+
+  // each day is a page: paging (buttons, arrows) starts it from the top
+  useEffect(() => {
+    scrollTo(0, 0)
+  }, [dayIdx])
+
+  // clicking a lane jumps to that project's note, landing just under the stuck
+  // header — where the scroll spy will read it back as the active row
+  const jumpTo = (project: string) => {
+    const note = notesRef.current?.querySelector<HTMLElement>(`.note[data-project="${CSS.escape(project)}"]`)
+    const head = headRef.current
+    if (!note || !head) return
+    const topPx = parseFloat(getComputedStyle(head).top) || 0
+    const top = scrollY + note.getBoundingClientRect().top - (topPx + head.offsetHeight + 24)
+    scrollTo({ top, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" })
+  }
+
+  if (!t.days.length) return <section ref={ref} className="view" />
+  const idx = Math.min(dayIdx, t.days.length - 1)
+  const [date, projMap] = t.days[idx]
+  const older = t.days[idx + 1]
+  const newer = t.days[idx - 1]
+
+  if (pageDirRef.current.date !== date) {
+    pageDirRef.current = {
+      date,
+      dir: dayIdx > prevIdxRef.current ? "older" : dayIdx < prevIdxRef.current ? "newer" : null,
+    }
+  }
+  const dir = pageDirRef.current.dir
+
+  const focus = focusMinutes([...projMap.values()].map((p) => p.user), t.halo)
+  const agentMin = new Set([...projMap.values()].flatMap((p) => [...p.all])).size
+  const word = creditWord[credit(focus)]
+
+  // where the index stops: shown only on the workday the scan belongs to
+  const scanD = new Date(t.scanTime)
+  const scanIso = `${scanD.getFullYear()}-${String(scanD.getMonth() + 1).padStart(2, "0")}-${String(scanD.getDate()).padStart(2, "0")}`
+  const scanWorkday = scanD.getHours() < t.boundary ? shiftDate(scanIso, -1) : scanIso
+  const scanMin = scanD.getHours() * 60 + scanD.getMinutes()
+  const cutoff = scanWorkday === date ? (scanMin < t.boundary * 60 ? scanMin + 1440 : scanMin) : undefined
+
+  // story order = timeline order: first activity of the day first
+  const notes = [...projMap.entries()]
+    .sort((a, b) => Math.min(...a[1].all) - Math.min(...b[1].all))
+    .map(([project]) => ({ project, note: t.daySummary(date, project) }))
+    .filter((n): n is { project: string; note: string } => !!n.note)
+
   return (
     <section ref={ref} className="view">
-      <p className="view-intro">
-        Days are shaped around your sleep, not midnight — work until {t.boundary - 1} am still belongs to the evening
-        before. <strong>Solid marks are minutes you were actually there</strong>, prompting and steering. The pale wash
-        is agents running while your attention was somewhere else.
-      </p>
-      {t.days.map(([date, projMap]) => (
-        <DayCard key={date} date={date} projMap={projMap} widthPx={widthPx} />
-      ))}
+      <div key={date} className={dir ? `day-page day-page-${dir}` : "day-page"}>
+        <div ref={headRef} className={stuck ? "day-head is-stuck" : "day-head"}>
+          <Pager older={older} newer={newer} idx={idx} onDayIdx={onDayIdx} />
+          <h1 className="display">{fullDate(date)}</h1>
+          <div className="facts">
+            attention <b>{fmtDur(focus)}</b>
+            <span className="sep">·</span>
+            agents <b>{fmtDur(agentMin)}</b>
+            {word && (
+              <>
+                <span className="sep">·</span>
+                {word}
+              </>
+            )}
+          </div>
+          <DayTimeline dayProjects={projMap} widthPx={widthPx} cutoff={cutoff} active={activeProj} onPick={jumpTo} />
+        </div>
+
+        {notes.length > 0 && (
+          <>
+            <h2 className="sect">the day, by project</h2>
+            <div className="notes" ref={notesRef}>
+              {notes.map(({ project, note }) => (
+                <div key={project} data-project={project} className="note">
+                  <button className="proj-cap" onClick={() => t.openProject(project)}>
+                    <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
+                    {t.dispName(project)}
+                  </button>
+                  <span className="sum">
+                    <Ticks text={note} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        <Pager older={older} newer={newer} idx={idx} onDayIdx={onDayIdx} foot />
+      </div>
     </section>
   )
 }
