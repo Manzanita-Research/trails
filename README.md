@@ -55,7 +55,7 @@ Without `~/.config/trails/server.json`, Trails serves first-prompt fallbacks and
 Configure the Mini's own collector against loopback:
 
 ```bash
-trails configure collector --server http://127.0.0.1/ --name "Studio Mini"
+trails configure collector --server http://127.0.0.1:7412/ --name "Studio Mini"
 ```
 
 Preview installation, then install:
@@ -96,7 +96,7 @@ For an isolated one-off import, replace all default roots explicitly:
 
 ```bash
 trails collect --once \
-  --server http://127.0.0.1/ \
+  --server http://127.0.0.1:7412/ \
   --device-id import-machine \
   --device-name "Archive import" \
   --state /tmp/trails-import-state.json \
