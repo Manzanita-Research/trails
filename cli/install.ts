@@ -128,6 +128,10 @@ function run(executable: string, args: ReadonlyArray<string>): { readonly exitCo
   }
 }
 
+export function isMissingLaunchdService(stderr: string): boolean {
+  return /not found|could not find service|no such process/i.test(stderr)
+}
+
 async function writableAncestor(path: string): Promise<void> {
   let candidate = resolve(path)
   while (true) {
@@ -238,7 +242,7 @@ export async function install(options: InstallOptions): Promise<void> {
     const domain = `gui/${process.getuid?.() ?? 0}`
     const service = `${domain}/${definition.label}`
     const bootout = run(launchctl, ["bootout", service])
-    if (bootout.exitCode !== 0 && !/not found|could not find service/i.test(bootout.stderr)) {
+    if (bootout.exitCode !== 0 && !isMissingLaunchdService(bootout.stderr)) {
       throw new Error(`failed to stop ${definition.label}`)
     }
     const bootstrap = run(launchctl, ["bootstrap", domain, plistPath])
