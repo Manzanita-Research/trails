@@ -154,7 +154,7 @@ function selectJobs(db: TrailsDb, now: number, inFlight: Set<string>): SummaryJo
   return jobs
     .filter((job) => !inFlight.has(job.key))
     .sort((a, b) => a.availableAt - b.availableAt || a.key.localeCompare(b.key))
-    .slice(0, 2)
+    .slice(0, Math.max(0, 2 - inFlight.size))
 }
 
 function dayMembers(db: TrailsDb, job: DayJob): DayMember[] {

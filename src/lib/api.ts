@@ -39,48 +39,83 @@ async function errorMessage(response: Response): Promise<string> {
   return `request failed (${response.status})`
 }
 
+export interface BootstrapRequester {
+  fetch(incremental: boolean): Promise<void>
+}
+
+export type BootstrapRequest = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+export function createBootstrapRequester(options: {
+  readonly request: BootstrapRequest
+  readonly read: () => BootstrapV1 | null
+  readonly write: (payload: BootstrapV1) => void
+  readonly setError: (message: string | null) => void
+  readonly setLoading: (loading: boolean) => void
+  readonly isMounted: () => boolean
+}): BootstrapRequester {
+  let requestSequence = 0
+  let latestSettledSequence = 0
+  return {
+    async fetch(incremental) {
+      const sequence = ++requestSequence
+      const current = options.read()
+      const query = incremental && current ? `?after=${current.revision}` : ""
+      try {
+        const response = await options.request(`/api/bootstrap${query}`, {
+          headers: { Accept: "application/json" },
+        })
+        if (!options.isMounted() || sequence < latestSettledSequence) return
+        latestSettledSequence = sequence
+        if (response.status === 204) {
+          options.setError(null)
+          return
+        }
+        if (!response.ok) throw new Error(await errorMessage(response))
+        const payload = (await response.json()) as BootstrapV1
+        if (!options.isMounted() || sequence < latestSettledSequence) return
+        const applied = options.read()
+        if (payload.revision >= (applied?.revision ?? -1)) options.write(payload)
+        options.setError(null)
+      } catch (cause) {
+        if (!options.isMounted() || sequence < latestSettledSequence) return
+        latestSettledSequence = sequence
+        options.setError(cause instanceof Error ? cause.message : "sync failed")
+      } finally {
+        if (options.isMounted()) options.setLoading(false)
+      }
+    },
+  }
+}
+
 export function useBootstrap(): BootstrapState {
   const [data, setData] = useState<BootstrapV1 | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const dataRef = useRef<BootstrapV1 | null>(null)
-  const requestSequence = useRef(0)
-  const latestSettledSequence = useRef(0)
   const mounted = useRef(true)
 
   useEffect(() => {
     dataRef.current = data
   }, [data])
 
-  const fetchBootstrap = useCallback(async (incremental: boolean): Promise<void> => {
-    const sequence = ++requestSequence.current
-    const current = dataRef.current
-    const query = incremental && current ? `?after=${current.revision}` : ""
-    try {
-      const response = await fetch(`/api/bootstrap${query}`, { headers: { Accept: "application/json" } })
-      if (!mounted.current) return
-      if (sequence < latestSettledSequence.current) return
-      latestSettledSequence.current = sequence
-      if (response.status === 204) {
-        setError(null)
-        return
-      }
-      if (!response.ok) throw new Error(await errorMessage(response))
-      const payload = (await response.json()) as BootstrapV1
-      const applied = dataRef.current
-      if (payload.revision >= (applied?.revision ?? -1)) {
+  const requesterRef = useRef<BootstrapRequester | null>(null)
+  if (requesterRef.current === null) {
+    requesterRef.current = createBootstrapRequester({
+      request: (input, init) => fetch(input, init),
+      read: () => dataRef.current,
+      write: (payload) => {
         dataRef.current = payload
         setData(payload)
-      }
-      setError(null)
-    } catch (cause) {
-      if (!mounted.current || sequence < latestSettledSequence.current) return
-      latestSettledSequence.current = sequence
-      setError(cause instanceof Error ? cause.message : "sync failed")
-    } finally {
-      if (mounted.current) setLoading(false)
-    }
-  }, [])
+      },
+      setError,
+      setLoading,
+      isMounted: () => mounted.current,
+    })
+  }
+  const fetchBootstrap = useCallback(
+    (incremental: boolean): Promise<void> => requesterRef.current!.fetch(incremental),
+    [],
+  )
 
   useEffect(() => {
     mounted.current = true

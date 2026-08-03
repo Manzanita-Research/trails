@@ -173,15 +173,21 @@ function collectionProgram(options: CollectionOptions): Effect.Effect<Collection
     let revision: number | null = null
     for (let index = 0; index < uploadable.length; index += 50) {
       const batch = uploadable.slice(index, index + 50)
-      try {
-        const sessions = batch.map((item) => decodeExact(IngestSessionV1Schema, item.session))
-        revision = yield* Effect.tryPromise(() => uploadBatch(target, sessions, fetcher, sleep))
-        uploaded += batch.length
-        for (const item of batch) {
-          if (item.stable) nextFiles[item.file.path] = item.fingerprint
-        }
-      } catch (cause) {
-        errors.push(cause instanceof Error ? cause.message : "upload_error")
+      const sessions = batch.map((item) => decodeExact(IngestSessionV1Schema, item.session))
+      const outcome = yield* Effect.either(
+        Effect.tryPromise({
+          try: () => uploadBatch(target, sessions, fetcher, sleep),
+          catch: (cause) => (cause instanceof Error ? cause : new Error("upload_error")),
+        }),
+      )
+      if (outcome._tag === "Left") {
+        errors.push(outcome.left instanceof Error ? outcome.left.message : "upload_error")
+        continue
+      }
+      revision = outcome.right
+      uploaded += batch.length
+      for (const item of batch) {
+        if (item.stable) nextFiles[item.file.path] = item.fingerprint
       }
     }
 
