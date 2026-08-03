@@ -2,6 +2,7 @@ import { useState } from "react"
 import { engColor, fmtAgo, type Session } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { useStored } from "../lib/store"
+import { Ticks } from "./SessLine"
 
 interface Card {
   project: string
@@ -15,7 +16,7 @@ interface PocketItem {
   at: number
 }
 
-function ThreadCard({ card }: { card: Card }) {
+function ThreadCard({ card, accent }: { card: Card; accent?: boolean }) {
   const t = useTrails()
   const note =
     card.ageMin >= 60 && card.ageMin < 60 * 36 && card.agentHadLastWord
@@ -23,16 +24,20 @@ function ThreadCard({ card }: { card: Card }) {
       : ""
   const snip = t.sessSummary(card.latest.id) ?? card.latest.firstPrompt
   return (
-    <div className="thread-card">
-      <span className="proj-name proj-link" onClick={() => t.openProject(card.project)}>
-        <span className="dot" style={{ background: engColor(t.engOf(card.project)) }} />
+    <div className="thread">
+      <button className="thread-name" onClick={() => t.openProject(card.project)}>
+        <span className="sq" style={{ background: engColor(t.engOf(card.project)) }} />
         {t.dispName(card.project)}
-      </span>
-      <div className="thread-when">
+      </button>
+      <div className={`thread-when${accent ? " is-you" : ""}`}>
         {fmtAgo(card.latest.end, t.scanTime)}
         {note}
       </div>
-      {snip && <div className="thread-snippet">{snip}</div>}
+      {snip && (
+        <div className="thread-snippet">
+          <Ticks text={snip} />
+        </div>
+      )}
     </div>
   )
 }
@@ -62,38 +67,34 @@ export function ThreadsView() {
   for (const key of Object.keys(cols)) cols[key].sort((a, b) => a.ageMin - b.ageMin)
 
   const colDefs: [string, string, string][] = [
-    ["motion", "In motion", "touched in the last hour"],
-    ["waiting", "Waiting on you", "finished or paused, last day or so"],
-    ["resting", "Resting", "quiet this week"],
-    ["dormant", "Dormant", "quiet longer — and that's fine"],
+    ["motion", "in motion", "touched in the last hour"],
+    ["waiting", "waiting on you", "finished or paused, last day or so"],
+    ["resting", "resting", "quiet this week"],
+    ["dormant", "dormant", "quiet longer — and that's fine"],
   ]
 
   return (
     <section className="view">
-      <p className="view-intro">
-        Threads don't have deadlines or priority scores. They're <strong>in motion, waiting on you, or resting</strong>{" "}
-        — and resting is a real state, not a failure state. Snapshot as of the last scan.
-      </p>
+      <div className="datebar">
+        <h1 className="display">Threads</h1>
+      </div>
+      <div className="facts">in motion, waiting on you, or resting — and resting is a real state, not a failure state</div>
       <div className="threads-grid">
         {colDefs.map(([key, title, sub]) => {
           const cards = cols[key]
           const shown = cards.slice(0, 10)
           return (
-            <div key={key}>
+            <div key={key} className="thread-col">
               <h2 className="thread-col-head">
                 <b>
-                  {title} · {cards.length}
+                  {title} <i>· {cards.length}</i>
                 </b>
                 <span>{sub}</span>
               </h2>
               {shown.map((c) => (
-                <ThreadCard key={c.project} card={c} />
+                <ThreadCard key={c.project} card={c} accent={key === "waiting"} />
               ))}
-              {cards.length > shown.length && (
-                <div className="thread-when" style={{ padding: "4px 2px" }}>
-                  + {cards.length - shown.length} more
-                </div>
-              )}
+              {cards.length > shown.length && <div className="thread-more">+ {cards.length - shown.length} more</div>}
             </div>
           )
         })}
@@ -127,7 +128,7 @@ export function ThreadsView() {
               <span className="when">
                 {new Date(item.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </span>
-              <span>{item.text}</span>
+              <span className="text">{item.text}</span>
               <button className="del" title="let it go" onClick={() => setPocket(pocket.filter((_, j) => j !== i))}>
                 ✕
               </button>
