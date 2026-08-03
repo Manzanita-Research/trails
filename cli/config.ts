@@ -1,0 +1,133 @@
+import { Schema } from "effect"
+import { chmodSync, mkdirSync, openSync, closeSync, fsyncSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { homedir, hostname } from "node:os"
+import { dirname, join } from "node:path"
+import { decodeExact } from "../shared/protocol"
+
+export interface CollectorConfig {
+  readonly protocolVersion: 1
+  readonly server: string
+  readonly deviceId: string
+  readonly deviceName: string
+}
+
+export interface ServerConfig {
+  readonly protocolVersion: 1
+  readonly aiUrl: string
+  readonly aiToken: string
+}
+
+const CollectorConfigSchema = Schema.Struct({
+  protocolVersion: Schema.Literal(1),
+  server: Schema.String,
+  deviceId: Schema.String,
+  deviceName: Schema.String,
+})
+const ServerConfigSchema = Schema.Struct({
+  protocolVersion: Schema.Literal(1),
+  aiUrl: Schema.String,
+  aiToken: Schema.String,
+})
+
+export const COLLECTOR_CONFIG_PATH = join(homedir(), ".config/trails/collector.json")
+export const SERVER_CONFIG_PATH = join(homedir(), ".config/trails/server.json")
+
+function isLoopback(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1"
+}
+
+export function normalizeCollectorServer(value: string): string {
+  const url = new URL(value)
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+    throw new Error("collector server must be a credential-free base URL with path /")
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url.hostname))) {
+    throw new Error("collector server requires HTTPS except on loopback")
+  }
+  url.pathname = "/"
+  return url.toString()
+}
+
+export function normalizeInferenceUrl(value: string): string {
+  const url = new URL(value)
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/api/summarize") {
+    throw new Error("AI URL must be the credential-free /api/summarize endpoint")
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url.hostname))) {
+    throw new Error("AI URL requires HTTPS except on loopback")
+  }
+  return url.toString()
+}
+
+function atomicWrite(path: string, value: unknown): void {
+  const previousUmask = process.umask(0o077)
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
+    writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600 })
+    const descriptor = openSync(temporary, "r")
+    try {
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
+    chmodSync(temporary, 0o600)
+    renameSync(temporary, path)
+  } finally {
+    process.umask(previousUmask)
+  }
+}
+
+export function loadCollectorConfig(path = COLLECTOR_CONFIG_PATH): CollectorConfig | null {
+  try {
+    return decodeExact(CollectorConfigSchema, JSON.parse(readFileSync(path, "utf8"))) as CollectorConfig
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
+    throw error
+  }
+}
+
+export function configureCollector(options: {
+  readonly server: string
+  readonly name?: string
+  readonly resetDeviceId?: boolean
+  readonly path?: string
+}): CollectorConfig {
+  const path = options.path ?? COLLECTOR_CONFIG_PATH
+  const existing = loadCollectorConfig(path)
+  const deviceName = (options.name ?? existing?.deviceName ?? hostname()).trim()
+  if (!deviceName || deviceName.length > 128) throw new Error("collector name must be 1..128 characters")
+  const config: CollectorConfig = {
+    protocolVersion: 1,
+    server: normalizeCollectorServer(options.server),
+    deviceId: !options.resetDeviceId && existing ? existing.deviceId : crypto.randomUUID(),
+    deviceName,
+  }
+  atomicWrite(path, config)
+  return config
+}
+
+export function configureServer(options: {
+  readonly aiUrl: string
+  readonly aiToken: string
+  readonly path?: string
+}): ServerConfig {
+  const token = options.aiToken.replace(/\r?\n$/, "")
+  if (!token) throw new Error("AI token must not be empty")
+  const config: ServerConfig = {
+    protocolVersion: 1,
+    aiUrl: normalizeInferenceUrl(options.aiUrl),
+    aiToken: token,
+  }
+  atomicWrite(options.path ?? SERVER_CONFIG_PATH, config)
+  return config
+}
+
+export function loadServerConfig(path = SERVER_CONFIG_PATH): ServerConfig | null {
+  try {
+    return decodeExact(ServerConfigSchema, JSON.parse(readFileSync(path, "utf8"))) as ServerConfig
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
+    throw error
+  }
+}

@@ -1,3 +1,8 @@
+import { Effect } from "effect"
+import { runCollection } from "../collector/sync"
+import { DEFAULT_STATE_PATH } from "../collector/state"
+import { parseSourceRoot } from "../collector/sources"
+import { configureCollector, loadCollectorConfig } from "./config"
 import { join, resolve } from "node:path"
 import { createApp } from "../server/app"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
@@ -9,6 +14,14 @@ function valueAfter(args: string[], flag: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined
 }
 
+function valuesAfter(args: string[], flag: string): string[] {
+  const values: string[] = []
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === flag && args[index + 1]) values.push(args[index + 1])
+  }
+  return values
+}
+
 function parsePort(value: string): number {
   const port = Number(value)
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("port must be between 1 and 65535")
@@ -16,7 +29,13 @@ function parsePort(value: string): number {
 }
 
 function printUsage(): void {
-  console.log(`trails ${VERSION}\n\nCommands:\n  serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]\n  version`)
+  console.log(`trails ${VERSION}
+
+Commands:
+  serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
+  collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
+  configure collector --server URL [--name NAME] [--reset-device-id]
+  version`)
 }
 
 async function serve(args: string[]): Promise<void> {
@@ -49,9 +68,50 @@ async function serve(args: string[]): Promise<void> {
   console.log(`trails serving on http://${host}:${server.port}`)
 }
 
+async function collect(args: string[]): Promise<void> {
+  if (!args.includes("--once")) throw new Error("collect currently requires --once")
+  const config = loadCollectorConfig()
+  const server = valueAfter(args, "--server") ?? config?.server
+  const deviceId = valueAfter(args, "--device-id") ?? config?.deviceId
+  const deviceName = valueAfter(args, "--device-name") ?? config?.deviceName
+  if (!server || !deviceId || !deviceName) {
+    throw new Error("collector server and device identity are not configured")
+  }
+  const sourceRoots = valuesAfter(args, "--source-root")
+  const result = await Effect.runPromise(
+    runCollection({
+      server,
+      deviceId,
+      deviceName,
+      statePath: resolve(valueAfter(args, "--state") ?? DEFAULT_STATE_PATH),
+      roots: sourceRoots.length ? sourceRoots.map(parseSourceRoot) : undefined,
+    }),
+  )
+  console.log(
+    `collected ${result.uploaded}, unchanged ${result.unchanged}, ignored ${result.ignored}, revision ${result.revision ?? "unchanged"}`,
+  )
+}
+
+function configure(args: string[]): void {
+  if (args[0] !== "collector") throw new Error("configure requires collector")
+  const server = valueAfter(args, "--server")
+  if (!server) throw new Error("configure collector requires --server")
+  const config = configureCollector({
+    server,
+    name: valueAfter(args, "--name"),
+    resetDeviceId: args.includes("--reset-device-id"),
+  })
+  console.log(`configured collector ${config.deviceName} (${config.deviceId}) for ${config.server}`)
+}
+
 export async function main(args = process.argv.slice(2)): Promise<void> {
   const command = args[0]
   if (command === "serve") return serve(args.slice(1))
+  if (command === "collect") return collect(args.slice(1))
+  if (command === "configure") {
+    configure(args.slice(1))
+    return
+  }
   if (command === "version") {
     console.log(VERSION)
     return
