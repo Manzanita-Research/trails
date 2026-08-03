@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
   buildDays,
   computeTopOrgs,
@@ -15,6 +15,7 @@ import {
 } from "./lib/data"
 import { TrailsCtx, type Trails } from "./lib/ctx"
 import { useStored } from "./lib/store"
+import { themeForProject, themeVariables } from "./lib/projectThemes"
 import { Topbar, type ListView } from "./components/Topbar"
 import { DaysView } from "./components/DaysView"
 import { WeekView } from "./components/WeekView"
@@ -42,6 +43,8 @@ export function App({ scan, summaries }: { scan: Scan; summaries: Summaries | nu
   const days = useMemo(() => buildDays(sessions, boundary), [sessions, boundary])
   const topOrgs = useMemo(() => computeTopOrgs(sessions), [sessions])
   const engs = useMemo(() => engagementList(topOrgs, extras), [topOrgs, extras])
+  const activeTheme = useMemo(() => themeForProject(view === "project" ? projectKey : null), [view, projectKey])
+  const activeThemeStyle = useMemo(() => themeVariables(activeTheme) as CSSProperties, [activeTheme])
   const orgByProject = useMemo(() => {
     const m = new Map<string, string>()
     for (const s of sessions) m.set(s.project, s.org)
@@ -127,7 +130,14 @@ export function App({ scan, summaries }: { scan: Scan; summaries: Summaries | nu
 
   return (
     <TrailsCtx.Provider value={t}>
-      <div onMouseMove={onMove}>
+      <div
+        className="app-shell"
+        data-project-theme={activeTheme.id}
+        data-theme-surface={activeTheme.treatment.surface}
+        data-theme-heading={activeTheme.treatment.heading}
+        style={activeThemeStyle}
+        onMouseMove={onMove}
+      >
         <Topbar
           view={view}
           onView={(v) => {

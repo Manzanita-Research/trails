@@ -23,6 +23,12 @@ The character is contemporary California calm: simple like the original prototyp
 - Discrete day pages with fast prev/next paging; week view stacks the same strips
 - Editorial, unboxed layout: air and alignment instead of cards and borders
 
+## Project Worlds
+
+The all-work views always use the Trails system below. Entering a project detail may instead apply that repository's normalized identity to the same Trails interface: palette, display/body/mono stacks, timeline colors, focus accent, and one bounded surface treatment (`flat`, `dots`, or `grid`). The shared navigation, project facts, day rows, timeline geometry, controls, state language, spacing, and responsive behavior do not change.
+
+Project identity is data, not alternate UI. Profiles live behind the constrained contract in `src/lib/projectThemes.ts`; they cannot supply markup, labels, layout, behavior, or arbitrary CSS. An unknown project falls back exactly to Pacific Light. The No Scenery Rule below governs the Trails/default profile; a non-Trails project may use only the surface treatment explicitly carried by its normalized profile.
+
 ## Colors
 
 Warm neutral ground, dusk ink, and a small set of coastal project colors; chroma belongs to the user's work, not to the chrome.
