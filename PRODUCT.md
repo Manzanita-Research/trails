@@ -24,21 +24,21 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 
 ## Operating Context
 
-- Raw material: local session logs at `~/.claude/projects` (Claude Code) and `~/.codex/sessions` (Codex), scanned into metadata-only JSON (~500 sessions in ~25s).
+- Raw material: local Claude Code, Codex, omp, and pi session logs. A periodic collector parses changed files on each Mac and submits normalized observations to the owner's Mini; transcript paths and bodies never cross the source-machine boundary.
 - Days are human-shaped: the working day starts around 6 am; 1 am work belongs to the evening it grew out of. Timezone currently pinned to America/Los_Angeles.
 - Work states: threads are in motion, waiting on you, or resting — resting is a real state, not a failure state. No deadlines, no priority scores. Divergence (new ideas mid-thread) gets caught without abandoning the current thread.
 - Billing model: attention-hours roll into day-credits (¼ ≥ 1h, ½ ≥ 2.5h, full ≥ 5.5h), matching how freelance billing actually works.
-- Triage: projects auto-file by repo org and can be reassigned to engagements; assignments persist locally.
-- Summarization: sessions become one-line contribution summaries via Kimi K3 on Workers AI through Cloudflare AI Gateway, incremental so reruns only pay for new sessions.
+- Triage: projects auto-file by repo org and can be reassigned to shared engagements. Assignments, display names, settings, and divergence-pocket items persist canonically in SQLite and synchronize across browsers.
+- Summarization: changed sessions settle for five minutes, then durable jobs send bounded digests through an authenticated Cloudflare Workers AI relay. Sessions become one-line contribution summaries; project/day rollups are guarded against stale model responses.
 
 ## Capabilities and Constraints
 
-- **Multi-machine is required.** The first user alone works across three Macs, a VPS, and cloud coding agents; a single-machine scan blob cannot be the end state.
-- **Privacy boundary:** metadata and short prompt snippets may go to the AI for summarization; full transcript bodies stay out of any centrally hosted service. Syncing your own data across your own machines/infra is fine.
-- **Open decision — distribution shape:** a Manzanita-hosted app "sounds scary"; the leaning is something people run themselves on their own Cloudflare infra. Undecided, do not assume either.
-- Stack: Bun, Vite, React 19, TypeScript, Effect (summarize pipeline), Cloudflare Worker (keyless AI binding proxy). Deploys via wrangler.
+- **Multi-machine is implemented.** One always-on Mac Mini owns the canonical SQLite-backed service behind Tailscale; a one-shot collector on each Mac syncs idempotently every 60 seconds.
+- **Privacy boundary:** normalized metadata and bounded digests may leave a source machine. Full transcript bodies and local transcript paths do not. Browser bootstrap omits source-local session IDs and digests.
+- **Distribution shape:** two standalone macOS executables (`arm64`, `x64`) embed Bun, SQLite, and the built client. Target Macs require no runtime or repository checkout. Users hold the Mini, database, tailnet, backups, and Cloudflare token.
+- Stack: Bun, `bun:sqlite`, Vite, React 19, TypeScript, Effect, Tailscale Serve, launchd, and a narrowly scoped authenticated Cloudflare Workers AI relay.
 - Terminology in use: threads, engagements, day-credits, divergence pocket, attention vs. wall clock, human-shaped days, in motion / waiting on you / resting / dormant.
-- Planned direction (from README, unconfirmed as commitments): SessionEnd hooks instead of full rescans, an append-only local store, an Akasha vault bridge, invoice export from the week view.
+- Still unimplemented product directions: Akasha vault bridge and invoice export from the week view.
 
 ## Brand Commitments
 
@@ -48,7 +48,7 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 
 ## Evidence on Hand
 
-- A working prototype on real data: three views (Days, Week, Threads) over ~500 real scanned sessions, plus working AI summarization (`public/data/scan.json`, `data/summaries.json`).
+- A working end-to-end implementation: standalone Mini service, periodic multi-Mac collectors, canonical SQLite state, Days/Week/Threads/project views, durable summaries, Tailscale/launchd installer, and WAL-safe backups.
 - No testimonials, case studies, benchmarks, pricing, or third-party proof exist. Future marketing/docs work must not fabricate any.
 
 ## Product Principles
@@ -56,5 +56,5 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 1. **Read the exhaust, never add ceremony.** Trails must work from what agents already leave behind; any feature that asks the user to log, tag, or track as they go is off-mission.
 2. **Attention is the unit.** Presence-minutes, not wall clock, drive every number shown — memory views and billing math alike.
 3. **Days are human-shaped and states are judgment-free.** The 6 am day boundary and "resting is not failure" are product positions, not implementation details.
-4. **Metadata over transcripts.** Every pipeline stage stays metadata-only; summaries derive from the smallest text that works.
+4. **Metadata over transcripts.** Every pipeline stage derives the smallest bounded text that works; raw transcript bodies stay on their source machines.
 5. **Yours to run.** Whatever the distribution shape becomes, users hold their own data and their own infrastructure keys.

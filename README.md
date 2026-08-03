@@ -2,75 +2,171 @@
 
 Where your days actually went.
 
-A memory system for parallel, agent-heavy, ADHD-shaped work. Not a time tracker — you don't work in blocks, you work in threads. Trails reconstructs your days from the session logs your coding agents already leave behind, so the end of a week is a story you can read instead of a fog you squint at.
+A memory system for parallel, agent-heavy, ADHD-shaped work. Trails is not a time tracker: it reconstructs human-shaped days and active threads from coding-agent session logs already present on your Macs.
 
-## What it believes
+## Architecture
 
-- **Days are human-shaped.** The working day starts around 6 am, not midnight. Work at 1 am belongs to the evening it grew out of.
-- **Your attention is the real unit.** Agents run for hours; you were there for minutes of it. Trails separates minutes you were prompting and steering from minutes agents ran without you. Billing derives from attention, not wall clock.
-- **Threads, not tasks.** Work is in motion, waiting on you, or resting. Resting is a real state, not a failure state. No deadlines, no priority scores.
-- **Divergence is safe.** New ideas get caught without abandoning the current thread.
+One always-on Mac Mini owns the canonical service:
 
-## What exists now
+- `trails serve` binds SQLite and the HTTP app to `127.0.0.1:7412`.
+- Tailscale Serve exposes that loopback service to the tailnet. Trails never opens a LAN socket and does not add a second application token.
+- `trails collect --once` runs every minute on each Mac, parses changed Claude, Codex, omp, and pi transcripts locally, and submits normalized observations in batches of at most 50.
+- `~/.manzanita/trails/trails.sqlite` owns sessions, preferences, pocket items, summaries, and durable inference jobs.
+- A narrowly scoped Cloudflare Worker authenticates summary requests and calls Workers AI. SQLite remains canonical.
 
-A working app on real data — Vite + React frontend, a Cloudflare Worker for inference, Effect pipelines for the data work:
+The release artifact is one architecture-specific executable containing the Bun runtime, `bun:sqlite`, and the built React app. Target Macs need neither Bun nor a repository checkout.
 
-- `scripts/scan.ts` — walks `~/.claude/projects`, `~/.codex/sessions`, `~/.omp/agent/sessions`, and `~/.pi/agent/sessions`, emitting metadata-only JSON (per-minute activity, user-event minutes, cwd, branch, first prompt snippet — never transcript bodies) to `public/data/scan.json`. ~500 sessions in ~25s.
-- `src/` — the React app, three views over the scan:
-  - **Days** — one card per human-shaped day: parallel project lanes, solid marks where you were present, pale wash where agents ran alone.
-  - **Week** — attention-hours per engagement rolled into day-credits (¼ ≥ 1h, ½ ≥ 2.5h, full ≥ 5.5h), the way billing actually works.
-  - **Threads** — in motion / waiting on you / resting / dormant, plus a divergence pocket for catching ideas mid-thread.
-- Triage lives in the "Sort projects" panel: projects auto-file by repo org, reassign to engagements as needed. Assignments, renames, and settings persist in localStorage.
-- `worker/index.ts` — a Worker with a Workers AI binding (`env.AI`). `POST /api/summarize` takes `{system, user}` and runs Kimi K2.5 (`@cf/moonshotai/kimi-k2.5`). No API keys anywhere: in dev the binding proxies through wrangler's OAuth login (`"remote": true` in `wrangler.jsonc`); deployed, it's native.
-- `scripts/summarize.ts` — an Effect pipeline that digests each session transcript (bounded extract, never the full log), asks the worker for a one-line contribution summary, then joins sessions into per-project day rollups. Incremental — reruns only pay for new sessions. The UI picks up `public/data/summaries.json` automatically and falls back to first-prompt snippets without it.
-- `scripts/backfill.ts` — restores history that Claude Code's old 30-day cleanup deleted from disk but [records](https://github.com/manzanita-research/records) had already archived to R2. Reads the archiver's `~/.config/records/state.json` for exact object keys, downloads main-session transcripts (subagent rollouts skipped) into `~/.manzanita/trails/backfill/`, and verifies each against the archiver's recorded sha256. No keys — wrangler reads the bucket through its OAuth login. Idempotent: reruns skip files already present at the right size. The scanner indexes the backfill roots alongside the live logs, live copy winning when a session exists in both.
+## Build
 
-Run it:
+Source and build machines require Bun 1.3.14 or newer.
 
 ```bash
-bun run scan   # build public/data/scan.json
-bun run dev    # vite + worker on http://localhost:7412
+bun install --frozen-lockfile
+bun run check
+bun test
+bun run build
 ```
 
-Then, with the dev server up, `bun run summarize` (`--limit 20` to sample first, `--dry` prints a digest without calling the model). Point `TRAILS_WORKER_URL` at a deployed worker to summarize against prod.
+Outputs:
 
-One-time, if you have a records archive: `bun scripts/backfill.ts` (`--dry` lists what it would fetch), then rescan and summarize as usual — restored sessions flow through the same pipeline.
-
-To keep the index current automatically, register the appropriate session-end integration. Claude Code, in `~/.claude/settings.json`:
-
-```json
-{ "type": "command", "command": "/bin/sh \"$HOME/code/manzanita-research/trails/scripts/session-end-detach.sh\"" }
+```text
+dist/trails-darwin-arm64
+dist/trails-darwin-x64
 ```
 
-Codex, in `~/.codex/config.toml` (SessionEnd also fires after 30 idle minutes there):
-
-```toml
-[[hooks.SessionEnd]]
-
-[[hooks.SessionEnd.hooks]]
-type = "command"
-command = "/bin/sh /Users/jem/code/manzanita-research/trails/scripts/session-end-detach.sh"
-timeout = 3
-```
-
-omp uses a drop-in extension:
+Development runs Vite on 7412 and an API-only Bun server on 7413:
 
 ```bash
-ln -s "$HOME/code/manzanita-research/trails/scripts/omp-session-end.ts" \
-  "$HOME/.omp/agent/extensions/trails-session-end.ts"
+bun run dev
 ```
 
-Forked omp sessions count only activity after their fork point. pi has no hook; its sessions ride along on the next rescan.
+## Configure the Mini
 
-The wrapper detaches the real runner (`scripts/session-end.ts`) immediately — Codex caps SessionEnd hooks at 3 seconds and Claude shouldn't wait on a ~40s rescan either. The runner serializes bursts of parallel sessions ending with a lockfile, rescans, and summarizes new sessions when the dev server is up — otherwise summaries catch up on a later run. Progress lands in `.hook.log`.
+Copy the matching binary to the Mini, then configure the optional inference relay. The token is read from stdin so it does not enter shell history:
 
-`bun run deploy` builds and ships the whole thing (static app + worker) with wrangler.
+```bash
+printf '%s\n' "$TRAILS_AI_TOKEN" | trails configure server \
+  --ai-url https://trails-ai.example.workers.dev/api/summarize \
+  --ai-token-stdin
+```
 
-Note on models: Kimi K3 proper (`moonshotai/kimi-k3`) is a third-party partner model on Cloudflare — it needs AI Gateway Unified Billing credits enabled on the account. Until then trails uses `@cf/moonshotai/kimi-k2.5`, hosted natively on Workers AI, which the OAuth login covers with zero setup. Switching later is a one-line change in `worker/index.ts`.
+Without `~/.config/trails/server.json`, Trails serves first-prompt fallbacks and leaves summary jobs pending.
 
-## Where it's going
+Configure the Mini's own collector against loopback:
 
-1. **Incremental hooks** — the `SessionEnd` hook exists (above) but still full-rescans; next step is appending just the ended session to the store so it stays O(1) as history grows.
-2. **Real store** — move from a scan blob to an append-only local store (SQLite or JSONL per day). The R2 backfill (above) already restored the archived history; the store just needs to ingest it once.
-3. **Akasha bridge** — daily rollups written to `~/.manzanita/akasha/222-temporal/` in the vault's conventions.
-4. **Invoice export** — week view → a plain-text day-credit summary you can paste to a client.
+```bash
+trails configure collector --server http://127.0.0.1/ --name "Studio Mini"
+```
+
+Preview installation, then install:
+
+```bash
+trails install server --dry-run
+trails install collector --dry-run
+trails install server
+trails install collector
+```
+
+The server install refuses to proceed without Tailscale. It preserves unrelated Serve handlers and accepts the root only when it is unused or already points exactly to `http://127.0.0.1:7412`.
+
+Installed launchd labels:
+
+- `com.manzanita.trails.server` — loopback service, restarted after failure.
+- `com.manzanita.trails.collector` — one collection at load and every 60 seconds; no daemon or keepalive loop.
+- `com.manzanita.trails.backup` — a committed SQLite snapshot daily at 03:00, retaining 14 Trails backups.
+
+The UI is available at the HTTPS URL reported by `tailscale serve status`.
+
+## Configure another Mac
+
+Use the Mini's Tailscale HTTPS base URL, whose path must be `/`:
+
+```bash
+trails configure collector \
+  --server https://studio-mini.example-tailnet.ts.net/ \
+  --name "MacBook Pro"
+trails collect --once
+trails install collector --dry-run
+trails install collector
+```
+
+The collector identity is created once and preserved across later configuration changes unless `--reset-device-id` is supplied. Changing the endpoint, identity, or display name deliberately replays every discoverable session to the new target. Canonical ingest is idempotent.
+
+For an isolated one-off import, replace all default roots explicitly:
+
+```bash
+trails collect --once \
+  --server http://127.0.0.1/ \
+  --device-id import-machine \
+  --device-name "Archive import" \
+  --state /tmp/trails-import-state.json \
+  --source-root omp=/absolute/path/to/sessions
+```
+
+A temporary `--state` path derives its own lock and never touches the default collector state directory.
+
+## Cloudflare inference relay
+
+The Worker exposes only authenticated `POST /api/summarize` requests. Deploy the secret separately from tracked configuration:
+
+```bash
+wrangler secret put TRAILS_AI_TOKEN
+bun run worker:deploy
+```
+
+`wrangler.jsonc` contains only the Worker entrypoint, compatibility date, and Workers AI binding. The model and repository-owned session/day prompts live in `worker/index.ts`; callers cannot supply arbitrary system prompts.
+
+## Backups and restore
+
+Create a manual committed snapshot while the WAL database is active:
+
+```bash
+trails backup --output ~/Desktop/trails.sqlite
+```
+
+Scheduled form:
+
+```bash
+trails backup --output-dir ~/.manzanita/trails/backups --retain 14
+```
+
+Restore on the Mini only while the server is stopped:
+
+```bash
+launchctl bootout "gui/$UID/com.manzanita.trails.server"
+rm -f ~/.manzanita/trails/trails.sqlite-wal ~/.manzanita/trails/trails.sqlite-shm
+cp /path/to/trails-backup.sqlite ~/.manzanita/trails/trails.sqlite
+chmod 600 ~/.manzanita/trails/trails.sqlite
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.manzanita.trails.server.plist
+launchctl kickstart -k "gui/$UID/com.manzanita.trails.server"
+```
+
+Verify a backup independently with `PRAGMA integrity_check` before relying on it.
+
+## Archived transcript backfill
+
+`scripts/backfill.ts` remains an optional R2 restore utility for history archived by [records](https://github.com/manzanita-research/records). It verifies restored objects against recorded SHA-256 values and writes Claude/Codex layouts under `~/.manzanita/trails/backfill/`. The normal collector discovers those roots; live copies win over restored duplicates.
+
+```bash
+bun scripts/backfill.ts --dry
+bun scripts/backfill.ts
+trails collect --once
+```
+
+## Remove old session-end hooks
+
+Installation does not edit unrelated agent configuration. Remove the retired full-rescan hooks manually:
+
+1. In `~/.claude/settings.json`, remove the `SessionEnd` command entry whose command contains `scripts/session-end-detach.sh`.
+2. In `~/.codex/config.toml`, remove the `[[hooks.SessionEnd]]` entry whose command contains `scripts/session-end-detach.sh`.
+3. Remove the omp extension symlink:
+
+   ```bash
+   rm ~/.omp/agent/extensions/trails-session-end.ts
+   ```
+
+pi never had a Trails hook. The scheduled collector now covers every source.
+
+## Privacy boundary
+
+Transcript parsing happens on the originating Mac. Ingest includes source session ID, source, cwd, branch, timestamps, event counts, first prompt, minute buckets, and a bounded digest. It never sends a transcript path or body. The Mini stores the bounded digest only for summary work; the browser bootstrap receives neither source session IDs nor digests. Inference requests contain at most 9,000 characters for a session or 12,000 characters for a day and are sent only to the configured authenticated relay.
