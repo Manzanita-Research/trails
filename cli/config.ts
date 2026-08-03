@@ -1,5 +1,15 @@
 import { Schema } from "effect"
-import { chmodSync, mkdirSync, openSync, closeSync, fsyncSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  fsyncSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir, hostname } from "node:os"
 import { dirname, join } from "node:path"
 import { decodeExact } from "../shared/protocol"
@@ -125,9 +135,18 @@ export function configureServer(options: {
 
 export function loadServerConfig(path = SERVER_CONFIG_PATH): ServerConfig | null {
   try {
-    return decodeExact(ServerConfigSchema, JSON.parse(readFileSync(path, "utf8"))) as ServerConfig
+    const info = statSync(path)
+    const currentUid = process.getuid?.()
+    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
+      throw new Error("server configuration permissions are unsafe")
+    }
+    const config = decodeExact(ServerConfigSchema, JSON.parse(readFileSync(path, "utf8"))) as ServerConfig
+    if (normalizeInferenceUrl(config.aiUrl) !== config.aiUrl || !config.aiToken) {
+      throw new Error("server configuration is invalid")
+    }
+    return config
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
-    throw error
+    throw new Error("server configuration is invalid")
   }
 }
