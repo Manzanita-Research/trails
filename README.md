@@ -40,30 +40,26 @@ Development runs Vite on 7412 and an API-only Bun server on 7413:
 bun run dev
 ```
 
-## Beta installation
+## Alpha installation
 
-Install the standalone executable from the public binary tap:
-
-```bash
-brew install manzanita-research/tap/trails
-```
+The temporary alpha installer detects the Mac architecture, downloads the matching standalone binary, verifies its pinned SHA-256, installs it atomically under `~/.local/bin`, and hands off to the one-command setup flow.
 
 On the always-on Mac that will own Trails:
 
 ```bash
-trails setup hub --name "Studio Mini"
+curl -fsSL https://ALPHA_RELEASE_URL/install.sh | sh -s -- hub --name "Studio Mini"
 ```
 
-This configures the hub's loopback collector, installs and starts the server and daily backup, waits for the health check, performs the initial full index, installs the minute collector, and prints the private Tailscale URL.
-
-On every other Mac:
+On every other Mac, use the private Tailscale URL printed by the hub:
 
 ```bash
-brew install manzanita-research/tap/trails
-trails setup join https://studio-mini.example-tailnet.ts.net/ --name "MacBook Pro"
+curl -fsSL https://ALPHA_RELEASE_URL/install.sh | sh -s -- \
+  join https://studio-mini.example-tailnet.ts.net/ --name "MacBook Pro"
 ```
 
-`setup join` verifies the hub before changing local collector state, performs the initial full index, and installs the minute collector. Both setup commands are safe to rerun after an upgrade. Changing the endpoint, identity, or display name deliberately replays every discoverable session to the new target; canonical ingest is idempotent.
+Hub setup installs and starts the server and daily backup, waits for the health check, performs the initial full index, and installs the minute collector. Join setup verifies the hub before changing local collector state, performs the initial full index, and installs the minute collector.
+
+Rerun the same installer command to update an alpha installation. Device identity and configuration are preserved; changing the endpoint or display name deliberately replays every discoverable session to the new target, and canonical ingest is idempotent.
 
 The hub requires Tailscale and refuses a conflicting Serve root. Tailscale provides the private HTTPS boundary; Trails still binds only to `127.0.0.1:7412`.
 

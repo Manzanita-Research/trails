@@ -1,6 +1,6 @@
 {
   "name": "trails",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "build:binaries": "bun scripts/build-binaries.ts",
     "build": "bun run build:web && bun run build:binaries",
     "start": "bun cli/main.ts serve",
-    "release:formula": "bun scripts/render-homebrew-formula.ts",
+    "release:alpha": "bun scripts/build-alpha-release.ts",
     "collect": "bun cli/main.ts collect --once",
     "test": "bun test",
     "check": "tsc --noEmit",
