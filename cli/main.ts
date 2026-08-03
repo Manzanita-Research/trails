@@ -12,6 +12,8 @@ import { join, resolve } from "node:path"
 import { createApp } from "../server/app"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { createInferenceClient, summarySupervisor } from "../server/summaries"
+import { createBackup } from "../server/backup"
+import { install } from "./install"
 
 const VERSION = "0.1.0"
 
@@ -42,6 +44,8 @@ Commands:
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
   configure collector --server URL [--name NAME] [--reset-device-id]
   configure server --ai-url URL --ai-token-stdin
+  backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
+  install server|collector [--dry-run]
   version`)
 }
 
@@ -54,7 +58,9 @@ async function serve(args: string[]): Promise<void> {
   const dbPath = valueAfter(args, "--db") ?? process.env.TRAILS_DB_PATH ?? DEFAULT_DB_PATH
   const apiOnly = args.includes("--api-only")
   const staticOverride = valueAfter(args, "--static-dir")
-  const standalone = "isStandaloneExecutable" in Bun && Bun.isStandaloneExecutable === true
+  const standalone = "isStandaloneExecutable" in Bun
+    ? Bun.isStandaloneExecutable === true
+    : Bun.main.startsWith("/$bunfs/")
   if (standalone && staticOverride) throw new Error("--static-dir is available only in source mode")
   const staticRoot = apiOnly
     ? undefined
@@ -63,12 +69,18 @@ async function serve(args: string[]): Promise<void> {
       : standalone
         ? join(import.meta.dir, "dist/client")
         : resolve("dist/client")
+  const staticAssets = standalone
+    ? Bun.embeddedFiles.filter(
+        (asset): asset is Blob & { readonly name: string } =>
+          "name" in asset && typeof asset.name === "string",
+      )
+    : undefined
   const serverConfig = loadServerConfig()
   const inference = serverConfig
     ? { url: serverConfig.aiUrl, token: serverConfig.aiToken }
     : undefined
   const db = openDatabase(dbPath)
-  const app = createApp({ db, staticRoot, inference })
+  const app = createApp({ db, staticRoot, staticAssets, inference })
   const server = Bun.serve({ hostname: host, port, fetch: app })
   const summaryFiber = inference
     ? Effect.runFork(summarySupervisor({ db, inference: createInferenceClient(inference) }))
@@ -131,11 +143,36 @@ async function configure(args: string[]): Promise<void> {
   throw new Error("configure requires collector or server")
 }
 
+async function backup(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("trails backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]")
+    return
+  }
+  const output = valueAfter(args, "--output")
+  const outputDir = valueAfter(args, "--output-dir")
+  const retainValue = valueAfter(args, "--retain")
+  const retain = retainValue === undefined ? undefined : Number(retainValue)
+  const path = await createBackup({
+    dbPath: valueAfter(args, "--db") ?? process.env.TRAILS_DB_PATH,
+    output,
+    outputDir,
+    retain,
+  })
+  console.log(`wrote backup ${path}`)
+}
+
+async function installCommand(args: string[]): Promise<void> {
+  if (args[0] !== "server" && args[0] !== "collector") throw new Error("install requires server or collector")
+  await install({ kind: args[0], dryRun: args.includes("--dry-run") })
+}
+
 export async function main(args = process.argv.slice(2)): Promise<void> {
   const command = args[0]
   if (command === "serve") return serve(args.slice(1))
   if (command === "collect") return collect(args.slice(1))
   if (command === "configure") return configure(args.slice(1))
+  if (command === "backup") return backup(args.slice(1))
+  if (command === "install") return installCommand(args.slice(1))
   if (command === "version") {
     console.log(VERSION)
     return

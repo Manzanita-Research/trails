@@ -24,6 +24,7 @@ export interface InferenceConfig {
 export interface AppOptions {
   readonly db: TrailsDb
   readonly staticRoot?: string
+  readonly staticAssets?: ReadonlyArray<Blob & { readonly name: string }>
   readonly inference?: InferenceConfig
 }
 
@@ -364,8 +365,8 @@ async function apiResponse(options: AppOptions, request: Request, url: URL): Pro
   throw new ApiError("not_found", "API route not found", 404)
 }
 
-async function staticResponse(staticRoot: string | undefined, request: Request, url: URL): Promise<Response> {
-  if (!staticRoot) throw new ApiError("not_found", "static serving is disabled", 404)
+async function staticResponse(options: AppOptions, request: Request, url: URL): Promise<Response> {
+  if (!options.staticRoot) throw new ApiError("not_found", "static serving is disabled", 404)
   if (request.method !== "GET" && request.method !== "HEAD") {
     throw new ApiError("method_not_allowed", "method not allowed", 405)
   }
@@ -379,25 +380,40 @@ async function staticResponse(staticRoot: string | undefined, request: Request, 
   if (decoded.includes("\0") || decoded.split("/").includes("..")) {
     throw new ApiError("invalid_request", "invalid path", 400)
   }
-  const root = resolve(staticRoot)
+  const root = resolve(options.staticRoot)
   const requested = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "")
   const candidate = resolve(root, requested)
   if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) {
     throw new ApiError("invalid_request", "invalid path", 400)
   }
-  let file = Bun.file(candidate)
-  if (!(await file.exists())) file = Bun.file(join(root, "index.html"))
-  if (!(await file.exists())) throw new ApiError("not_found", "static file not found", 404)
-  const isIndex = basename(file.name ?? "") === "index.html"
-  const cacheControl = isIndex ? "no-store" : /-[A-Za-z0-9_-]{8,}\./.test(basename(file.name ?? ""))
+  let body: Blob
+  let selectedName = requested
+  const diskFile = Bun.file(candidate)
+  if (await diskFile.exists()) {
+    body = diskFile
+  } else {
+    const embedded = options.staticAssets?.find((asset) => basename(asset.name) === basename(requested))
+      ?? options.staticAssets?.find((asset) => basename(asset.name) === "index.html")
+    if (embedded) {
+      body = embedded
+      selectedName = basename(embedded.name)
+    } else {
+      const index = Bun.file(join(root, "index.html"))
+      if (!(await index.exists())) throw new ApiError("not_found", "static file not found", 404)
+      body = index
+      selectedName = "index.html"
+    }
+  }
+  const isIndex = basename(selectedName) === "index.html"
+  const cacheControl = isIndex ? "no-store" : /-[A-Za-z0-9_-]{8,}\./.test(basename(selectedName))
     ? "public, max-age=31536000, immutable"
     : "no-cache"
-  const headers = new Headers({ "Cache-Control": cacheControl, "Content-Type": file.type || "application/octet-stream" })
+  const headers = new Headers({ "Cache-Control": cacheControl, "Content-Type": body.type || "application/octet-stream" })
   if (request.method === "HEAD") {
-    headers.set("Content-Length", String(file.size))
+    headers.set("Content-Length", String(body.size))
     return new Response(null, { status: 200, headers })
   }
-  return new Response(file, { headers })
+  return new Response(body, { headers })
 }
 
 export function createApp(options: AppOptions): (request: Request) => Promise<Response> {
@@ -406,7 +422,7 @@ export function createApp(options: AppOptions): (request: Request) => Promise<Re
       const url = new URL(request.url)
       return url.pathname.startsWith("/api/")
         ? await apiResponse(options, request, url)
-        : await staticResponse(options.staticRoot, request, url)
+        : await staticResponse(options, request, url)
     } catch (error) {
       return errorResponse(error instanceof ApiError ? error : new ApiError("internal_error", "internal server error", 500))
     }
