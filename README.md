@@ -47,13 +47,13 @@ The temporary alpha installer detects the Mac architecture, downloads the matchi
 On the always-on Mac that will own Trails:
 
 ```bash
-curl -fsSL https://ALPHA_RELEASE_URL/install.sh | sh -s -- hub --name "Studio Mini"
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Studio Mini"
 ```
 
 On every other Mac, use the private Tailscale URL printed by the hub:
 
 ```bash
-curl -fsSL https://ALPHA_RELEASE_URL/install.sh | sh -s -- \
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
   join https://studio-mini.example-tailnet.ts.net/ --name "MacBook Pro"
 ```
 
