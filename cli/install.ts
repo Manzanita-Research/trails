@@ -186,6 +186,23 @@ function tailscalePath(): string | null {
     : null)
 }
 
+export function currentTailnetUrl(): string {
+  const executable = tailscalePath()
+  if (!executable) throw new Error("Tailscale is required")
+  const status = run(executable, ["status", "--json"])
+  if (status.exitCode !== 0) throw new Error("unable to inspect Tailscale status")
+  let value: unknown
+  try {
+    value = JSON.parse(status.stdout)
+  } catch {
+    throw new Error("Tailscale returned invalid status")
+  }
+  const self = typeof value === "object" && value !== null && "Self" in value ? value.Self : null
+  const dnsName = typeof self === "object" && self !== null && "DNSName" in self ? self.DNSName : null
+  if (typeof dnsName !== "string" || !dnsName) throw new Error("Tailscale did not report a MagicDNS name")
+  return `https://${dnsName.replace(/\.$/, "")}/`
+}
+
 export async function install(options: InstallOptions): Promise<void> {
   const standalone = "isStandaloneExecutable" in Bun
     ? Bun.isStandaloneExecutable === true

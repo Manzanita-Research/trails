@@ -1,3 +1,4 @@
+import packageJson from "../package.json" with { type: "json" }
 import { Effect, Fiber } from "effect"
 import { runCollection } from "../collector/sync"
 import { DEFAULT_STATE_PATH } from "../collector/state"
@@ -7,15 +8,17 @@ import {
   configureServer,
   loadCollectorConfig,
   loadServerConfig,
+  normalizeCollectorServer,
 } from "./config"
 import { join, resolve } from "node:path"
 import { createApp } from "../server/app"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { createInferenceClient, summarySupervisor } from "../server/summaries"
 import { createBackup } from "../server/backup"
-import { install } from "./install"
+import { currentTailnetUrl, install } from "./install"
+import { runSetup, type SetupActions } from "./setup"
 
-const VERSION = "0.1.0"
+const VERSION = packageJson.version
 
 function valueAfter(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag)
@@ -40,6 +43,8 @@ function printUsage(): void {
   console.log(`trails ${VERSION}
 
 Commands:
+  setup hub [--name NAME]
+  setup join URL [--name NAME]
   serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
   configure collector --server URL [--name NAME] [--reset-device-id]
@@ -166,8 +171,62 @@ async function installCommand(args: string[]): Promise<void> {
   await install({ kind: args[0], dryRun: args.includes("--dry-run") })
 }
 
+async function waitForServer(server: string): Promise<void> {
+  const endpoint = new URL("api/health", server)
+  let lastFailure = "server did not respond"
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      const response = await fetch(endpoint, { signal: AbortSignal.timeout(1_000) })
+      const body = response.status === 200 ? await response.json() as unknown : null
+      if (
+        typeof body === "object" &&
+        body !== null &&
+        "ok" in body &&
+        body.ok === true &&
+        "revision" in body &&
+        typeof body.revision === "number"
+      ) return
+      lastFailure = `health check returned HTTP ${response.status}`
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : String(error)
+    }
+    await Bun.sleep(250)
+  }
+  throw new Error(`Trails at ${server} is not ready: ${lastFailure}`)
+}
+
+async function setupCommand(args: string[]): Promise<void> {
+  const mode = args[0]
+  const name = valueAfter(args, "--name")
+  const actions: SetupActions = {
+    configureCollector: (server, deviceName) => {
+      const config = configureCollector({ server, name: deviceName })
+      console.log(`configured ${config.deviceName} for ${config.server}`)
+    },
+    install: (kind) => install({ kind, dryRun: false }),
+    collect: () => collect(["--once"]),
+    waitForServer,
+    tailnetUrl: currentTailnetUrl,
+  }
+  if (mode === "hub") {
+    const url = await runSetup({ mode, name }, actions)
+    console.log(`Trails is ready at ${url}`)
+    console.log(`Join another Mac with: trails setup join ${url}`)
+    return
+  }
+  if (mode === "join") {
+    const server = args[1]
+    if (!server || server.startsWith("--")) throw new Error("setup join requires the hub URL")
+    const url = await runSetup({ mode, server: normalizeCollectorServer(server), name }, actions)
+    console.log(`Trails is collecting this Mac for ${url}`)
+    return
+  }
+  throw new Error("setup requires hub or join")
+}
+
 export async function main(args = process.argv.slice(2)): Promise<void> {
   const command = args[0]
+  if (command === "setup") return setupCommand(args.slice(1))
   if (command === "serve") return serve(args.slice(1))
   if (command === "collect") return collect(args.slice(1))
   if (command === "configure") return configure(args.slice(1))

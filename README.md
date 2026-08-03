@@ -40,34 +40,41 @@ Development runs Vite on 7412 and an API-only Bun server on 7413:
 bun run dev
 ```
 
-## Configure the Mini
+## Beta installation
 
-Copy the matching binary to the Mini, then configure the optional inference relay. The token is read from stdin so it does not enter shell history:
+Install the standalone executable from the public binary tap:
+
+```bash
+brew install manzanita-research/tap/trails
+```
+
+On the always-on Mac that will own Trails:
+
+```bash
+trails setup hub --name "Studio Mini"
+```
+
+This configures the hub's loopback collector, installs and starts the server and daily backup, waits for the health check, performs the initial full index, installs the minute collector, and prints the private Tailscale URL.
+
+On every other Mac:
+
+```bash
+brew install manzanita-research/tap/trails
+trails setup join https://studio-mini.example-tailnet.ts.net/ --name "MacBook Pro"
+```
+
+`setup join` verifies the hub before changing local collector state, performs the initial full index, and installs the minute collector. Both setup commands are safe to rerun after an upgrade. Changing the endpoint, identity, or display name deliberately replays every discoverable session to the new target; canonical ingest is idempotent.
+
+The hub requires Tailscale and refuses a conflicting Serve root. Tailscale provides the private HTTPS boundary; Trails still binds only to `127.0.0.1:7412`.
+
+Without `~/.config/trails/server.json`, Trails serves first-prompt fallbacks and leaves summary jobs pending. Configure the optional inference relay with a token read from stdin, then rerun `trails setup hub`:
 
 ```bash
 printf '%s\n' "$TRAILS_AI_TOKEN" | trails configure server \
   --ai-url https://trails-ai.example.workers.dev/api/summarize \
   --ai-token-stdin
+trails setup hub
 ```
-
-Without `~/.config/trails/server.json`, Trails serves first-prompt fallbacks and leaves summary jobs pending.
-
-Configure the Mini's own collector against loopback:
-
-```bash
-trails configure collector --server http://127.0.0.1:7412/ --name "Studio Mini"
-```
-
-Preview installation, then install:
-
-```bash
-trails install server --dry-run
-trails install collector --dry-run
-trails install server
-trails install collector
-```
-
-The server install refuses to proceed without Tailscale. It preserves unrelated Serve handlers and accepts the root only when it is unused or already points exactly to `http://127.0.0.1:7412`.
 
 Installed launchd labels:
 
@@ -75,22 +82,20 @@ Installed launchd labels:
 - `com.manzanita.trails.collector` — one collection at load and every 60 seconds; no daemon or keepalive loop.
 - `com.manzanita.trails.backup` — a committed SQLite snapshot daily at 03:00, retaining 14 Trails backups.
 
-The UI is available at the HTTPS URL reported by `tailscale serve status`.
+The UI is available at the HTTPS URL printed by `trails setup hub`.
 
-## Configure another Mac
+## Low-level installation
 
-Use the Mini's Tailscale HTTPS base URL, whose path must be `/`:
+The setup commands compose these lower-level operations, which remain available for diagnostics and custom deployments:
 
 ```bash
-trails configure collector \
-  --server https://studio-mini.example-tailnet.ts.net/ \
-  --name "MacBook Pro"
-trails collect --once
+trails configure collector --server http://127.0.0.1:7412/ --name "Studio Mini"
+trails install server --dry-run
 trails install collector --dry-run
+trails install server
+trails collect --once
 trails install collector
 ```
-
-The collector identity is created once and preserved across later configuration changes unless `--reset-device-id` is supplied. Changing the endpoint, identity, or display name deliberately replays every discoverable session to the new target. Canonical ingest is idempotent.
 
 For an isolated one-off import, replace all default roots explicitly:
 
