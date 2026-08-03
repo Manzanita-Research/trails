@@ -14,12 +14,13 @@ export function Topbar({
   view: string
   onView: (v: ListView) => void
   onToggleSort: () => void
-  boundary: number
-  setBoundary: (b: number) => void
-  halo: number
-  setHalo: (h: number) => void
+  boundary: 4 | 5 | 6 | 7
+  setBoundary: (boundary: 4 | 5 | 6 | 7) => Promise<void>
+  halo: 0 | 5 | 10 | 15
+  setHalo: (halo: 0 | 5 | 10 | 15) => Promise<void>
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [saving, setSaving] = useState<"boundary" | "halo" | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -58,7 +59,18 @@ export function Topbar({
           <div className="settings-pop" hidden={!settingsOpen}>
             <label className="control">
               <span>day starts</span>
-              <select value={boundary} onChange={(e) => setBoundary(+e.target.value)}>
+              <select
+                value={boundary}
+                disabled={saving === "boundary"}
+                onChange={async (event) => {
+                  setSaving("boundary")
+                  try {
+                    await setBoundary(Number(event.target.value) as 4 | 5 | 6 | 7)
+                  } finally {
+                    setSaving(null)
+                  }
+                }}
+              >
                 <option value={4}>4 am</option>
                 <option value={5}>5 am</option>
                 <option value={6}>6 am</option>
@@ -70,7 +82,18 @@ export function Topbar({
               title="Minutes of presence credited around each prompt you typed — reading, reviewing, thinking. Tune it until day totals feel honest."
             >
               <span>attention halo</span>
-              <select value={halo} onChange={(e) => setHalo(+e.target.value)}>
+              <select
+                value={halo}
+                disabled={saving === "halo"}
+                onChange={async (event) => {
+                  setSaving("halo")
+                  try {
+                    await setHalo(Number(event.target.value) as 0 | 5 | 10 | 15)
+                  } finally {
+                    setSaving(null)
+                  }
+                }}
+              >
                 <option value={0}>none</option>
                 <option value={5}>± 5 min</option>
                 <option value={10}>± 10 min</option>

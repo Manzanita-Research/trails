@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { engColor, fmtAgo, type Session } from "../lib/data"
 import { useTrails } from "../lib/ctx"
-import { useStored } from "../lib/store"
 import { Ticks } from "./SessLine"
 
 interface Card {
@@ -11,10 +10,6 @@ interface Card {
   agentHadLastWord: boolean
 }
 
-interface PocketItem {
-  text: string
-  at: number
-}
 
 function ThreadCard({ card, accent }: { card: Card; accent?: boolean }) {
   const t = useTrails()
@@ -44,8 +39,8 @@ function ThreadCard({ card, accent }: { card: Card; accent?: boolean }) {
 
 export function ThreadsView() {
   const t = useTrails()
-  const [pocket, setPocket] = useStored<PocketItem[]>("pocket", [])
   const [draft, setDraft] = useState("")
+  const [saving, setSaving] = useState<"add" | string | null>(null)
 
   const byProject = new Map<string, Session[]>()
   for (const s of t.sessions) {
@@ -72,6 +67,27 @@ export function ThreadsView() {
     ["resting", "resting", "quiet this week"],
     ["dormant", "dormant", "quiet longer — and that's fine"],
   ]
+
+  const addPocket = async () => {
+    const text = draft.trim()
+    if (!text) return
+    setSaving("add")
+    try {
+      await t.addPocket(text)
+      setDraft("")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const deletePocket = async (id: string) => {
+    setSaving(id)
+    try {
+      await t.deletePocket(id)
+    } finally {
+      setSaving(null)
+    }
+  }
 
   return (
     <section className="view">
@@ -106,12 +122,9 @@ export function ThreadsView() {
         </p>
         <form
           className="pocket-form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            const text = draft.trim()
-            if (!text) return
-            setPocket([{ text, at: Date.now() }, ...pocket])
-            setDraft("")
+          onSubmit={(event) => {
+            event.preventDefault()
+            void addPocket()
           }}
         >
           <input
@@ -119,17 +132,23 @@ export function ThreadsView() {
             onChange={(e) => setDraft(e.target.value)}
             placeholder="the idea, before it evaporates"
             autoComplete="off"
+            disabled={saving === "add"}
           />
-          <button type="submit">catch</button>
+          <button type="submit" disabled={saving === "add"}>catch</button>
         </form>
         <div>
-          {pocket.map((item, i) => (
-            <div key={item.at} className="pocket-item">
+          {t.pocket.map((item) => (
+            <div key={item.id} className="pocket-item">
               <span className="when">
                 {new Date(item.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </span>
               <span className="text">{item.text}</span>
-              <button className="del" title="let it go" onClick={() => setPocket(pocket.filter((_, j) => j !== i))}>
+              <button
+                className="del"
+                title="let it go"
+                disabled={saving === item.id}
+                onClick={() => void deletePocket(item.id)}
+              >
                 ✕
               </button>
             </div>

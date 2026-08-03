@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { engColor, fmtDur, focusMinutes, fullDate } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { LaneMarks, makeX, TicksRow, useWidth } from "./timeline"
@@ -5,6 +6,7 @@ import { DayNote } from "./SessLine"
 
 export function ProjectView({ project, onBack, backLabel }: { project: string; onBack: () => void; backLabel: string }) {
   const t = useTrails()
+  const [saving, setSaving] = useState<"rename" | "engagement" | null>(null)
   const [ref, width] = useWidth<HTMLElement>()
   const widthPx = Math.min(1100, width)
   const eng = t.engOf(project)
@@ -18,19 +20,30 @@ export function ProjectView({ project, onBack, backLabel }: { project: string; o
   const stripW = Math.max(320, widthPx - 170 - 36)
   const X = makeX(0, stripW, t.boundary)
 
-  const onRename = () => {
+  const onRename = async () => {
     const next = prompt("Display name for this project (empty to reset):", t.dispName(project))
     if (next === null) return
-    t.rename(project, next.trim() || null)
+    setSaving("rename")
+    try {
+      await t.rename(project, next.trim() || null)
+    } finally {
+      setSaving(null)
+    }
   }
 
-  const onEngChange = (value: string) => {
-    if (value === "__new__") {
-      const name = prompt("Name the engagement (a client, a practice, a life area):")?.trim()
-      if (!name) return
-      t.assign(project, t.addEngagement(name))
-    } else {
-      t.assign(project, value)
+  const onEngChange = async (value: string) => {
+    setSaving("engagement")
+    try {
+      if (value === "__new__") {
+        const name = prompt("Name the engagement (a client, a practice, a life area):")?.trim()
+        if (!name) return
+        const engagementId = await t.addEngagement(name)
+        await t.assign(project, engagementId)
+      } else {
+        await t.assign(project, value)
+      }
+    } finally {
+      setSaving(null)
     }
   }
 
@@ -46,12 +59,16 @@ export function ProjectView({ project, onBack, backLabel }: { project: string; o
       <div className="detail-meta">
         <span className="detail-path">~/{project}</span>
         <div className="detail-tools">
-          <button className="quiet-btn" onClick={onRename}>
+          <button className="quiet-btn" disabled={saving === "rename"} onClick={() => void onRename()}>
             rename
           </button>
           <label className="detail-file">
             files under
-            <select value={eng.id} onChange={(e) => onEngChange(e.target.value)}>
+            <select
+              value={eng.id}
+              disabled={saving === "engagement"}
+              onChange={(event) => void onEngChange(event.target.value)}
+            >
               {t.engs.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name}
