@@ -20,6 +20,7 @@ export interface InstallOptions {
   readonly kind: InstallKind
   readonly dryRun?: boolean
   readonly service?: string
+  readonly tailscale?: boolean
 }
 
 interface LaunchDefinition {
@@ -229,8 +230,9 @@ export async function install(options: InstallOptions): Promise<void> {
   }
   const aiConfig = options.kind === "server" ? loadServerConfig() : null
   const service = options.kind === "server" ? normalizeTailscaleService(options.service) : undefined
-  const tailscale = options.kind === "server" ? tailscalePath() : null
-  if (options.kind === "server" && !tailscale) throw new Error("Tailscale is required for server installation")
+  const exposeThroughTailscale = options.kind === "server" && (options.tailscale === true || service !== undefined)
+  const tailscale = exposeThroughTailscale ? tailscalePath() : null
+  if (exposeThroughTailscale && !tailscale) throw new Error("Tailscale is required for private network access")
   await writableAncestor(destination)
   await writableAncestor(launchAgentDirectory)
   await writableAncestor(stateDirectory)
@@ -255,7 +257,11 @@ export async function install(options: InstallOptions): Promise<void> {
     console.log(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`)
   }
   if (options.kind === "server") {
-    console.log(`Tailscale preflight: ${service ? `${service} https:443` : "node root"} -> ${tailscaleProxy}`)
+    if (exposeThroughTailscale) {
+      console.log(`Tailscale preflight: ${service ? `${service} https:443` : "node root"} -> ${tailscaleProxy}`)
+    } else {
+      console.log("Access: local only at http://127.0.0.1:7412/")
+    }
     if (!aiConfig) console.warn("AI is disabled; summary jobs will remain pending")
   }
   if (options.dryRun) return

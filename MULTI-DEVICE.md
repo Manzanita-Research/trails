@@ -1,7 +1,7 @@
 # Multi-device architecture
 
 **Status:** Implemented on `main`  
-**Decision:** One always-on hub Mac owns Trails behind Tailscale. Cloudflare is an authenticated inference relay, not canonical storage.
+**Decision:** One hub Mac owns Trails and also collects its own sessions. Tailscale is optional and adds private access for other Macs; Cloudflare is an authenticated inference relay, not canonical storage.
 
 ## System
 
@@ -16,9 +16,9 @@ flowchart LR
   W -->|summary + model| M
 ```
 
-Tailscale supplies the private network and HTTPS access boundary. It does not run or store Trails. The hub process binds only to `127.0.0.1:7412`; the installer refuses a non-loopback server and a conflicting node Serve root.
+The hub process always binds only to `127.0.0.1:7412`. In the default one-Mac mode, the app stays local at `http://127.0.0.1:7412/`; the same binary runs the server, collector, and backup roles.
 
-Node-based setup uses the hub machine's MagicDNS URL. An explicit `--service svc:trails` setup instead advertises HTTPS through a pre-defined Tailscale Service and reports the stable `https://trails.<tailnet>.ts.net/` URL. Named services are opt-in because Tailscale requires a tag-authenticated host, tailnet administrator configuration, and service-host approval; ordinary user-authenticated Macs retain node-based Serve.
+Multi-Mac setup adds Tailscale as the private network and HTTPS access boundary. `--tailscale` uses the hub machine's MagicDNS URL. `--service svc:trails` instead advertises through a pre-defined Tailscale Service and reports the stable `https://trails.<tailnet>.ts.net/` URL. Named services are opt-in because they require a tag-authenticated host, tailnet administrator configuration, and service-host approval. Tailscale does not run or store Trails, and Trails never opens a LAN socket.
 
 ## Standalone distribution
 
@@ -100,7 +100,7 @@ The compiled installer manages only these labels:
 | `com.manzanita.trails.collector` | RunAtLoad, every 60s | `trails collect --once` |
 | `com.manzanita.trails.backup` | 03:00 daily | `trails backup --output-dir … --retain 14` |
 
-Program arguments and working directories are absolute. Logs are mode 0600 under `~/.local/state/trails`. `install --dry-run` performs preflight and prints the complete plan without writing files or changing processes. A real server install requires Tailscale; a real collector install requires collector configuration.
+Program arguments and working directories are absolute. Logs are mode 0600 under `~/.local/state/trails`. `install --dry-run` performs preflight and prints the complete plan without writing files or changing processes. Server installation requires Tailscale only when `--tailscale` or `--service` exposure is requested; collector installation requires collector configuration.
 
 The installer bootouts, bootstraps, and kickstarts only its exact labels. It never edits Claude, Codex, omp, or pi configuration.
 
@@ -129,4 +129,4 @@ Restore is intentionally manual: stop the server label, remove stale WAL/SHM sid
 
 ## Decision statement
 
-> Trails is a local-first, single-owner service hosted on the user's always-on machine and reached through Tailscale. Cloudflare is an authenticated inference provider, not the canonical data store.
+> Trails is a local-first, single-owner service hosted on one Mac, which is also its first collector. Tailscale optionally connects more Macs. Cloudflare is an authenticated inference provider, not the canonical data store.

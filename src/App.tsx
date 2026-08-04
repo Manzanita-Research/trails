@@ -155,8 +155,8 @@ function LoadedApp({
           {sessions.length === 0 ? (
             <section className="view empty-state">
               <h1 className="display">No sessions yet</h1>
-              <p>Collectors have not sent any supported sessions yet.</p>
-              <code>trails setup join https://your-hub.your-tailnet.ts.net/</code>
+              <p>This Mac is both the hub and its first collector. Supported sessions normally appear within one minute.</p>
+              <code>trails collect --once</code>
             </section>
           ) : (
             <>

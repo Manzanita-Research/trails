@@ -4,7 +4,9 @@ import { runSetup, type SetupActions } from "../cli/setup"
 function recordingActions(events: string[], waitFailure?: Error): SetupActions {
   return {
     configureCollector: (server, name) => events.push(`configure:${server}:${name ?? "default"}`),
-    install: async (kind, service) => { events.push(`install:${kind}:${service ?? "node"}`) },
+    install: async (kind, options) => {
+      events.push(`install:${kind}:${options?.tailscale ? "tailscale" : "local"}:${options?.service ?? "node"}`)
+    },
     collect: async () => { events.push("collect") },
     waitForServer: async (server) => {
       events.push(`wait:${server}`)
@@ -22,14 +24,13 @@ describe("one-command setup", () => {
     const events: string[] = []
     const url = await runSetup({ mode: "hub", name: "Home Hub" }, recordingActions(events))
 
-    expect(url).toBe("https://hub.example.ts.net/")
+    expect(url).toBe("http://127.0.0.1:7412/")
     expect(events).toEqual([
       "configure:http://127.0.0.1:7412/:Home Hub",
-      "install:server:node",
+      "install:server:local:node",
       "wait:http://127.0.0.1:7412/",
       "collect",
-      "install:collector:node",
-      "tailnet-url:node",
+      "install:collector:local:node",
     ])
   })
 
@@ -41,9 +42,21 @@ describe("one-command setup", () => {
     )
 
     expect(url).toBe("https://trails.example.ts.net/")
-    expect(events).toContain("install:server:svc:trails")
+    expect(events).toContain("install:server:tailscale:svc:trails")
     expect(events).toContain("tailnet-url:svc:trails")
     expect(events).toContain("wait:https://trails.example.ts.net/")
+  })
+
+  test("exposes a node URL only when Tailscale is requested", async () => {
+    const events: string[] = []
+    const url = await runSetup(
+      { mode: "hub", name: "Home Hub", tailscale: true },
+      recordingActions(events),
+    )
+
+    expect(url).toBe("https://hub.example.ts.net/")
+    expect(events).toContain("install:server:tailscale:node")
+    expect(events).toContain("wait:https://hub.example.ts.net/")
   })
 
   test("checks a remote hub before changing collector state", async () => {
@@ -56,7 +69,7 @@ describe("one-command setup", () => {
       `wait:${server}`,
       `configure:${server}:Laptop`,
       "collect",
-      "install:collector:node",
+      "install:collector:local:node",
     ])
   })
 

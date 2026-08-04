@@ -33,10 +33,11 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 
 ## Capabilities and Constraints
 
-- **Multi-machine is implemented.** One always-on hub Mac owns the canonical SQLite-backed service behind Tailscale; a one-shot collector on each spoke Mac syncs idempotently every 60 seconds.
+- **One machine is complete.** The hub Mac owns the canonical SQLite service and runs its own one-shot collector every 60 seconds; no separate client, server, or Tailscale account is required.
+- **Multi-machine is optional.** Tailscale Serve privately exposes the same hub, and each spoke Mac syncs normalized observations idempotently every 60 seconds.
 - **Privacy boundary:** normalized metadata and bounded digests may leave a source machine. Full transcript bodies and local transcript paths do not. Browser bootstrap omits source-local session IDs and digests.
-- **Distribution shape:** two standalone macOS executables (`arm64`, `x64`) embed Bun, SQLite, and the built client. Target Macs require no runtime or repository checkout. Users hold the hub, database, tailnet, backups, and Cloudflare token.
-- Stack: Bun, `bun:sqlite`, Vite, React 19, TypeScript, Effect, Tailscale Serve, launchd, and a narrowly scoped authenticated Cloudflare Workers AI relay.
+- **Distribution shape:** two standalone macOS executables (`arm64`, `x64`) embed Bun, SQLite, and the built client. Target Macs require no runtime or repository checkout. Users hold their hub, database, backups, optional tailnet, and optional Cloudflare token.
+- Stack: Bun, `bun:sqlite`, Vite, React 19, TypeScript, Effect, optional Tailscale Serve, launchd, and a narrowly scoped authenticated Cloudflare Workers AI relay.
 - Terminology in use: threads, engagements, day-credits, divergence pocket, attention vs. wall clock, human-shaped days, in motion / waiting on you / resting / dormant.
 - Still unimplemented product directions: Akasha vault bridge and invoice export from the week view.
 
@@ -48,7 +49,7 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 
 ## Evidence on Hand
 
-- A working end-to-end implementation: standalone hub service, periodic multi-Mac collectors, canonical SQLite state, Days/Week/Threads/project views, durable summaries, Tailscale/launchd installer, and WAL-safe backups.
+- A working end-to-end implementation: standalone one-Mac hub/collector service, optional periodic multi-Mac collectors through Tailscale, canonical SQLite state, Days/Week/Threads/project views, durable summaries, launchd installation, and WAL-safe backups.
 - No testimonials, case studies, benchmarks, pricing, or third-party proof exist. Future marketing/docs work must not fabricate any.
 
 ## Product Principles
