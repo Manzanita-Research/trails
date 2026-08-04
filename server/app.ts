@@ -153,9 +153,12 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     user_event_count: number
     first_prompt: string | null
   }>
-  const settings = db.sqlite.query("SELECT boundary, halo FROM settings WHERE id = 1").get() as {
+  const settings = db.sqlite
+    .query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1")
+    .get() as {
     boundary: 4 | 5 | 6 | 7
     halo: 0 | 5 | 10 | 15
+    onboarding_version: number
   }
   const indexed = db.sqlite.query("SELECT MAX(updated_at) AS at FROM sessions").get() as { at: number | null }
   const assignments: Record<string, string> = {}
@@ -203,6 +206,7 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     preferences: {
       boundary: settings.boundary,
       halo: settings.halo,
+      onboardingVersion: settings.onboarding_version,
       assignments,
       customEngagements: (db.sqlite
         .query("SELECT id, name FROM custom_engagements ORDER BY created_at, id")
@@ -271,15 +275,27 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
   if (url.pathname === "/api/settings") {
     if (request.method !== "PATCH") throw new ApiError("method_not_allowed", "method not allowed", 405)
     const body = decodeBody(SettingsPatchSchema, await readJson(request, 64 * 1024))
-    const current = db.sqlite.query("SELECT boundary, halo FROM settings WHERE id = 1").get() as {
+    const current = db.sqlite
+      .query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1")
+      .get() as {
       boundary: number
       halo: number
+      onboarding_version: number
     }
     const boundary = body.boundary ?? current.boundary
     const halo = body.halo ?? current.halo
-    if (boundary === current.boundary && halo === current.halo) return jsonResponse({ revision: revisionOf(db) })
+    const onboardingVersion = body.onboardingVersion ?? current.onboarding_version
+    if (
+      boundary === current.boundary &&
+      halo === current.halo &&
+      onboardingVersion === current.onboarding_version
+    ) {
+      return jsonResponse({ revision: revisionOf(db) })
+    }
     const revision = db.sqlite.transaction(() => {
-      db.sqlite.query("UPDATE settings SET boundary = ?, halo = ? WHERE id = 1").run(boundary, halo)
+      db.sqlite
+        .query("UPDATE settings SET boundary = ?, halo = ?, onboarding_version = ? WHERE id = 1")
+        .run(boundary, halo, onboardingVersion)
       if (boundary !== current.boundary) {
         db.sqlite.query("DELETE FROM day_summary_jobs WHERE boundary <> ?").run(boundary)
         enqueueBoundaryDays(db, boundary, now)

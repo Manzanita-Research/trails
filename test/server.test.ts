@@ -92,7 +92,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -100,12 +100,16 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(1)
+    expect(userVersion.user_version).toBe(2)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
     expect(Object.values(busyTimeout)[0]).toBe(5000)
     expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "0" })
-    expect(database.sqlite.query("SELECT boundary, halo FROM settings WHERE id = 1").get()).toEqual({ boundary: 6, halo: 10 })
+    expect(database.sqlite.query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1").get()).toEqual({
+      boundary: 6,
+      halo: 10,
+      onboarding_version: 0,
+    })
 
     const tableNames = (database.sqlite
       .query("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -133,8 +137,12 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(1)
-    expect(reopened.sqlite.query("SELECT boundary, halo FROM settings WHERE id = 1").get()).toEqual({ boundary: 6, halo: 15 })
+    expect(reopenedVersion.user_version).toBe(2)
+    expect(reopened.sqlite.query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1").get()).toEqual({
+      boundary: 6,
+      halo: 15,
+      onboarding_version: 0,
+    })
   })
 })
 
@@ -221,6 +229,7 @@ describe("ingest and bootstrap", () => {
     expect(bootstrap.preferences).toEqual({
       boundary: 6,
       halo: 10,
+      onboardingVersion: 0,
       assignments: {},
       customEngagements: [],
       names: {},

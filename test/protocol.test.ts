@@ -56,6 +56,7 @@ const bootstrap = () => ({
   preferences: {
     boundary: 6,
     halo: 10,
+    onboardingVersion: 0,
     assignments: { "/work/project": "org:work" },
     customEngagements: [{ id: "custom:1", name: "Studio" }],
     names: { "/work/project": "Project" },
@@ -188,6 +189,7 @@ describe("bootstrap and mutation schemas", () => {
       changed(bootstrap(), (copy) => (copy.protocolVersion = 2)),
       changed(bootstrap(), (copy) => (copy.revision = -1)),
       changed(bootstrap(), (copy) => (copy.generatedAt = "2026-07-01T17:02:00Z")),
+      changed(bootstrap(), (copy) => (copy.indexedAt = "2026-07-01T17:01:00Z")),
       changed(bootstrap(), (copy) => (copy.timezone = "UTC")),
       changed(bootstrap(), (copy) => (copy.sessions[0].id = "")),
       changed(bootstrap(), (copy) => (copy.sessions[0].id = "i".repeat(65))),
@@ -196,6 +198,7 @@ describe("bootstrap and mutation schemas", () => {
       changed(bootstrap(), (copy) => (copy.sessions[0].firstPrompt = "p".repeat(241))),
       changed(bootstrap(), (copy) => (copy.preferences.boundary = 8)),
       changed(bootstrap(), (copy) => (copy.preferences.halo = 6)),
+      changed(bootstrap(), (copy) => (copy.preferences.onboardingVersion = -1)),
       changed(bootstrap(), (copy) => (copy.preferences.customEngagements[0].id = "i".repeat(129))),
       changed(bootstrap(), (copy) => (copy.preferences.customEngagements[0].name = "n".repeat(81))),
       changed(bootstrap(), (copy) => (copy.preferences.pocket[0].id = "i".repeat(129))),
@@ -208,8 +211,11 @@ describe("bootstrap and mutation schemas", () => {
   test("enforces mutation field presence and documented limits", () => {
     expect(decodeExact(SettingsPatchSchema, {})).toEqual({})
     expect(decodeExact(SettingsPatchSchema, { boundary: 4, halo: 15 })).toEqual({ boundary: 4, halo: 15 })
+    expect(decodeExact(SettingsPatchSchema, { onboardingVersion: 1 })).toEqual({ onboardingVersion: 1 })
     rejects(SettingsPatchSchema, { boundary: 3 })
     rejects(SettingsPatchSchema, { halo: 1 })
+    rejects(SettingsPatchSchema, { onboardingVersion: 0 })
+    rejects(SettingsPatchSchema, { onboardingVersion: 2 })
     rejects(SettingsPatchSchema, { boundary: 6, extra: true })
 
     expect(decodeExact(ProjectPatchSchema, { project: "/work", engagementId: null, displayName: "" })).toEqual({ project: "/work", engagementId: null, displayName: "" })

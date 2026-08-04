@@ -14,6 +14,7 @@ function bootstrap(revision: number): BootstrapV1 {
     preferences: {
       boundary: 6,
       halo: 10,
+      onboardingVersion: 0,
       assignments: {},
       customEngagements: [],
       names: {},

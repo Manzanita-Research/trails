@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { BootstrapV1 } from "../../shared/protocol"
 
 export interface BootstrapMutations {
-  updateSettings(patch: { readonly boundary?: 4 | 5 | 6 | 7; readonly halo?: 0 | 5 | 10 | 15 }): Promise<void>
+  updateSettings(patch: {
+    readonly boundary?: 4 | 5 | 6 | 7
+    readonly halo?: 0 | 5 | 10 | 15
+    readonly onboardingVersion?: 1
+  }): Promise<void>
   updateProject(patch: {
     readonly project: string
     readonly engagementId?: string | null

@@ -104,6 +104,7 @@ const StringRecordSchema = Schema.Record({ key: Schema.String, value: Schema.Str
 export const PreferencesV1Schema = Schema.Struct({
   boundary: Schema.Literal(4, 5, 6, 7),
   halo: Schema.Literal(0, 5, 10, 15),
+  onboardingVersion: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
   assignments: StringRecordSchema,
   customEngagements: Schema.Array(
     Schema.Struct({ id: trimmedString(1, 128), name: trimmedString(1, 80) }),
@@ -132,6 +133,7 @@ export const BootstrapV1Schema = Schema.Struct({
 export const SettingsPatchSchema = Schema.Struct({
   boundary: Schema.optional(Schema.Literal(4, 5, 6, 7)),
   halo: Schema.optional(Schema.Literal(0, 5, 10, 15)),
+  onboardingVersion: Schema.optional(Schema.Literal(1)),
 })
 
 export const ProjectPatchSchema = Schema.Struct({
