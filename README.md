@@ -30,7 +30,7 @@ Setup downloads the correct binary, verifies it, indexes existing sessions, and 
 
 ## Add other Macs (optional)
 
-Only multi-Mac setups need Tailscale. Install [Tailscale](https://tailscale.com/download/mac), connect every participating Mac to the same tailnet, then rerun hub setup with private network access enabled:
+Only multi-Mac setups need Tailscale: for example, you can use a Mac Mini as a hub with laptops as spokes. Install [Tailscale](https://tailscale.com/download/mac), connect every participating Mac to the same tailnet, then rerun hub setup with private network access enabled:
 
 ```bash
 curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
