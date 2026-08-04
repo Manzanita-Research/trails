@@ -1,5 +1,6 @@
 import { afterEach, expect } from "bun:test"
 
+const NativeFetch = globalThis.fetch
 const NativeHeaders = globalThis.Headers
 const NativeRequest = globalThis.Request
 const NativeResponse = globalThis.Response
@@ -8,6 +9,7 @@ const { GlobalRegistrator } = await import("@happy-dom/global-registrator")
 GlobalRegistrator.register()
 globalThis.Headers = NativeHeaders
 globalThis.Request = NativeRequest
+globalThis.fetch = NativeFetch
 globalThis.Response = NativeResponse
 
 // Happy DOM must register before Testing Library evaluates its document-bound helpers.

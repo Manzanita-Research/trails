@@ -180,6 +180,8 @@ describe("first-run onboarding", () => {
     expect(screen.getByText("That Mac’s hostname will be its name in Trails.")).toBeTruthy()
 
     await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "feedback" }))
+    await user.tab()
     const checkAgain = screen.getByRole("button", { name: "check again" })
     expect(document.activeElement).toBe(checkAgain)
     const releaseCheck = harness.holdNextBootstrap()

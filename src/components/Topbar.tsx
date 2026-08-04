@@ -2,7 +2,14 @@ import { useEffect, useRef, useState, type RefObject } from "react"
 
 export type ListView = "days" | "week" | "threads"
 
-type MinimalTopbarProps = {
+type FeedbackTriggerProps = {
+  readonly feedbackExpanded: boolean
+  readonly feedbackControls: string
+  readonly feedbackTriggerRef: RefObject<HTMLButtonElement | null>
+  readonly onFeedback: () => void
+}
+
+type MinimalTopbarProps = FeedbackTriggerProps & {
   readonly mode: "minimal"
 }
 
@@ -13,13 +20,15 @@ type OrganizationTriggerProps = {
   readonly onOrganize: () => void
 }
 
-type OnboardingTopbarProps = OrganizationTriggerProps & {
+type OnboardingTopbarProps = OrganizationTriggerProps &
+  FeedbackTriggerProps & {
   readonly mode: "onboarding"
   readonly view: ListView | "project"
   readonly onView: (view: ListView) => void
-}
+  }
 
-type LoadedTopbarProps = OrganizationTriggerProps & {
+type LoadedTopbarProps = OrganizationTriggerProps &
+  FeedbackTriggerProps & {
   readonly mode: "loaded"
   readonly view: ListView | "project"
   readonly onView: (view: ListView) => void
@@ -27,7 +36,7 @@ type LoadedTopbarProps = OrganizationTriggerProps & {
   readonly setBoundary: (boundary: 4 | 5 | 6 | 7) => Promise<void>
   readonly halo: 0 | 5 | 10 | 15
   readonly setHalo: (halo: 0 | 5 | 10 | 15) => Promise<void>
-}
+  }
 
 export type TopbarProps = MinimalTopbarProps | OnboardingTopbarProps | LoadedTopbarProps
 
@@ -85,7 +94,19 @@ export function Topbar(props: TopbarProps) {
     <header className="topbar">
       <div className="topbar-inner">
         <span className="wordmark">trails</span>
-        {props.mode !== "minimal" && (
+        {props.mode === "minimal" ? (
+          <div className="controls">
+            <button
+              ref={props.feedbackTriggerRef}
+              className="quiet-btn"
+              aria-expanded={props.feedbackExpanded}
+              aria-controls={props.feedbackControls}
+              onClick={props.onFeedback}
+            >
+              feedback
+            </button>
+          </div>
+        ) : (
           <>
             <nav className="nav" aria-label="views">
               {tabs.map(([key, label]) => (
@@ -107,6 +128,15 @@ export function Topbar(props: TopbarProps) {
                 onClick={props.onOrganize}
               >
                 organize projects
+              </button>
+              <button
+                ref={props.feedbackTriggerRef}
+                className="quiet-btn"
+                aria-expanded={props.feedbackExpanded}
+                aria-controls={props.feedbackControls}
+                onClick={props.onFeedback}
+              >
+                feedback
               </button>
               {props.mode === "loaded" && (
                 <>

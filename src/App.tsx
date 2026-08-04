@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react"
+import packageMetadata from "../package.json"
 import type { BootstrapV1 } from "../shared/protocol"
 import {
   buildDays,
@@ -21,8 +22,17 @@ import { ProjectView } from "./components/ProjectView"
 import { SortPanel } from "./components/SortPanel"
 import { WelcomeView } from "./components/WelcomeView"
 import { FirstTrailGuide } from "./components/FirstTrailGuide"
+import { FeedbackPanel } from "./components/FeedbackPanel"
+import { FEEDBACK_ENDPOINT, type FeedbackSafeContextInput } from "./lib/feedback"
 
 type ShellMode = "loading" | "hub-error" | "welcome" | "onboarding" | "loaded"
+type PanelName = "organize" | "feedback"
+type OpenPanel = PanelName | null
+
+interface FeedbackLocation {
+  readonly view: "days" | "week" | "threads" | "project"
+  readonly workDate: string | null
+}
 
 interface TooltipState {
   readonly project: string
@@ -33,6 +43,7 @@ interface TooltipState {
 }
 
 const ORGANIZE_PANEL_ID = "organize-projects-panel"
+const FEEDBACK_PANEL_ID = "feedback-panel"
 
 function shellModeOf(data: BootstrapV1 | null, loading: boolean): ShellMode {
   if (data === null) return loading ? "loading" : "hub-error"
@@ -48,19 +59,28 @@ function LoadedApp({
   syncError,
   retry,
   onboarding,
+  openPanel,
+  setOpenPanel,
+  organizeTriggerRef,
+  feedbackTriggerRef,
+  setFeedbackLocation,
 }: {
   readonly bootstrap: BootstrapV1
   readonly mutations: BootstrapMutations
   readonly syncError: string | null
   readonly retry: () => Promise<void>
   readonly onboarding: boolean
-}) {
+  readonly openPanel: OpenPanel
+  readonly setOpenPanel: Dispatch<SetStateAction<OpenPanel>>
+  readonly organizeTriggerRef: RefObject<HTMLButtonElement | null>
+  readonly feedbackTriggerRef: RefObject<HTMLButtonElement | null>
+  readonly setFeedbackLocation: Dispatch<SetStateAction<FeedbackLocation>>
+}
+) {
   const { boundary, halo, assignments, customEngagements, names, pocket } = bootstrap.preferences
   const [view, setView] = useState<ListView | "project">("days")
   const [lastListView, setLastListView] = useState<ListView>("days")
   const [projectKey, setProjectKey] = useState<string | null>(null)
-  const [openPanel, setOpenPanel] = useState<null | "organize">(null)
-  const organizeTriggerRef = useRef<HTMLButtonElement>(null)
   const [dayIdx, setDayIdx] = useState(0)
 
   const sessions = useMemo(() => prepSessions(bootstrap.sessions), [bootstrap.sessions])
@@ -81,6 +101,11 @@ function LoadedApp({
     return projects
   }, [sessions])
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+
+  useEffect(() => {
+    const workDate = view === "days" ? (days[dayIdx]?.[0] ?? null) : null
+    setFeedbackLocation({ view, workDate })
+  }, [dayIdx, days, setFeedbackLocation, view])
 
   useEffect(() => {
     if (view !== "days") return
@@ -179,7 +204,11 @@ function LoadedApp({
             organizeExpanded={openPanel === "organize"}
             organizeControls={ORGANIZE_PANEL_ID}
             organizeTriggerRef={organizeTriggerRef}
-            onOrganize={() => setOpenPanel(openPanel === "organize" ? null : "organize")}
+            onOrganize={() => setOpenPanel((current) => (current === "organize" ? null : "organize"))}
+            feedbackExpanded={openPanel === "feedback"}
+            feedbackControls={FEEDBACK_PANEL_ID}
+            feedbackTriggerRef={feedbackTriggerRef}
+            onFeedback={() => setOpenPanel((current) => (current === "feedback" ? null : "feedback"))}
           />
         ) : (
           <Topbar
@@ -189,7 +218,11 @@ function LoadedApp({
             organizeExpanded={openPanel === "organize"}
             organizeControls={ORGANIZE_PANEL_ID}
             organizeTriggerRef={organizeTriggerRef}
-            onOrganize={() => setOpenPanel(openPanel === "organize" ? null : "organize")}
+            onOrganize={() => setOpenPanel((current) => (current === "organize" ? null : "organize"))}
+            feedbackExpanded={openPanel === "feedback"}
+            feedbackControls={FEEDBACK_PANEL_ID}
+            feedbackTriggerRef={feedbackTriggerRef}
+            onFeedback={() => setOpenPanel((current) => (current === "feedback" ? null : "feedback"))}
             boundary={boundary}
             setBoundary={(value) => mutations.updateSettings({ boundary: value })}
             halo={halo}
@@ -248,12 +281,43 @@ function LoadedApp({
 
 export function App() {
   const { data, loading, error, retry, mutations } = useBootstrap()
+  const [openPanel, setOpenPanel] = useState<OpenPanel>(null)
+  const [feedbackLocation, setFeedbackLocation] = useState<FeedbackLocation>({ view: "days", workDate: null })
+  const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
+  const organizeTriggerRef = useRef<HTMLButtonElement>(null)
+  const feedbackTriggerRef = useRef<HTMLButtonElement>(null)
   const mode = shellModeOf(data, loading)
 
+  useEffect(() => {
+    const onResize = () => setViewport({ width: window.innerWidth, height: window.innerHeight })
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [])
+
+  const toggleFeedback = () => setOpenPanel((current) => (current === "feedback" ? null : "feedback"))
+  const feedbackTriggerProps = {
+    feedbackExpanded: openPanel === "feedback",
+    feedbackControls: FEEDBACK_PANEL_ID,
+    feedbackTriggerRef,
+    onFeedback: toggleFeedback,
+  }
+  const feedbackView: FeedbackSafeContextInput["view"] =
+    mode === "onboarding" || mode === "loaded" ? feedbackLocation.view : mode
+  const contextInput: FeedbackSafeContextInput = {
+    appVersion: packageMetadata.version,
+    view: feedbackView,
+    bootstrap: mode === "loading" || mode === "hub-error" ? null : data,
+    workDate:
+      feedbackView === "days" || feedbackView === "project" ? feedbackLocation.workDate : null,
+    viewport,
+    syncError: error !== null,
+  }
+
+  let shell
   if (mode === "loading") {
-    return (
+    shell = (
       <>
-        <Topbar mode="minimal" />
+        <Topbar mode="minimal" {...feedbackTriggerProps} />
         <main id="main">
           <section className="view empty-state">
             <h1 className="display">Loading trails…</h1>
@@ -261,12 +325,10 @@ export function App() {
         </main>
       </>
     )
-  }
-
-  if (mode === "hub-error") {
-    return (
+  } else if (mode === "hub-error") {
+    shell = (
       <>
-        <Topbar mode="minimal" />
+        <Topbar mode="minimal" {...feedbackTriggerProps} />
         <main id="main">
           <section className="view empty-state">
             <h1 className="display">Trails couldn’t load the hub.</h1>
@@ -290,26 +352,44 @@ export function App() {
         </main>
       </>
     )
-  }
-
-  if (mode === "welcome") {
-    return (
+  } else if (mode === "welcome") {
+    shell = (
       <>
-        <Topbar mode="minimal" />
+        <Topbar mode="minimal" {...feedbackTriggerProps} />
         <main id="main">
           <WelcomeView hubUrl={data!.hubUrl} retry={retry} syncError={error} />
         </main>
       </>
     )
+  } else {
+    if (data === null) throw new Error("loaded shell requires a bootstrap snapshot")
+    shell = (
+      <LoadedApp
+        bootstrap={data}
+        mutations={mutations}
+        syncError={error}
+        retry={retry}
+        onboarding={mode === "onboarding"}
+        openPanel={openPanel}
+        setOpenPanel={setOpenPanel}
+        organizeTriggerRef={organizeTriggerRef}
+        feedbackTriggerRef={feedbackTriggerRef}
+        setFeedbackLocation={setFeedbackLocation}
+      />
+    )
   }
 
   return (
-    <LoadedApp
-      bootstrap={data!}
-      mutations={mutations}
-      syncError={error}
-      retry={retry}
-      onboarding={mode === "onboarding"}
-    />
+    <>
+      {shell}
+      <FeedbackPanel
+        id={FEEDBACK_PANEL_ID}
+        open={openPanel === "feedback"}
+        onClose={() => setOpenPanel(null)}
+        fallbackFocusRef={feedbackTriggerRef}
+        endpoint={FEEDBACK_ENDPOINT}
+        contextInput={contextInput}
+      />
+    </>
   )
 }

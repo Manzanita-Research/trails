@@ -30,14 +30,15 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 - Billing model: attention-hours roll into day-credits (¼ ≥ 1h, ½ ≥ 2.5h, full ≥ 5.5h), matching how freelance billing actually works.
 - Triage: projects auto-file by repo org and can be reassigned to shared engagements. Assignments, display names, settings, and divergence-pocket items persist canonically in SQLite and synchronize across browsers.
 - Summarization: changed sessions settle for five minutes, then durable jobs send bounded digests through an authenticated Cloudflare Workers AI relay. Sessions become one-line contribution summaries; project/day rollups are guarded against stale model responses.
+- Feedback: testers can explicitly send a kind, message, optional follow-up, and optional bounded safe context directly to a separate public-write Cloudflare Worker/D1 store. The store has no public read route; records expire after 90 days and are deleted by the next daily cleanup.
 
 ## Capabilities and Constraints
 
 - **One machine is complete.** The hub Mac owns the canonical SQLite service and runs its own one-shot collector every 60 seconds; no separate client, server, or Tailscale account is required.
 - **Multi-machine is optional.** Tailscale Serve privately exposes the same hub, and each spoke Mac syncs normalized observations idempotently every 60 seconds.
-- **Privacy boundary:** normalized metadata and bounded digests may leave a source machine. Full transcript bodies and local transcript paths do not. Browser bootstrap omits source-local session IDs and digests.
-- **Distribution shape:** two standalone macOS executables (`arm64`, `x64`) embed Bun, SQLite, and the built client. Target Macs require no runtime or repository checkout. The product stages its own installer and artifacts; shared Manzanita release infrastructure stores immutable versioned objects in R2, publishes a short-lived alpha channel pointer, and serves the stable checksum-pinned installer at `https://releases.manzanita.dev/trails/install.sh`.
-- Stack: Bun, `bun:sqlite`, Vite, React 19, TypeScript, Effect, optional Tailscale Serve, launchd, and a narrowly scoped authenticated Cloudflare Workers AI relay.
+- **Privacy boundary:** normalized metadata and bounded digests may leave a source machine. Full transcript bodies and local transcript paths do not. Browser bootstrap omits source-local session IDs and digests. Feedback leaves the browser only when sent; optional safe context contains only app version, view, revision, selected Days/Project work date, source counts, viewport dimensions, and sync-error state.
+- **Distribution shape:** two standalone macOS executables (`arm64`, `x64`) embed Bun, SQLite, and the built client. Target Macs require no runtime or repository checkout. The product stages its own installer and artifacts; shared Manzanita release infrastructure stores immutable versioned objects in R2, publishes a short-lived alpha channel pointer, and serves the stable checksum-pinned installer at `https://releases.manzanita.dev/trails/install.sh`. Users retain ownership of their hub, database, backups, optional tailnet, and optional Cloudflare token.
+- Stack: Bun, `bun:sqlite`, Vite, React 19, TypeScript, Effect, optional Tailscale Serve, launchd, a narrowly scoped authenticated Cloudflare Workers AI relay, and a separate public-write/no-public-read feedback Worker with expiring D1 records.
 - Terminology in use: threads, engagements, day-credits, divergence pocket, attention vs. wall clock, human-shaped days, in motion / waiting on you / resting / dormant.
 - Still unimplemented product directions: Akasha vault bridge and invoice export from the week view.
 
