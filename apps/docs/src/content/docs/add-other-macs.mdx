@@ -1,0 +1,63 @@
+---
+title: Add other Macs
+description: Optionally collect work spread across several Macs through a private Tailscale connection.
+audience: human
+sidebar:
+  order: 1
+  badge: Optional
+---
+
+A one-Mac installation is complete. Add other Macs only when your work has a render-farm shape: sessions are spread across a desktop, laptop, or other machines and you want one combined timeline.
+
+The Mac that already owns canonical state remains the **hub**. Each additional Mac is a **spoke**. Hub and spoke are roles in the same standalone trails binary, not separate products. The hub continues collecting its own sessions.
+
+## Before you begin
+
+1. Finish [the one-Mac setup](/start-here) on the hub.
+2. Install [Tailscale for macOS](https://tailscale.com/download/mac) on the hub and every spoke.
+3. Connect every participating Mac to the same tailnet.
+
+Tailscale is the private network between these Macs. It does not run trails or store trails data.
+
+## Expose the hub privately
+
+Rerun setup on the hub with Tailscale access enabled:
+
+<InstallCommand mode="tailscale" />
+
+Setup keeps the local service on `127.0.0.1:7412`, then configures Tailscale Serve to proxy it privately. Trails never opens a LAN listener.
+
+When setup finishes, it prints the hub machine's private MagicDNS URL, similar to:
+
+```text
+https://your-hub.your-tailnet.ts.net/
+```
+
+Open that URL from a device on the same tailnet before adding spokes.
+
+## Join a spoke
+
+Run the installer on an additional Mac, replacing the example URL with the healthy URL printed by the hub:
+
+<InstallCommand mode="join" />
+
+Replace `Laptop` with the name you want trails to show for that Mac. Repeat this step for each additional spoke.
+
+Each spoke parses its own Claude Code, Codex, omp, and pi sessions locally, then sends normalized observations to the hub once a minute. Raw transcript bodies and transcript paths stay on the originating Mac.
+
+## Keep the ordinary URL unless it becomes a problem
+
+The default multi-Mac URL follows the hub machine's MagicDNS name. That is the right setup for most people.
+
+Tailnet administrators who need a stable address that survives moving trails to another hub can configure a named Tailscale Service. This changes the hub's Tailscale identity and access model, so it is intentionally separate from the quickstart.
+
+[Configure a stable Tailscale Service →](/advanced/tailscale-services)
+
+## Updating this setup
+
+Rerun the same modes you used originally:
+
+- use `hub --tailscale` on the hub;
+- use `join HUB_URL` on each spoke.
+
+Device identity, configuration, the database, and backups are preserved. See [Update trails](/operate/updating) for the exact commands.

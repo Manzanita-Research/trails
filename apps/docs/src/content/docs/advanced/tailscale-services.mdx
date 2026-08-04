@@ -1,0 +1,69 @@
+---
+title: Stable Tailscale Service
+description: Give an optional multi-Mac installation a stable private URL managed by a tailnet administrator.
+audience: human
+sidebar:
+  order: 0
+  label: Tailscale Service
+  badge: Admin
+---
+
+A named [Tailscale Service](https://tailscale.com/docs/features/tailscale-services) gives trails a stable private URL even if you later move canonical state to another hub:
+
+```text
+https://trails.your-tailnet.ts.net/
+```
+
+This is an advanced administrator path. Ordinary one-Mac installations should stay local. Most multi-Mac installations should use [`hub --tailscale`](/add-other-macs). Configure `svc:trails` only when a stable service identity is worth the additional tailnet policy and approval work.
+
+## Before changing the hub's identity
+
+<Aside type="danger" title="Assigning a tag changes ownership">
+  A Tailscale node cannot have both a user identity and a tag identity. Assigning an ACL tag transfers the hub from user ownership to tag ownership. This can change who can reach the hub—including Tailscale SSH access—unless the tailnet policy explicitly permits it. Review grants and SSH rules before tagging the Mac.
+</Aside>
+
+Read Tailscale's documentation for [tagged device identity](https://tailscale.com/docs/features/tags), [grants](https://tailscale.com/docs/features/access-control/grants), and [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh) before proceeding.
+
+You need Owner, Admin, or Network admin access to the tailnet.
+
+## Configure `svc:trails`
+
+<Steps>
+  <Step title="Define the service">
+    In the Tailscale admin console, define a Service named `trails`. Configure its endpoint as `tcp:443`. The resulting service identifier is `svc:trails`.
+  </Step>
+  <Step title="Define a host tag">
+    Add a host tag such as `tag:trails` to the tailnet policy's `tagOwners` section. Choose the people or groups allowed to assign that tag.
+  </Step>
+  <Step title="Review network and SSH access">
+    Check the tailnet's grants, legacy ACLs if any remain, and SSH rules. Confirm that the users and spokes that need trails can reach the tagged hub on TCP 443 and that any required administration path remains available.
+  </Step>
+  <Step title="Assign the tag to the hub">
+    Apply `tag:trails` to the hub only after the policy review. Confirm in the Machines page that the Mac now has the intended tag-based identity.
+  </Step>
+  <Step title="Advertise trails from the hub">
+    Run the service-mode installer command below. Trails keeps listening on `127.0.0.1:7412` and asks Tailscale Serve to advertise `svc:trails` on HTTPS.
+  </Step>
+</Steps>
+
+<InstallCommand mode="service" />
+
+<Steps>
+  <Step title="Approve the advertised host">
+    Open the `trails` Service in the Tailscale admin console. Approve the pending hub under **Service hosts** unless your policy already auto-approved it.
+  </Step>
+  <Step title="Verify the stable URL">
+    Open `https://trails.your-tailnet.ts.net/` from an authorized tailnet device. If setup timed out while waiting for approval, rerun the same `hub --service svc:trails` command after approval; it is safe to rerun.
+  </Step>
+  <Step title="Move spokes only after the URL is healthy">
+    Do not change a spoke's collector URL until the stable address opens successfully. Then rerun join setup on each spoke with the stable URL.
+  </Step>
+</Steps>
+
+<InstallCommand mode="serviceJoin" />
+
+## Updating a service-mode hub
+
+Preserve `--service svc:trails` every time you update the hub. Omitting it changes the setup mode and reports the local loopback URL instead of verifying the named Service.
+
+If a policy or approval change makes the stable URL unhealthy, leave existing spokes on their current working URL until the Service is healthy again.

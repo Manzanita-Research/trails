@@ -4,6 +4,8 @@
  * Add new components here as you build (or install) them.
  */
 
+import AlphaVersion from "./components/AlphaVersion.astro";
+import InstallCommand from "./components/InstallCommand.astro";
 import { Aside } from "./components/ui/aside";
 import Render from "./components/Render.astro";
 import { Card } from "./components/ui/card";
@@ -13,9 +15,11 @@ import { Step, Steps } from "./components/ui/steps";
 import { Tabs, TabItem } from "./components/ui/tabs";
 
 export const components = {
+  AlphaVersion,
   Aside,
   Card,
   CardGrid,
+  InstallCommand,
   PackageManagers,
   Render,
   Step,

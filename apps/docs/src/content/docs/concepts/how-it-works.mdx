@@ -1,32 +1,34 @@
 ---
 title: How trails works
-description: From local session logs to a private, readable timeline.
+description: From local coding-agent sessions to a private, readable timeline on one Mac.
 audience: human
 sidebar:
   order: 0
 ---
 
-Trails is a local-first hub-and-collector system. One Mac owns the canonical state. Every participating Mac contributes normalized observations from its own coding-agent sessions.
+The default trails system fits on one Mac. The same standalone binary runs the canonical service, collects that Mac's sessions, and creates daily backups. Tailscale and other Macs are optional extensions.
 
-## The path from session to day
+## The local path from session to day
 
 <Steps>
   <Step title="A coding agent leaves a session log">
     Claude Code, Codex, omp, and pi already record local session history as part of their normal operation.
   </Step>
-  <Step title="The local collector reads changed sessions">
-    Once a minute, the collector parses only files that may have changed. Transcript parsing happens on the Mac where the session was created.
+  <Step title="The collector reads changed sessions">
+    Once a minute, trails parses files that may have changed. Transcript parsing happens on the Mac where the session was created.
   </Step>
-  <Step title="The collector normalizes the observation">
-    Trails derives timestamps, project context, event counts, the first prompt, minute activity, and a bounded digest. Raw transcript paths and bodies do not cross the source-machine boundary.
+  <Step title="Trails normalizes the observation">
+    It derives timestamps, project context, event counts, the first prompt, minute activity, and a bounded digest. Raw transcript paths and bodies stay on the originating Mac.
   </Step>
   <Step title="The hub commits canonical state">
-    The always-on Mac stores observations and user edits in SQLite. Repeated submissions are idempotent, so retries do not duplicate sessions.
+    On a one-Mac installation this is the same machine. It stores observations and user edits in SQLite. Repeated submissions are idempotent, so retries do not duplicate sessions.
   </Step>
-  <Step title="The browser reads the private timeline">
-    The web app is served through Tailscale. It shows day, week, thread, and project views without exposing source-local session identifiers or digests.
+  <Step title="The browser reads the timeline">
+    Open `http://127.0.0.1:7412/` on that Mac. The browser shows day, week, thread, and project views without receiving source-local session identifiers or digests.
   </Step>
 </Steps>
+
+“Hub” names the role that owns canonical state. “Collector” names the role that reads session logs. A single Mac performs both roles; they are not separate products or required machines.
 
 ## Attention and agent time
 
@@ -35,23 +37,31 @@ Agent-heavy work has two different clocks:
 - **Agent time** is when a coding agent was active, including periods when it continued without you.
 - **Attention time** is when your prompts and steering show you were present.
 
-Trails renders both in one lane instead of collapsing them into wall-clock duration. The distinction is how it reconstructs the shape of your day without asking you to run a timer.
+Trails renders both in one lane instead of collapsing them into wall-clock duration. That distinction reconstructs the shape of your day without asking you to run a timer.
+
+## Adding spokes
+
+When work is spread across several Macs, Tailscale can privately connect them. The hub still collects its own sessions and remains canonical. Each additional spoke parses its own sessions locally and sends normalized observations to the hub every minute.
+
+The hub service still binds only to `127.0.0.1:7412`. Tailscale Serve proxies that loopback service privately; trails never listens on the LAN. Tailscale carries encrypted network traffic but does not store trails data.
+
+[Add other Macs →](/add-other-macs)
 
 ## The hub owns the truth
 
-The hub Mac owns:
+Canonical SQLite state includes:
 
-- the SQLite database;
+- normalized session observations;
 - project names and assignments;
 - thread and divergence-pocket state;
 - generated summaries;
-- the private web service;
+- user settings;
 - daily backups.
 
-Browsers are readers and editors over that canonical state. A page reload on another device converges on the same organization.
+Browsers are readers and editors over that canonical state. A second browser converges on the same organization.
 
 ## Cloudflare's narrow role
 
-Cloudflare does not host the trails database or web app. When summary generation is enabled, a small authenticated Worker can relay bounded inputs to Workers AI. Complete transcripts are not sent through that relay.
+Cloudflare does not host the trails application or database. When optional summary generation is enabled, a small authenticated Worker relays bounded inputs to Workers AI. Complete transcripts are not sent through that relay. SQLite on the hub remains canonical.
 
 [Read the exact privacy boundary →](/concepts/privacy)

@@ -7,7 +7,7 @@ import { tableScroll } from "@cloudflare/nimbus-docs/markdown";
 const nimbusConfig = defineNimbusConfig({
   site: "https://trails.manzanita.dev",
   title: "trails",
-  description: "Reconstruct your days from the coding-agent sessions already on your Macs.",
+  description: "Reconstruct your days from the coding-agent sessions already on your Mac.",
   locale: "en",
   homeLabel: "trails",
   github: null,
@@ -16,10 +16,11 @@ const nimbusConfig = defineNimbusConfig({
   sidebar: {
     items: [
       "start-here",
-      "installation",
+      "add-other-macs",
       "using-trails",
       { label: "Understand", autogenerate: { directory: "concepts" } },
       { label: "Operate", autogenerate: { directory: "operate" } },
+      { label: "Advanced", autogenerate: { directory: "advanced" }, collapsed: true },
       { label: "Reference", autogenerate: { directory: "reference" } },
     ],
   },

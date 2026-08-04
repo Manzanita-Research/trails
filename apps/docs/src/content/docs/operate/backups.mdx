@@ -1,12 +1,12 @@
 ---
 title: Backups
-description: Where the hub stores canonical data and how its daily SQLite backups are retained.
+description: Where the primary Mac stores canonical data and how daily SQLite backups are retained.
 audience: human
 sidebar:
   order: 1
 ---
 
-The hub owns the canonical trails database. Joined Macs keep collection state, but they are not replicas of the hub database.
+The Mac that runs the canonical service—called the hub—owns the trails database and daily backups. A one-Mac installation already includes this complete backup path. Optional spokes keep collection state, but they are not database replicas.
 
 ## Paths on the hub
 
@@ -39,4 +39,4 @@ trails backup --output-dir "$HOME/Desktop/trails-backups" --retain 14
 
 ## What a backup contains
 
-A hub backup contains canonical trails state: normalized session observations, summaries, project and engagement organization, settings, and thread state. It does not contain the raw coding-agent transcript files that remain on each source Mac.
+A hub backup contains canonical trails state: normalized session observations, summaries, project and engagement organization, settings, and thread state. It does not contain the raw coding-agent transcript files that remain on each originating Mac.
