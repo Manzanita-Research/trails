@@ -1,173 +1,125 @@
-# trails
+# Trails
 
-Where your days actually went.
+**Where your days actually went.**
 
-A memory system for parallel, agent-heavy, ADHD-shaped work. Trails is not a time tracker: it reconstructs human-shaped days and active threads from coding-agent session logs already present on your Macs.
+Trails turns the coding-agent sessions already on your Macs into a private timeline of projects, working days, and active threads. It is not a time tracker, and there is nothing to start or stop while you work.
 
-## Architecture
+> Trails is currently an alpha. Expect rough edges and occasional changes to installation or stored data. Please share failures and confusing behavior with the person who invited you.
 
-One always-on Mac Mini owns the canonical service:
+## Before you start
 
-- `trails serve` binds SQLite and the HTTP app to `127.0.0.1:7412`.
-- Tailscale Serve exposes that loopback service to the tailnet. Trails never opens a LAN socket and does not add a second application token.
-- `trails collect --once` runs every minute on each Mac, parses changed Claude, Codex, omp, and pi transcripts locally, and submits normalized observations in batches of at most 50.
-- `~/.manzanita/trails/trails.sqlite` owns sessions, preferences, pocket items, summaries, and durable inference jobs.
-- A narrowly scoped Cloudflare Worker authenticates summary requests and calls Workers AI. SQLite remains canonical.
+You need:
 
-The release artifact is one architecture-specific executable containing the Bun runtime, `bun:sqlite`, and the built React app. Target Macs need neither Bun nor a repository checkout.
+- macOS on every participating computer.
+- [Tailscale](https://tailscale.com/download/mac) installed, connected, and signed into the same tailnet on every Mac.
+- One Mac that can remain awake, logged in, and connected. This is your **hub**; it owns the Trails database and private web app.
 
-## Build
+To see data immediately, have existing sessions from one or more supported agents: Claude Code, Codex, omp, or pi. New sessions will also appear after installation.
 
-Source and build machines require Bun 1.3.14 or newer.
+You do **not** need Bun, Node, a repository checkout, or a public server.
 
-```bash
-bun install --frozen-lockfile
-bun run check
-bun test
-bun run build
-```
+## 1. Set up the hub
 
-Outputs:
-
-```text
-dist/trails-darwin-arm64
-dist/trails-darwin-x64
-```
-
-Development runs Vite on 7412 and an API-only Bun server on 7413:
-
-```bash
-bun run dev
-```
-
-## Alpha installation
-
-The temporary alpha installer detects the Mac architecture, downloads the matching standalone binary, verifies its pinned SHA-256, installs it atomically under `~/.local/bin`, and hands off to the one-command setup flow.
-
-On the always-on Mac that will own Trails:
+Run this on the always-on Mac:
 
 ```bash
 curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Studio Mini"
 ```
 
-On every other Mac, use the private Tailscale URL printed by the hub:
+Replace `Studio Mini` with the name you want Trails to show for that Mac.
+
+Setup downloads the correct binary for your Mac, verifies it, installs the private web service and daily backup, indexes existing sessions, and starts a collector that checks for changes every minute.
+
+When setup finishes, it prints a private Tailscale URL similar to:
+
+```text
+https://your-hub.your-tailnet.ts.net/
+```
+
+Open that URL from any device on the same tailnet.
+
+## 2. Add another Mac
+
+Run the installer on the other Mac, replacing the example URL with the URL printed by your hub:
 
 ```bash
 curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
-  join https://studio-mini.example-tailnet.ts.net/ --name "MacBook Pro"
+  join https://your-hub.your-tailnet.ts.net/ --name "MacBook Pro"
 ```
 
-Hub setup installs and starts the server and daily backup, waits for the health check, performs the initial full index, and installs the minute collector. Join setup verifies the hub before changing local collector state, performs the initial full index, and installs the minute collector.
+The installer verifies the hub before changing local state, indexes sessions already on that Mac, and starts its minute collector. Repeat this step on each additional Mac.
 
-Rerun the same installer command to update an alpha installation. Device identity and configuration are preserved; changing the endpoint or display name deliberately replays every discoverable session to the new target, and canonical ingest is idempotent.
+## What happens next
 
-The hub requires Tailscale and refuses a conflicting Serve root. Tailscale provides the private HTTPS boundary; Trails still binds only to `127.0.0.1:7412`.
+- New and changed sessions normally appear within one minute.
+- The hub must remain awake, logged in, connected to Tailscale, and online for collection and the web app to work.
+- If the hub is temporarily unavailable, collectors try again on their next scheduled run.
+- Trails stores its database at `~/.manzanita/trails/trails.sqlite` on the hub.
+- Trails creates a committed SQLite backup every day at 03:00 and keeps the latest 14 under `~/.manzanita/trails/backups/`.
+- Generated summaries may be unavailable during the alpha. Trails continues working and uses the first prompt as a fallback.
 
-Without `~/.config/trails/server.json`, Trails serves first-prompt fallbacks and leaves summary jobs pending. Configure the optional inference relay with a token read from stdin, then rerun `trails setup hub`:
+## Update
+
+Rerun the same installer command you originally used. The binary is replaced atomically; your device identity, configuration, database, and backups are preserved.
+
+Hub:
 
 ```bash
-printf '%s\n' "$TRAILS_AI_TOKEN" | trails configure server \
-  --ai-url https://trails-ai.example.workers.dev/api/summarize \
-  --ai-token-stdin
-trails setup hub
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Studio Mini"
 ```
 
-Installed launchd labels:
-
-- `com.manzanita.trails.server` — loopback service, restarted after failure.
-- `com.manzanita.trails.collector` — one collection at load and every 60 seconds; no daemon or keepalive loop.
-- `com.manzanita.trails.backup` — a committed SQLite snapshot daily at 03:00, retaining 14 Trails backups.
-
-The UI is available at the HTTPS URL printed by `trails setup hub`.
-
-## Low-level installation
-
-The setup commands compose these lower-level operations, which remain available for diagnostics and custom deployments:
+Joined Mac:
 
 ```bash
-trails configure collector --server http://127.0.0.1:7412/ --name "Studio Mini"
-trails install server --dry-run
-trails install collector --dry-run
-trails install server
-trails collect --once
-trails install collector
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
+  join https://your-hub.your-tailnet.ts.net/ --name "MacBook Pro"
 ```
 
-For an isolated one-off import, replace all default roots explicitly:
+## Troubleshooting
+
+### `trails` is not found later
+
+The installer always runs setup using the full binary path. For later manual commands, add this line to your shell profile:
 
 ```bash
-trails collect --once \
-  --server http://127.0.0.1:7412/ \
-  --device-id import-machine \
-  --device-name "Archive import" \
-  --state /tmp/trails-import-state.json \
-  --source-root omp=/absolute/path/to/sessions
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-A temporary `--state` path derives its own lock and never touches the default collector state directory.
+### The web app does not open
 
-## Cloudflare inference relay
+Confirm that:
 
-The Worker exposes only authenticated `POST /api/summarize` requests. Deploy the secret separately from tracked configuration:
+1. The hub is awake and logged in.
+2. Tailscale says **Connected** on both the hub and the viewing device.
+3. Both devices use the same tailnet.
+4. You are opening the exact HTTPS URL printed by hub setup.
 
-```bash
-wrangler secret put TRAILS_AI_TOKEN
-bun run worker:deploy
+Rerunning the hub installer is safe and restarts the Trails services.
+
+### Setup fails
+
+Rerun the same command once. If it still fails, send the command output and the relevant error log to the person who invited you:
+
+```text
+~/.local/state/trails/com.manzanita.trails.server.error.log
+~/.local/state/trails/com.manzanita.trails.collector.error.log
+~/.local/state/trails/com.manzanita.trails.backup.error.log
 ```
 
-`wrangler.jsonc` contains only the Worker entrypoint, compatibility date, and Workers AI binding. The model and repository-owned session/day prompts live in `worker/index.ts`; callers cannot supply arbitrary system prompts.
+Only the hub has server and backup logs.
 
-## Backups and restore
+## Privacy
 
-Create a manual committed snapshot while the WAL database is active:
+Transcript parsing happens on the Mac where each session was created. Trails sends the hub only normalized observations: source, session identifier, working directory, branch, timestamps, event counts, first prompt, minute activity, and a bounded digest.
 
-```bash
-trails backup --output ~/Desktop/trails.sqlite
-```
+Trails does **not** send transcript paths or transcript bodies to the hub. The web app receives neither source session identifiers nor digests. The hub is reachable only through your tailnet and listens locally on loopback rather than your LAN.
 
-Scheduled form:
+If the optional summary relay is enabled, it receives only bounded summary input—not complete transcripts. Session input is capped at 9,000 characters and day input at 12,000 characters.
 
-```bash
-trails backup --output-dir ~/.manzanita/trails/backups --retain 14
-```
+## Alpha release
 
-Restore on the Mini only while the server is stopped:
+Current version: `0.1.0-alpha.1`
 
-```bash
-launchctl bootout "gui/$UID/com.manzanita.trails.server"
-rm -f ~/.manzanita/trails/trails.sqlite-wal ~/.manzanita/trails/trails.sqlite-shm
-cp /path/to/trails-backup.sqlite ~/.manzanita/trails/trails.sqlite
-chmod 600 ~/.manzanita/trails/trails.sqlite
-launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.manzanita.trails.server.plist
-launchctl kickstart -k "gui/$UID/com.manzanita.trails.server"
-```
+The temporary installer and architecture-specific binaries are hosted at:
 
-Verify a backup independently with `PRAGMA integrity_check` before relying on it.
-
-## Archived transcript backfill
-
-`scripts/backfill.ts` remains an optional R2 restore utility for history archived by [records](https://github.com/manzanita-research/records). It verifies restored objects against recorded SHA-256 values and writes Claude/Codex layouts under `~/.manzanita/trails/backfill/`. The normal collector discovers those roots; live copies win over restored duplicates.
-
-```bash
-bun scripts/backfill.ts --dry
-bun scripts/backfill.ts
-trails collect --once
-```
-
-## Remove old session-end hooks
-
-Installation does not edit unrelated agent configuration. Remove the retired full-rescan hooks manually:
-
-1. In `~/.claude/settings.json`, remove the `SessionEnd` command entry whose command contains `scripts/session-end-detach.sh`.
-2. In `~/.codex/config.toml`, remove the `[[hooks.SessionEnd]]` entry whose command contains `scripts/session-end-detach.sh`.
-3. Remove the omp extension symlink:
-
-   ```bash
-   rm ~/.omp/agent/extensions/trails-session-end.ts
-   ```
-
-pi never had a Trails hook. The scheduled collector now covers every source.
-
-## Privacy boundary
-
-Transcript parsing happens on the originating Mac. Ingest includes source session ID, source, cwd, branch, timestamps, event counts, first prompt, minute buckets, and a bounded digest. It never sends a transcript path or body. The Mini stores the bounded digest only for summary work; the browser bootstrap receives neither source session IDs nor digests. Inference requests contain at most 9,000 characters for a session or 12,000 characters for a day and are sent only to the configured authenticated relay.
+**https://fancy-cairn-p89p.here.now/**
