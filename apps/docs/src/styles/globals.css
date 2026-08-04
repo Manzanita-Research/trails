@@ -66,6 +66,48 @@
 	font-display: swap;
 }
 
+/* ---- Landing page display faces (loaded only where used) ---- */
+
+@font-face {
+	font-family: "Young Serif";
+	src: url("/fonts/young-serif-400.woff2") format("woff2");
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Clash Grotesk";
+	src: url("/fonts/clash-grotesk-400.woff2") format("woff2");
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Clash Grotesk";
+	src: url("/fonts/clash-grotesk-600.woff2") format("woff2");
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Switzer";
+	src: url("/fonts/switzer-400.woff2") format("woff2");
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Switzer";
+	src: url("/fonts/switzer-600.woff2") format("woff2");
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+}
+
 /* ---- Light mode (default) ---- */
 :root {
 	color-scheme: light;

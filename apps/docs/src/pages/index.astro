@@ -1,23 +1,42 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { ALPHA_INSTALLER_URL } from "@/lib/release";
+
+const installCommand = `curl -fsSL ${ALPHA_INSTALLER_URL} | sh`;
+const year = new Date().getFullYear();
+
+const preloads = [
+  { href: "/landing/forest-hero.webp", as: "image", type: "image/webp" },
+  { href: "/fonts/young-serif-400.woff2", as: "font", type: "font/woff2" },
+  { href: "/fonts/clash-grotesk-400.woff2", as: "font", type: "font/woff2" },
+  { href: "/fonts/switzer-600.woff2", as: "font", type: "font/woff2" },
+].map(({ href, as, type }) => ({
+  tag: "link" as const,
+  attrs: {
+    rel: "preload",
+    href,
+    as,
+    type,
+    ...(as === "font" ? { crossorigin: "anonymous" } : {}),
+  },
+}));
 ---
 
 <BaseLayout
   title="trails — where your days actually went"
   description="Trails reconstructs your days from the coding-agent sessions already on your Mac."
+  head={preloads}
 >
   <main class="landing">
-    <nav class="landing-nav" aria-label="Primary navigation">
-      <a class="wordmark" href="/" aria-label="trails home">trails</a>
-      <div class="nav-links">
-        <span>private alpha</span>
-        <a href="/start-here">documentation ↗</a>
-      </div>
-    </nav>
+    <header class="hero panel">
+      <nav class="landing-nav" aria-label="Primary navigation">
+        <a class="wordmark" href="/" aria-label="trails home">trails</a>
+        <span class="nav-center">private alpha</span>
+        <a class="nav-link" href="/start-here">documentation ↗</a>
+      </nav>
 
-    <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">a memory system for agent-shaped work</p>
+        <p class="kicker">a memory system for agent-shaped work / 01</p>
         <h1>Where your days<br />actually went.</h1>
         <p class="lede">
           Trails turns the coding-agent sessions already on your Mac into a
@@ -25,9 +44,23 @@ import BaseLayout from "../layouts/BaseLayout.astro";
           Nothing to start. Nothing to stop.
         </p>
         <div class="actions">
-          <a class="primary-action" href="/start-here">Start with one Mac</a>
-          <a class="text-action" href="/concepts/how-it-works">How it works →</a>
+          <a class="primary-action" href="/start-here">Start with one Mac →</a>
+          <a class="text-action" href="/concepts/how-it-works">how it works →</a>
         </div>
+      </div>
+    </header>
+
+    <section class="panel panel-parchment" aria-labelledby="shape-heading">
+      <p class="kicker kicker-signal">01 / the shape of a working day</p>
+
+      <div class="intro-grid">
+        <h2 class="section-heading" id="shape-heading">
+          A memory system,<br />not a time tracker.
+        </h2>
+        <p class="intro-copy">
+          Time trackers ask you to log blocks. Trails reads the exhaust of work
+          already in motion: Claude Code, Codex, omp, and pi.
+        </p>
       </div>
 
       <div class="trace" aria-label="An illustrative week of agent and attention activity">
@@ -60,176 +93,308 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       </div>
     </section>
 
-    <section class="principles" aria-label="Trails principles">
+    <section class="panel panel-bark principles" aria-label="Trails principles">
       <article>
-        <span>01</span>
+        <span class="num">01</span>
         <h2>No timer.</h2>
         <p>Trails reads the session exhaust your tools already leave behind.</p>
       </article>
       <article>
-        <span>02</span>
+        <span class="num">02</span>
         <h2>Your Mac.</h2>
         <p>One Mac holds your private service, database, collection, and backups.</p>
       </article>
       <article>
-        <span>03</span>
+        <span class="num">03</span>
         <h2>Memory first.</h2>
         <p>A readable week, not a performance score or surveillance dashboard.</p>
       </article>
     </section>
+
+    <section class="panel panel-sage" aria-labelledby="start-heading">
+      <p class="kicker">02 / start with one Mac</p>
+
+      <div class="intro-grid">
+        <h2 class="section-heading" id="start-heading">Start with one Mac.</h2>
+        <p class="intro-copy">
+          One Mac is a complete trails installation. It runs the private web app
+          and canonical SQLite database, collects its own coding-agent sessions,
+          and makes a daily backup.
+        </p>
+      </div>
+
+      <pre class="command-bar"><code>{installCommand}</code></pre>
+
+      <div class="note-row">
+        <p>
+          Existing sessions from Claude Code, Codex, omp, or pi make trails
+          useful immediately.
+        </p>
+        <a href="/start-here">documentation ↗</a>
+      </div>
+    </section>
+
+    <footer class="panel panel-ink footer">
+      <span>Manzanita Research</span>
+      <span class="footer-center">local-first · private by design</span>
+      <span class="footer-right">© {year}</span>
+    </footer>
   </main>
 </BaseLayout>
 
 <style>
-  :global(body) {
-    margin: 0;
-    background: #faf7f1;
-    color: #232936;
+  /* ============================================================
+   * Landing design system
+   *
+   * Tokens are scoped to `.landing` so the page's fixed, editorial
+   * palette never leaks into the Nimbus docs theme (which stays
+   * light/dark-adaptive). Every rule below draws from these tokens.
+   * ============================================================ */
+  .landing {
+    /* palette — enchanted-forest editorial */
+    --c-ink: #111318;
+    --c-parchment: #e8ddc9;
+    --c-bark: #7c4b2a;
+    --c-sage: #8a9a5b;
+    --c-signal: #ff4d00;
+    --c-paper: #f7f7f2;
+    --c-paper-muted: rgb(247 247 242 / 72%);
+    --c-paper-rule: rgb(247 247 242 / 28%);
+    --c-parchment-muted: rgb(232 221 201 / 72%);
+    --c-parchment-rule: rgb(232 221 201 / 25%);
+    --c-earth: #4a4438;
+    --c-lane-trails: #33406e;
+    --c-lane-hearth: #cf8f3a;
+    --c-lane-graze: #8a7fa8;
+
+    /* type registers */
+    --font-display: "Young Serif", "Iowan Old Style", Georgia, serif;
+    --font-sans: "Clash Grotesk", "General Sans", sans-serif;
+    --font-label: "Switzer", "General Sans", sans-serif;
+    --font-mono: "Commit Mono", ui-monospace, "SF Mono", monospace;
+
+    /* type scale */
+    --text-display: clamp(44px, 11.5vw, 120px);
+    --text-heading: clamp(40px, 5vw, 72px);
+    --text-lede: clamp(19px, 1.7vw, 24px);
+
+    /* layout */
+    --content-max: 1344px;
+    --gutter: clamp(24px, 4vw, 48px);
+
+    color: var(--c-ink);
+    font-family: var(--font-sans);
   }
 
-  .landing {
-    min-height: 100vh;
-    overflow: hidden;
-    background: #faf7f1;
-    color: #232936;
+  :global(body) {
+    margin: 0;
+    background: #111318;
+  }
+
+  /* ---- panels: full-bleed color, centered 1344px content column ---- */
+  .panel {
+    padding-inline: max(var(--gutter), calc((100% - var(--content-max)) / 2));
+  }
+
+  .panel-parchment {
+    padding-block: clamp(64px, 8vw, 104px) clamp(56px, 7vw, 96px);
+    background: var(--c-parchment);
+  }
+
+  .panel-bark {
+    padding-block: clamp(40px, 5vw, 72px);
+    background: var(--c-bark);
+    color: var(--c-parchment);
+  }
+
+  .panel-sage {
+    padding-block: clamp(56px, 6vw, 88px);
+    background: var(--c-sage);
+  }
+
+  .panel-ink {
+    background: var(--c-ink);
+    color: var(--c-paper-muted);
+  }
+
+  /* ---- shared type registers ---- */
+  .kicker {
+    margin: 0;
+    font: 600 14px/18px var(--font-label);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .kicker-signal {
+    color: var(--c-signal);
+  }
+
+  .section-heading {
+    margin: 0;
+    font: 400 var(--text-heading) / 1 var(--font-display);
+    letter-spacing: -0.035em;
+  }
+
+  .intro-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 432px;
+    gap: 24px;
+    align-items: start;
+    margin-top: clamp(40px, 5vw, 64px);
+  }
+
+  .intro-copy {
+    margin: 8px 0 0;
+    font: 400 18px/28px var(--font-sans);
+  }
+
+  /* ---- hero ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    min-height: clamp(640px, 66.7vw, 960px);
+    background:
+      var(--c-ink) url("/landing/forest-hero.webp") center / cover no-repeat;
+    color: var(--c-paper);
   }
 
   .landing-nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    max-width: 1440px;
-    margin: 0 auto;
-    padding: 24px clamp(24px, 4vw, 64px);
-    border-bottom: 1px solid rgb(35 41 54 / 14%);
-    font: 500 14px/1 "General Sans", sans-serif;
+    gap: 24px;
+    padding-block: 32px;
+    border-bottom: 1px solid var(--c-paper-rule);
+    font: 400 14px/18px var(--font-label);
   }
 
-  .wordmark,
-  .nav-links a {
+  .wordmark {
+    font: 400 19px/1 var(--font-display);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     color: inherit;
     text-decoration: none;
   }
 
-  .wordmark {
-    font-size: 19px;
-    letter-spacing: -0.03em;
+  .nav-center {
+    color: var(--c-paper-muted);
   }
 
-  .nav-links {
-    display: flex;
-    gap: 24px;
-    align-items: center;
+  .nav-link {
+    font-weight: 600;
+    color: inherit;
+    text-decoration: none;
   }
 
-  .nav-links span {
-    color: #62687a;
+  .nav-link:hover,
+  .text-action:hover,
+  .note-row a:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
   }
 
-  .hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
-    gap: clamp(48px, 8vw, 128px);
-    align-items: end;
-    max-width: 1440px;
-    margin: 0 auto;
-    padding: clamp(72px, 11vh, 150px) clamp(24px, 4vw, 64px) clamp(64px, 9vh, 120px);
+  .hero-copy {
+    padding-block: clamp(48px, 8vh, 84px) clamp(64px, 12vh, 128px);
   }
 
-  .eyebrow {
-    margin: 0 0 20px;
-    color: #62687a;
-    font: 500 13px/1.2 "General Sans", sans-serif;
+  .hero-copy .kicker {
+    color: var(--c-paper);
   }
 
   h1 {
-    max-width: 900px;
-    margin: 0;
-    font: 500 clamp(58px, 7.2vw, 112px) / 0.88 "General Sans", sans-serif;
-    letter-spacing: -0.065em;
+    margin: clamp(32px, 5vh, 56px) 0 0;
+    font: 400 var(--text-display) / 0.95 var(--font-display);
+    letter-spacing: -0.045em;
+    color: var(--c-paper);
   }
 
   .lede {
-    max-width: 590px;
-    margin: 38px 0 0;
-    color: #3a3f4c;
-    font: 400 clamp(19px, 1.7vw, 25px) / 1.42 "Recia", Georgia, serif;
+    max-width: 560px;
+    margin: clamp(28px, 4vh, 44px) 0 0;
+    font: 400 var(--text-lede) / 1.42 var(--font-sans);
+    font-feature-settings: "salt";
+    letter-spacing: -0.01em;
   }
 
   .actions {
     display: flex;
-    gap: 24px;
-    align-items: center;
-    margin-top: 38px;
-    font: 500 15px/1 "General Sans", sans-serif;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    margin-top: clamp(28px, 4vh, 44px);
   }
 
   .primary-action {
-    padding: 15px 20px;
-    background: #33406e;
-    color: #faf7f1;
-    text-decoration: none;
-  }
-
-  .text-action {
-    color: #33406e;
+    font: 600 18px/28px var(--font-sans);
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+    color: var(--c-paper);
     text-decoration: none;
   }
 
   .primary-action:hover {
-    background: #3c5a73;
+    color: var(--c-parchment);
   }
 
+  .text-action {
+    font: 400 14px/18px var(--font-label);
+    color: var(--c-paper-muted);
+    text-decoration: none;
+  }
+
+  /* ---- trace graphic (parchment) ---- */
   .trace {
-    border-top: 1px solid rgb(35 41 54 / 18%);
-    border-bottom: 1px solid rgb(35 41 54 / 18%);
-    padding: 18px 0 20px;
-    font-family: "General Sans", sans-serif;
+    --trace-gutter: clamp(76px, 12vw, 164px);
+    margin-top: clamp(40px, 5vw, 64px);
+    font-family: var(--font-sans);
+    color: var(--c-earth);
   }
 
   .trace-head,
-  .trace-note,
-  .hours {
+  .trace-note {
     display: flex;
     justify-content: space-between;
-    color: #62687a;
-    font-size: 11px;
+    gap: 16px;
+    font-size: 12px;
+    line-height: 16px;
   }
 
   .trace-head {
-    padding-bottom: 36px;
+    padding-bottom: 32px;
   }
 
   .hours {
-    margin-left: 82px;
-    padding-bottom: 9px;
+    display: flex;
+    justify-content: space-between;
+    margin-left: var(--trace-gutter);
+    padding-bottom: 12px;
+    font: 400 12px/16px var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
   .lane {
-    --lane-color: #33406e;
+    --lane-color: var(--c-lane-trails);
     position: relative;
-    height: 30px;
-    margin-bottom: 10px;
-    margin-left: 82px;
+    height: 40px;
+    margin-bottom: 14px;
+    margin-left: var(--trace-gutter);
   }
 
   .lane-two {
-    --lane-color: #cf8f3a;
+    --lane-color: var(--c-lane-hearth);
   }
 
   .lane-three {
-    --lane-color: #8a7fa8;
+    --lane-color: var(--c-lane-graze);
   }
 
   .lane-label {
     position: absolute;
-    right: calc(100% + 16px);
-    top: 6px;
-    width: 66px;
-    text-align: right;
+    top: 12px;
+    right: calc(100% + 24px);
+    width: calc(var(--trace-gutter) - 24px);
     font-size: 12px;
-    color: #3a3f4c;
+    text-align: right;
   }
 
   .wash,
@@ -240,14 +405,14 @@ import BaseLayout from "../layouts/BaseLayout.astro";
   }
 
   .wash {
-    top: 10px;
-    height: 9px;
+    top: 14px;
+    height: 12px;
     opacity: 0.22;
   }
 
   .mark {
-    top: 7px;
-    height: 15px;
+    top: 10px;
+    height: 20px;
   }
 
   .lane-one .wash { left: 3%; width: 76%; }
@@ -263,91 +428,146 @@ import BaseLayout from "../layouts/BaseLayout.astro";
   .lane-three .c { left: 48%; width: 5%; }
 
   .trace-note {
-    margin-top: 30px;
-    gap: 16px;
+    justify-content: flex-start;
+    gap: 32px;
+    margin-top: 24px;
+    margin-left: var(--trace-gutter);
+    font-size: 11px;
+    line-height: 14px;
   }
 
-  .principles {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    max-width: 1440px;
-    margin: 0 auto;
-    border-top: 1px solid rgb(35 41 54 / 14%);
-  }
-
+  /* ---- principles (bark) ---- */
   .principles article {
-    min-height: 190px;
-    padding: 28px clamp(24px, 4vw, 64px) 34px;
-    border-right: 1px solid rgb(35 41 54 / 14%);
+    display: grid;
+    grid-template-columns: 96px 336px minmax(0, 1fr);
+    align-items: center;
+    padding-block: clamp(32px, 4vw, 56px);
   }
 
-  .principles article:last-child {
-    border-right: 0;
+  .principles article + article {
+    border-top: 1px solid var(--c-parchment-rule);
   }
 
-  .principles span {
-    color: #62687a;
-    font: 500 11px/1 "Commit Mono", monospace;
+  .principles .num {
+    font: 600 14px/18px var(--font-label);
+    letter-spacing: 0.08em;
+    color: var(--c-parchment-muted);
   }
 
   .principles h2 {
-    margin: 34px 0 8px;
-    font: 500 22px/1 "General Sans", sans-serif;
-    letter-spacing: -0.03em;
+    margin: 0;
+    font: 400 28px/1.2 var(--font-display);
+    letter-spacing: -0.035em;
   }
 
   .principles p {
-    max-width: 360px;
+    max-width: 864px;
     margin: 0;
-    color: #3a3f4c;
-    font: 400 16px/1.45 "Recia", Georgia, serif;
+    padding-left: 48px;
+    font: 400 20px/30px var(--font-sans);
   }
 
+  /* ---- start with one Mac (sage) ---- */
+  .command-bar {
+    margin: clamp(28px, 3vw, 40px) 0 0;
+    padding: 24px;
+    overflow-x: auto;
+    background: rgb(17 19 24 / 90%);
+    font: 400 15px/24px var(--font-mono);
+    color: var(--c-paper);
+  }
+
+  .note-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 24px;
+    margin-top: clamp(24px, 3vw, 40px);
+  }
+
+  .note-row p {
+    margin: 0;
+    font: 400 14px/24px var(--font-sans);
+  }
+
+  .note-row a {
+    font: 600 14px/18px var(--font-label);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: inherit;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  /* ---- footer (ink) ---- */
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 24px;
+    padding-block: 56px;
+    font: 400 14px/18px var(--font-label);
+  }
+
+  /* ---- responsive ---- */
   @media (max-width: 900px) {
-    .hero {
+    .intro-grid {
       grid-template-columns: 1fr;
-      align-items: start;
+      gap: 32px;
     }
 
-    .trace {
-      margin-top: 24px;
+    .principles article {
+      grid-template-columns: 96px minmax(0, 1fr);
+      row-gap: 12px;
+    }
+
+    .principles p {
+      grid-column: 2;
+      padding-left: 0;
     }
   }
 
   @media (max-width: 640px) {
     .landing-nav {
-      padding-block: 18px;
+      padding-block: 22px;
     }
 
-    .nav-links span {
+    .nav-center {
       display: none;
     }
 
     .hero {
-      padding-top: 58px;
+      min-height: 82vh;
     }
 
-    h1 {
-      font-size: clamp(52px, 16vw, 74px);
-    }
-
-    .actions {
-      align-items: flex-start;
-      flex-direction: column;
+    .trace-head {
+      padding-bottom: 24px;
     }
 
     .trace-note {
       flex-direction: column;
-    }
-
-    .principles {
-      grid-template-columns: 1fr;
+      gap: 6px;
     }
 
     .principles article {
-      min-height: 0;
-      border-right: 0;
-      border-bottom: 1px solid rgb(35 41 54 / 14%);
+      grid-template-columns: 1fr;
+      row-gap: 10px;
+    }
+
+    .principles p {
+      grid-column: 1;
+    }
+
+    .note-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .footer {
+      flex-direction: column;
+      gap: 10px;
+      padding-block: 40px;
     }
   }
 </style>
