@@ -31,6 +31,49 @@ Multi-Mac setup adds Tailscale as the private network and HTTPS access boundary.
 
 Target Macs run the matching file without Bun, Node, a source checkout, or sidecar assets. Source and release machines require Bun 1.3.14 or newer.
 
+## Release transport
+
+`bun run release:stage` runs the production web and standalone binary builds, then writes a deterministic product-owned staging directory under `dist/release/trails/<version>/`. It contains both architecture binaries, the POSIX installer pinned to immutable HTTPS paths and SHA-256 hashes, `SHA256SUMS`, and `release-input.json`. Trails does not contain Cloudflare credentials or assume a sibling checkout path.
+
+The public release boundary begins after staging. The shared [`Manzanita-Research/releases`](https://github.com/Manzanita-Research/releases) repository validates the registered product, manifest schema, file types, paths, sizes, and hashes; refuses any immutable collision; uploads to a private R2 bucket; and exposes only read-only `GET`/`HEAD` access through `https://releases.manzanita.dev/`.
+
+The stable bootstrap and alpha channel are:
+
+```text
+https://releases.manzanita.dev/trails/install.sh
+https://releases.manzanita.dev/trails/channels/alpha.json
+```
+
+Versioned objects under `/trails/releases/<version>/` are immutable and cached long-term. Channel manifests and `/trails/install.sh` are mutable, briefly cached pointers. Publication uploads and publicly verifies every versioned artifact before updating the alpha channel and bootstrap installer last, so a partial release never becomes current.
+
+Operator flow:
+
+```sh
+# Trails repository
+bun run release:stage
+
+# Shared releases repository
+bun run publish -- \
+  --from /absolute/path/to/trails/dist/release/trails/<version> \
+  --channel alpha \
+  --dry-run
+bun run publish -- \
+  --from /absolute/path/to/trails/dist/release/trails/<version> \
+  --channel alpha
+```
+
+Promotion and rollback change only mutable pointers to an already verified immutable version:
+
+```sh
+bun run promote -- \
+  --product trails \
+  --version <already-published-version> \
+  --channel alpha \
+  --dry-run
+```
+
+Remove `--dry-run` after review. Selecting an older version rolls back without deleting or mutating release objects.
+
 ## Canonical hub state
 
 `trails serve` opens `~/.manzanita/trails/trails.sqlite` with WAL, foreign keys, and a five-second busy timeout. Ordered migrations create:

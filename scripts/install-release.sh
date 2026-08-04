@@ -7,7 +7,7 @@ ARM64_SHA256="__ARM64_SHA256__"
 X64_SHA256="__X64_SHA256__"
 
 fail() {
-  printf 'trails alpha install: %s\n' "$*" >&2
+  printf 'trails install: %s\n' "$*" >&2
   exit 1
 }
 
@@ -41,7 +41,7 @@ esac
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v shasum >/dev/null 2>&1 || fail "shasum is required"
 
-temporary_directory=$(mktemp -d "${TMPDIR:-/tmp}/trails-alpha.XXXXXX")
+temporary_directory=$(mktemp -d "${TMPDIR:-/tmp}/trails-install.XXXXXX")
 staged_binary="$HOME/.local/bin/.trails.$$"
 cleanup() {
   rm -rf "$temporary_directory"

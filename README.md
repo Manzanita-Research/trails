@@ -17,7 +17,7 @@ You do **not** need a second Mac, Tailscale, Bun, Node, a repository checkout, o
 Run:
 
 ```bash
-curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Home Mac"
+curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- hub --name "Home Mac"
 ```
 
 Replace `Home Mac` with the name you want Trails to show for that computer.
@@ -33,7 +33,7 @@ Setup downloads the correct binary, verifies it, indexes existing sessions, and 
 Only multi-Mac setups need Tailscale. Install [Tailscale](https://tailscale.com/download/mac), connect every participating Mac to the same tailnet, then rerun hub setup with private network access enabled:
 
 ```bash
-curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
+curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
   hub --tailscale --name "Home Mac"
 ```
 
@@ -46,7 +46,7 @@ https://your-hub.your-tailnet.ts.net/
 Run the installer on each additional Mac—each a **spoke**—using that URL:
 
 ```bash
-curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
+curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
   join https://your-hub.your-tailnet.ts.net/ --name "Laptop"
 ```
 
@@ -63,7 +63,7 @@ https://trails.your-tailnet.ts.net/
 Tailscale Services require a pre-defined `svc:trails` service, a tag-authenticated hub, and service-host approval. After those prerequisites are complete, use:
 
 ```bash
-curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
+curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
   hub --service svc:trails --name "Home Mac"
 ```
 
@@ -120,8 +120,58 @@ If the optional summary relay is enabled, it receives only bounded summary input
 
 ## Alpha release
 
-Current version: `0.1.0-alpha.4`
+Current version: `0.1.0-alpha.5`
 
-The temporary installer and architecture-specific binaries are hosted at:
+The stable installer URL is:
 
-**https://fancy-cairn-p89p.here.now/**
+**https://releases.manzanita.dev/trails/install.sh**
+
+It follows the recommended `alpha` channel. The installer downloads the matching macOS binary from an immutable versioned path and verifies its pinned SHA-256 before replacing `~/.local/bin/trails`. Release metadata and checksums are public at:
+
+```text
+https://releases.manzanita.dev/trails/channels/alpha.json
+https://releases.manzanita.dev/trails/releases/0.1.0-alpha.5/release.json
+https://releases.manzanita.dev/trails/releases/0.1.0-alpha.5/SHA256SUMS
+```
+
+## Release operations
+
+Trails owns compilation, its installer, version selection, and a validated staging directory. The shared [`Manzanita-Research/releases`](https://github.com/Manzanita-Research/releases) repository owns immutable R2 storage, manifest validation, upload ordering, public verification, channel promotion/rollback, and `releases.manzanita.dev`.
+
+Build the production web app, standalone binaries, installer, checksums, and release descriptor:
+
+```sh
+bun install --frozen-lockfile
+bun run release:stage
+```
+
+This writes:
+
+```text
+dist/release/trails/<version>/
+```
+
+Validate through the shared publisher before uploading:
+
+```sh
+cd /path/to/releases
+bun install --frozen-lockfile
+bun run publish -- \
+  --from /absolute/path/to/trails/dist/release/trails/<version> \
+  --channel alpha \
+  --dry-run
+```
+
+Remove `--dry-run` to publish. The shared publisher validates locally, refuses immutable collisions, uploads versioned binaries, verifies their public bytes and hashes, uploads checksums/installer/release metadata, verifies every versioned URL, then updates the alpha channel and stable installer last. A partial upload never becomes current.
+
+Promotion and rollback point the mutable channel and bootstrap installer at an already verified immutable version:
+
+```sh
+bun run promote -- \
+  --product trails \
+  --version <already-published-version> \
+  --channel alpha \
+  --dry-run
+```
+
+Remove `--dry-run` after review. Selecting an older version performs a rollback; versioned artifacts are never mutated or deleted.
