@@ -25,7 +25,7 @@ function ThreadCard({ card, accent }: { card: Card; accent?: boolean }) {
         {t.dispName(card.project)}
       </button>
       <div className={`thread-when${accent ? " is-you" : ""}`}>
-        {fmtAgo(card.latest.end, t.scanTime)}
+        {fmtAgo(card.latest.end, t.nowTime)}
         {note}
       </div>
       {snip && (
@@ -51,7 +51,7 @@ export function ThreadsView() {
   const cols: Record<string, Card[]> = { motion: [], waiting: [], resting: [], dormant: [] }
   for (const [project, sessions] of byProject) {
     const latest = sessions.reduce((a, b) => (a.end > b.end ? a : b))
-    const ageMin = (t.scanTime - new Date(latest.end).getTime()) / 60000
+    const ageMin = (t.nowTime - new Date(latest.end).getTime()) / 60000
     const lastBucket = latest.activity[latest.activity.length - 1]
     const card: Card = { project, latest, ageMin, agentHadLastWord: !!lastBucket && lastBucket[3] === 0 }
     if (ageMin < 60) cols.motion.push(card)

@@ -35,6 +35,7 @@ const bootstrap = () => ({
   protocolVersion: 1,
   revision: 3,
   generatedAt: "2026-07-01T17:02:00.000Z",
+  indexedAt: "2026-07-01T17:01:00.000Z",
   timezone: "America/Los_Angeles",
   sessions: [
     {

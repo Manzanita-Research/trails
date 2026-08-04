@@ -26,6 +26,7 @@ export interface AppOptions {
   readonly staticRoot?: string
   readonly staticAssets?: ReadonlyArray<Blob & { readonly name: string }>
   readonly inference?: InferenceConfig
+  readonly now?: () => number
 }
 
 type ErrorCode =
@@ -131,7 +132,7 @@ function activitiesBySession(db: TrailsDb): Map<number, ActivityTuple[]> {
   return output
 }
 
-export function bootstrapOf(db: TrailsDb): BootstrapV1 {
+export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
   const activity = activitiesBySession(db)
   const sessionRows = db.sqlite
     .query(
@@ -156,6 +157,7 @@ export function bootstrapOf(db: TrailsDb): BootstrapV1 {
     boundary: 4 | 5 | 6 | 7
     halo: 0 | 5 | 10 | 15
   }
+  const indexed = db.sqlite.query("SELECT MAX(updated_at) AS at FROM sessions").get() as { at: number | null }
   const assignments: Record<string, string> = {}
   const names: Record<string, string> = {}
   const preferences = db.sqlite
@@ -181,7 +183,8 @@ export function bootstrapOf(db: TrailsDb): BootstrapV1 {
   const bootstrap: BootstrapV1 = {
     protocolVersion: 1,
     revision: revisionOf(db),
-    generatedAt: new Date().toISOString(),
+    generatedAt: new Date(now).toISOString(),
+    indexedAt: indexed.at === null ? null : new Date(indexed.at).toISOString(),
     timezone: TIMEZONE,
     sessions: sessionRows.map((row) => ({
       id: String(row.id),
@@ -232,7 +235,7 @@ function enqueueBoundaryDays(db: TrailsDb, boundary: number, now: number): void 
   }
 }
 
-async function apiResponse(options: AppOptions, request: Request, url: URL): Promise<Response> {
+async function apiResponse(options: AppOptions, request: Request, url: URL, now: number): Promise<Response> {
   const { db } = options
   if (url.pathname === "/api/health") {
     if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
@@ -245,7 +248,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL): Pro
       throw new ApiError("invalid_request", "after must be a nonnegative integer", 400)
     }
     if (afterValue !== null && Number(afterValue) === revisionOf(db)) return new Response(null, { status: 204 })
-    return jsonResponse(bootstrapOf(db))
+    return jsonResponse(bootstrapOf(db, now))
   }
   if (url.pathname === "/api/ingest") {
     if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
@@ -260,7 +263,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL): Pro
     }
     const body = decodeBody(IngestRequestV1Schema, input)
     try {
-      return jsonResponse(await Effect.runPromise(ingestSessions(db, body)))
+      return jsonResponse(await Effect.runPromise(ingestSessions(db, body, now)))
     } catch {
       throw new ApiError("internal_error", "internal server error", 500)
     }
@@ -279,7 +282,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL): Pro
       db.sqlite.query("UPDATE settings SET boundary = ?, halo = ? WHERE id = 1").run(boundary, halo)
       if (boundary !== current.boundary) {
         db.sqlite.query("DELETE FROM day_summary_jobs WHERE boundary <> ?").run(boundary)
-        enqueueBoundaryDays(db, boundary, Date.now())
+        enqueueBoundaryDays(db, boundary, now)
       }
       return incrementRevision(db)
     })()
@@ -340,7 +343,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL): Pro
     const revision = db.sqlite.transaction(() => {
       db.sqlite
         .query("INSERT INTO custom_engagements(id, name, created_at) VALUES (?, ?, ?)")
-        .run(engagement.id, engagement.name, Date.now())
+        .run(engagement.id, engagement.name, now)
       return incrementRevision(db)
     })()
     return jsonResponse({ revision, engagement })
@@ -348,7 +351,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL): Pro
   if (url.pathname === "/api/pocket") {
     if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
     const body = decodeBody(PocketCreateSchema, await readJson(request, 64 * 1024))
-    const item = { id: crypto.randomUUID(), text: body.text, at: Date.now() }
+    const item = { id: crypto.randomUUID(), text: body.text, at: now }
     const revision = db.sqlite.transaction(() => {
       db.sqlite.query("INSERT INTO pocket_items(id, text, created_at) VALUES (?, ?, ?)").run(item.id, item.text, item.at)
       return incrementRevision(db)
@@ -420,8 +423,9 @@ export function createApp(options: AppOptions): (request: Request) => Promise<Re
   return async (request) => {
     try {
       const url = new URL(request.url)
+      const now = (options.now ?? Date.now)()
       return url.pathname.startsWith("/api/")
-        ? await apiResponse(options, request, url)
+        ? await apiResponse(options, request, url, now)
         : await staticResponse(options, request, url)
     } catch (error) {
       return errorResponse(error instanceof ApiError ? error : new ApiError("internal_error", "internal server error", 500))

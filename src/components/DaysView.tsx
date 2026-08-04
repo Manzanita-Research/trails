@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { localParts, workdayOf } from "../../shared/domain"
 import { Ticks } from "./SessLine"
 import {
   credit,
@@ -9,7 +10,6 @@ import {
   fmtDur,
   focusMinutes,
   fullDate,
-  shiftDate,
   type DayMap,
 } from "../lib/data"
 import { useTrails } from "../lib/ctx"
@@ -210,12 +210,16 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
   const agentMin = new Set([...projMap.values()].flatMap((p) => [...p.all])).size
   const word = creditWord[credit(focus)]
 
-  // where the index stops: shown only on the workday the scan belongs to
-  const scanD = new Date(t.scanTime)
-  const scanIso = `${scanD.getFullYear()}-${String(scanD.getMonth() + 1).padStart(2, "0")}-${String(scanD.getDate()).padStart(2, "0")}`
-  const scanWorkday = scanD.getHours() < t.boundary ? shiftDate(scanIso, -1) : scanIso
-  const scanMin = scanD.getHours() * 60 + scanD.getMinutes()
-  const cutoff = scanWorkday === date ? (scanMin < t.boundary * 60 ? scanMin + 1440 : scanMin) : undefined
+  // where the index stops: shown only on the workday of the latest accepted session change
+  const indexedParts = t.indexedAt === null ? null : localParts(new Date(t.indexedAt).toISOString())
+  const indexedWorkday =
+    indexedParts === null ? null : workdayOf(indexedParts.date, indexedParts.minute, t.boundary)
+  const cutoff =
+    indexedParts !== null && indexedWorkday === date
+      ? indexedParts.minute < t.boundary * 60
+        ? indexedParts.minute + 1440
+        : indexedParts.minute
+      : undefined
 
   // story order = timeline order: first activity of the day first
   const notes = [...projMap.entries()]

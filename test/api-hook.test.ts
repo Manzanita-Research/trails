@@ -7,6 +7,7 @@ function bootstrap(revision: number): BootstrapV1 {
     protocolVersion: 1,
     revision,
     generatedAt: "2026-08-03T12:00:00.000Z",
+    indexedAt: null,
     timezone: "America/Los_Angeles",
     sessions: [],
     summaries: { sessions: {}, days: {} },

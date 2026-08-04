@@ -41,7 +41,11 @@ function LoadedApp({
   const [dayIdx, setDayIdx] = useState(0)
 
   const sessions = useMemo(() => prepSessions(bootstrap.sessions), [bootstrap.sessions])
-  const scanTime = useMemo(() => new Date(bootstrap.generatedAt).getTime(), [bootstrap.generatedAt])
+  const nowTime = useMemo(() => new Date(bootstrap.generatedAt).getTime(), [bootstrap.generatedAt])
+  const indexedAt = useMemo(
+    () => (bootstrap.indexedAt === null ? null : new Date(bootstrap.indexedAt).getTime()),
+    [bootstrap.indexedAt],
+  )
   const days = useMemo(() => buildDays(sessions, boundary), [sessions, boundary])
   const topOrgs = useMemo(() => computeTopOrgs(sessions), [sessions])
   const engs = useMemo(
@@ -73,7 +77,8 @@ function LoadedApp({
   const trails: Trails = {
     sessions,
     summaries: bootstrap.summaries,
-    scanTime,
+    nowTime,
+    indexedAt,
     boundary,
     halo,
     days,
