@@ -1,0 +1,67 @@
+---
+title: Install trails
+description: Set up a private hub and connect the Macs where you use coding agents.
+audience: human
+sidebar:
+  order: 1
+---
+
+Installation has two parts: set up one hub, then join any other Macs to it. The installer detects your Mac architecture, verifies the downloaded binary, and configures the background services for you.
+
+## Before you begin
+
+1. Install [Tailscale](https://tailscale.com/download/mac) on every participating Mac.
+2. Sign in to the same tailnet everywhere.
+3. Choose an always-on Mac for the hub. It must remain awake, logged in, and connected for trails to collect sessions and serve the web app.
+
+## Set up the hub
+
+Run this on the always-on Mac:
+
+```sh
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Home Hub"
+```
+
+Replace `Home Hub` with the name you want trails to show for that Mac.
+
+The setup process:
+
+1. Downloads and verifies the correct standalone binary.
+2. Installs the private web service, collector, and daily backup job.
+3. Indexes existing sessions on the hub Mac.
+4. Prints a private Tailscale URL.
+
+The URL looks like this:
+
+```text
+https://your-hub.your-tailnet.ts.net/
+```
+
+Open it from any device on the same tailnet.
+
+## Join another Mac
+
+Run the installer on the other Mac. Replace the example URL with the URL printed by the hub:
+
+```sh
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
+  join https://your-hub.your-tailnet.ts.net/ --name "MacBook Pro"
+```
+
+The installer checks the hub before changing local state, indexes sessions already on that Mac, and starts a collector that checks for changes every minute.
+
+Repeat this step on each additional Mac.
+
+<Aside type="tip" title="Safe to rerun">
+  The installer is also the update path. Rerunning the same command replaces the binary atomically and preserves device identity, configuration, the hub database, and backups.
+</Aside>
+
+## What happens next
+
+- New and changed sessions normally arrive within one minute.
+- Collectors retry on their next scheduled run when the hub is temporarily unavailable.
+- The hub database lives at `~/.manzanita/trails/trails.sqlite`.
+- The hub writes a daily SQLite backup at 03:00 and keeps the latest 14.
+- Generated summaries may be temporarily unavailable during the alpha. Trails falls back to the session's first prompt.
+
+Next: [learn how to read days, weeks, and threads →](/using-trails)

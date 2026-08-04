@@ -1,0 +1,353 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="trails — where your days actually went"
+  description="Trails reconstructs your days from the coding-agent sessions already on your Macs."
+>
+  <main class="landing">
+    <nav class="landing-nav" aria-label="Primary navigation">
+      <a class="wordmark" href="/" aria-label="trails home">trails</a>
+      <div class="nav-links">
+        <span>private alpha</span>
+        <a href="/start-here">documentation ↗</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">a memory system for agent-shaped work</p>
+        <h1>Where your days<br />actually went.</h1>
+        <p class="lede">
+          Trails turns the coding-agent sessions already on your Macs into a
+          private timeline of projects, working days, and active threads.
+          Nothing to start. Nothing to stop.
+        </p>
+        <div class="actions">
+          <a class="primary-action" href="/installation">Set up trails</a>
+          <a class="text-action" href="/concepts/how-it-works">How it works →</a>
+        </div>
+      </div>
+
+      <div class="trace" aria-label="An illustrative week of agent and attention activity">
+        <div class="trace-head">
+          <span>the shape of a working day</span>
+          <span>attention / agents</span>
+        </div>
+        <div class="hours" aria-hidden="true">
+          <span>6a</span><span>9a</span><span>12p</span><span>3p</span><span>6p</span><span>9p</span>
+        </div>
+        <div class="lane lane-one">
+          <span class="lane-label">trails</span>
+          <span class="wash"></span>
+          <i class="mark a"></i><i class="mark b"></i><i class="mark c"></i>
+        </div>
+        <div class="lane lane-two">
+          <span class="lane-label">hearth</span>
+          <span class="wash"></span>
+          <i class="mark a"></i><i class="mark b"></i>
+        </div>
+        <div class="lane lane-three">
+          <span class="lane-label">graze</span>
+          <span class="wash"></span>
+          <i class="mark a"></i><i class="mark b"></i><i class="mark c"></i>
+        </div>
+        <div class="trace-note">
+          <span>solid marks: you were present</span>
+          <span>pale wash: agents were running</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="principles" aria-label="Trails principles">
+      <article>
+        <span>01</span>
+        <h2>No timer.</h2>
+        <p>Trails reads the session exhaust your tools already leave behind.</p>
+      </article>
+      <article>
+        <span>02</span>
+        <h2>Your machines.</h2>
+        <p>Your hub, database, backups, and tailnet stay under your control.</p>
+      </article>
+      <article>
+        <span>03</span>
+        <h2>Memory first.</h2>
+        <p>A readable week, not a performance score or surveillance dashboard.</p>
+      </article>
+    </section>
+  </main>
+</BaseLayout>
+
+<style>
+  :global(body) {
+    margin: 0;
+    background: #faf7f1;
+    color: #232936;
+  }
+
+  .landing {
+    min-height: 100vh;
+    overflow: hidden;
+    background: #faf7f1;
+    color: #232936;
+  }
+
+  .landing-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 24px clamp(24px, 4vw, 64px);
+    border-bottom: 1px solid rgb(35 41 54 / 14%);
+    font: 500 14px/1 "General Sans", sans-serif;
+  }
+
+  .wordmark,
+  .nav-links a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .wordmark {
+    font-size: 19px;
+    letter-spacing: -0.03em;
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+  }
+
+  .nav-links span {
+    color: #62687a;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
+    gap: clamp(48px, 8vw, 128px);
+    align-items: end;
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: clamp(72px, 11vh, 150px) clamp(24px, 4vw, 64px) clamp(64px, 9vh, 120px);
+  }
+
+  .eyebrow {
+    margin: 0 0 20px;
+    color: #62687a;
+    font: 500 13px/1.2 "General Sans", sans-serif;
+  }
+
+  h1 {
+    max-width: 900px;
+    margin: 0;
+    font: 500 clamp(58px, 7.2vw, 112px) / 0.88 "General Sans", sans-serif;
+    letter-spacing: -0.065em;
+  }
+
+  .lede {
+    max-width: 590px;
+    margin: 38px 0 0;
+    color: #3a3f4c;
+    font: 400 clamp(19px, 1.7vw, 25px) / 1.42 "Recia", Georgia, serif;
+  }
+
+  .actions {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    margin-top: 38px;
+    font: 500 15px/1 "General Sans", sans-serif;
+  }
+
+  .primary-action {
+    padding: 15px 20px;
+    background: #33406e;
+    color: #faf7f1;
+    text-decoration: none;
+  }
+
+  .text-action {
+    color: #33406e;
+    text-decoration: none;
+  }
+
+  .primary-action:hover {
+    background: #3c5a73;
+  }
+
+  .trace {
+    border-top: 1px solid rgb(35 41 54 / 18%);
+    border-bottom: 1px solid rgb(35 41 54 / 18%);
+    padding: 18px 0 20px;
+    font-family: "General Sans", sans-serif;
+  }
+
+  .trace-head,
+  .trace-note,
+  .hours {
+    display: flex;
+    justify-content: space-between;
+    color: #62687a;
+    font-size: 11px;
+  }
+
+  .trace-head {
+    padding-bottom: 36px;
+  }
+
+  .hours {
+    margin-left: 82px;
+    padding-bottom: 9px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .lane {
+    --lane-color: #33406e;
+    position: relative;
+    height: 30px;
+    margin-bottom: 10px;
+    margin-left: 82px;
+  }
+
+  .lane-two {
+    --lane-color: #cf8f3a;
+  }
+
+  .lane-three {
+    --lane-color: #8a7fa8;
+  }
+
+  .lane-label {
+    position: absolute;
+    right: calc(100% + 16px);
+    top: 6px;
+    width: 66px;
+    text-align: right;
+    font-size: 12px;
+    color: #3a3f4c;
+  }
+
+  .wash,
+  .mark {
+    position: absolute;
+    display: block;
+    background: var(--lane-color);
+  }
+
+  .wash {
+    top: 10px;
+    height: 9px;
+    opacity: 0.22;
+  }
+
+  .mark {
+    top: 7px;
+    height: 15px;
+  }
+
+  .lane-one .wash { left: 3%; width: 76%; }
+  .lane-one .a { left: 8%; width: 12%; }
+  .lane-one .b { left: 35%; width: 18%; }
+  .lane-one .c { left: 66%; width: 9%; }
+  .lane-two .wash { left: 21%; width: 67%; }
+  .lane-two .a { left: 25%; width: 9%; }
+  .lane-two .b { left: 70%; width: 14%; }
+  .lane-three .wash { left: 11%; width: 45%; }
+  .lane-three .a { left: 14%; width: 7%; }
+  .lane-three .b { left: 29%; width: 11%; }
+  .lane-three .c { left: 48%; width: 5%; }
+
+  .trace-note {
+    margin-top: 30px;
+    gap: 16px;
+  }
+
+  .principles {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    max-width: 1440px;
+    margin: 0 auto;
+    border-top: 1px solid rgb(35 41 54 / 14%);
+  }
+
+  .principles article {
+    min-height: 190px;
+    padding: 28px clamp(24px, 4vw, 64px) 34px;
+    border-right: 1px solid rgb(35 41 54 / 14%);
+  }
+
+  .principles article:last-child {
+    border-right: 0;
+  }
+
+  .principles span {
+    color: #62687a;
+    font: 500 11px/1 "Commit Mono", monospace;
+  }
+
+  .principles h2 {
+    margin: 34px 0 8px;
+    font: 500 22px/1 "General Sans", sans-serif;
+    letter-spacing: -0.03em;
+  }
+
+  .principles p {
+    max-width: 360px;
+    margin: 0;
+    color: #3a3f4c;
+    font: 400 16px/1.45 "Recia", Georgia, serif;
+  }
+
+  @media (max-width: 900px) {
+    .hero {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+
+    .trace {
+      margin-top: 24px;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .landing-nav {
+      padding-block: 18px;
+    }
+
+    .nav-links span {
+      display: none;
+    }
+
+    .hero {
+      padding-top: 58px;
+    }
+
+    h1 {
+      font-size: clamp(52px, 16vw, 74px);
+    }
+
+    .actions {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .trace-note {
+      flex-direction: column;
+    }
+
+    .principles {
+      grid-template-columns: 1fr;
+    }
+
+    .principles article {
+      min-height: 0;
+      border-right: 0;
+      border-bottom: 1px solid rgb(35 41 54 / 14%);
+    }
+  }
+</style>

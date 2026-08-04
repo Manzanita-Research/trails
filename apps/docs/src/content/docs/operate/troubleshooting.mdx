@@ -1,0 +1,66 @@
+---
+title: Troubleshooting
+description: Resolve common setup, connection, collection, and service failures.
+audience: human
+sidebar:
+  order: 2
+---
+
+## The web app does not open
+
+Confirm all four conditions:
+
+1. The hub is awake and logged in.
+2. Tailscale says **Connected** on the hub and the viewing device.
+3. Both devices use the same tailnet.
+4. You are opening the exact HTTPS URL printed by hub setup.
+
+Rerunning the hub installer is safe and restarts the trails services.
+
+## New sessions do not appear
+
+New and changed sessions normally arrive within one minute.
+
+On the Mac where the session was created, run a one-off collection:
+
+```sh
+trails collect --once
+```
+
+If the command succeeds but the session still does not appear, confirm the collector is configured for the current hub URL and that the hub is reachable from that Mac.
+
+Trails currently recognizes local sessions from Claude Code, Codex, omp, and pi. An unsupported tool will not appear.
+
+## `trails` is not found
+
+The installer puts the binary at `~/.local/bin/trails`. Add that directory to your shell profile:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Open a new shell, then confirm the installation:
+
+```sh
+trails version
+```
+
+## Setup fails
+
+Rerun the same installer command once. If it still fails, preserve the command output and the relevant error log:
+
+```text
+~/.local/state/trails/com.manzanita.trails.server.error.log
+~/.local/state/trails/com.manzanita.trails.collector.error.log
+~/.local/state/trails/com.manzanita.trails.backup.error.log
+```
+
+Only the hub has server and backup logs. Every participating Mac has a collector log.
+
+## Summaries use first prompts
+
+This fallback does not mean collection failed. The timeline and project activity are stored before optional summary generation. Summary jobs wait for changed sessions to settle and may be delayed when the inference relay is unavailable.
+
+## The hub was offline
+
+Leave the collector running. A failed submission does not discard its local collection cursor, and the collector tries again on the next scheduled run. Once the hub is reachable, changed sessions are submitted idempotently.

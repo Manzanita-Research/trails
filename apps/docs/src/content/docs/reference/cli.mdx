@@ -1,0 +1,72 @@
+---
+title: Command-line reference
+description: The trails setup, collection, server, backup, and service commands.
+audience: human
+sidebar:
+  order: 0
+---
+
+The one-command installer is the supported path for normal setup and updates. These commands are available in the installed standalone binary for inspection, recovery, and development.
+
+## Setup
+
+```text
+trails setup hub [--name NAME]
+trails setup join URL [--name NAME]
+```
+
+`setup hub` configures the current Mac as the canonical hub, installs server, collector, and backup services, performs the initial collection, and prints its Tailscale URL.
+
+`setup join` verifies an existing hub, configures this Mac's collector, performs the initial collection, and installs its collector service.
+
+## Collect
+
+```text
+trails collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
+```
+
+Runs one collection pass and exits. Without overrides it reads the installed collector configuration.
+
+## Serve
+
+```text
+trails serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
+```
+
+Starts the hub HTTP service. Installed hubs use the configured database and loopback address behind Tailscale Serve.
+
+## Configure
+
+```text
+trails configure collector --server URL [--name NAME] [--reset-device-id]
+trails configure server --ai-url URL --ai-token-stdin
+```
+
+Collector configuration sets the canonical hub endpoint and the local display name. `--reset-device-id` intentionally creates a new collector identity on the next run.
+
+Server configuration enables the optional authenticated inference relay. The token is read from standard input so it does not appear in shell history or process arguments.
+
+## Back up
+
+```text
+trails backup --output PATH [--db PATH]
+trails backup --output-dir DIR [--retain 14] [--db PATH]
+```
+
+Creates a consistent SQLite backup. Directory mode also prunes committed backups beyond the retention count.
+
+## Install services
+
+```text
+trails install server [--dry-run]
+trails install collector [--dry-run]
+```
+
+Writes and loads the launchd jobs used by the current configuration. `--dry-run` prints the planned files and commands without changing launchd.
+
+## Version and help
+
+```text
+trails version
+trails help
+```

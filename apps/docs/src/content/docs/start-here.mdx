@@ -1,0 +1,47 @@
+---
+title: Start here
+description: What trails is, what you need, and where to begin.
+audience: human
+sidebar:
+  order: 0
+  badge: Start here
+---
+
+Trails reconstructs your days from the coding-agent sessions already on your Macs. It turns those sessions into a private timeline of projects, working days, and active threads.
+
+It is a memory system, not a time tracker. There is nothing to start or stop while you work.
+
+## What you need
+
+- macOS on every participating computer.
+- [Tailscale](https://tailscale.com/download/mac) installed and connected to the same tailnet on every Mac.
+- One Mac that can remain awake, logged in, and connected. This is your **hub**.
+- An invitation to the current alpha.
+
+Existing sessions from Claude Code, Codex, omp, or pi will make trails useful immediately. New sessions appear after installation too.
+
+You do not need Bun, Node, a repository checkout, or a public server.
+
+<Aside type="caution" title="Private alpha">
+  Trails is changing quickly. Installation details and stored data may change between alpha releases. Rerunning the installer is the supported update path.
+</Aside>
+
+## Choose a path
+
+<CardGrid>
+  <Card title="Install trails" icon="ph:download-simple" href="/installation">
+    Set up the hub, then connect any additional Macs.
+  </Card>
+  <Card title="Learn the views" icon="ph:path" href="/using-trails">
+    Read days, review a week, and return to active threads.
+  </Card>
+  <Card title="Understand the boundary" icon="ph:shield-check" href="/concepts/privacy">
+    See what stays on each Mac and what reaches the hub.
+  </Card>
+</CardGrid>
+
+## The short version
+
+One always-on Mac owns the trails database and private web app. A small collector on each Mac reads changed agent sessions and sends normalized observations to that hub. Tailscale keeps the hub off the public internet.
+
+[See the full path from session log to readable day →](/concepts/how-it-works)

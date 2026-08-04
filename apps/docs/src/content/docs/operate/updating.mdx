@@ -1,0 +1,41 @@
+---
+title: Update trails
+description: Upgrade a hub or joined Mac without losing local identity or data.
+audience: human
+sidebar:
+  order: 0
+---
+
+Rerun the same installer command you originally used. The installer downloads and verifies the current architecture-specific binary, then replaces the installed binary atomically.
+
+## Update a hub
+
+Use the same device name you chose during setup:
+
+```sh
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Home Hub"
+```
+
+## Update a joined Mac
+
+Use the hub URL and device name you chose during setup:
+
+```sh
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
+  join https://your-hub.your-tailnet.ts.net/ --name "MacBook Pro"
+```
+
+## What is preserved
+
+An update preserves:
+
+- device identity;
+- collector and server configuration;
+- the hub database;
+- daily backups.
+
+The installer reconfigures and restarts the relevant launchd services. Running it again is also the first recovery step when a background service stopped unexpectedly.
+
+<Aside type="caution" title="Alpha compatibility">
+  Read the release note that came with your invitation before skipping several alpha versions. The installer preserves state, but an alpha release may include a one-way database migration.
+</Aside>

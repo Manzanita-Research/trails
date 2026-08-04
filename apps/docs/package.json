@@ -1,0 +1,47 @@
+{
+  "name": "@trails/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "astro check",
+    "lint:docs": "nimbus-docs lint",
+    "lint:docs:fix": "nimbus-docs lint --fix",
+    "prepreview:cf": "astro build",
+    "preview:cf": "wrangler dev",
+    "predeploy": "astro check && astro build",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@iconify-json/ph": "^1.2.0",
+    "astro": "^7.0.0",
+    "astro-icon": "^1.1.0",
+    "astro-og-canvas": "^0.13.0",
+    "canvaskit-wasm": "^0.41.1",
+    "clsx": "^2.1.1",
+    "@cloudflare/nimbus-docs": "0.8.1",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.8",
+    "@tailwindcss/vite": "^4.1.4",
+    "pagefind": "^1.5.2",
+    "tailwindcss": "^4.1.4",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.95.0"
+  },
+  "optionalDependencies": {
+    "@bruits/satteri-darwin-arm64": "0.9.5",
+    "@bruits/satteri-darwin-x64": "0.9.5",
+    "@bruits/satteri-linux-arm64-gnu": "0.9.5",
+    "@bruits/satteri-linux-arm64-musl": "0.9.5",
+    "@bruits/satteri-linux-x64-gnu": "0.9.5",
+    "@bruits/satteri-linux-x64-musl": "0.9.5",
+    "@bruits/satteri-wasm32-wasi": "0.9.5",
+    "@bruits/satteri-win32-arm64-msvc": "0.9.5",
+    "@bruits/satteri-win32-x64-msvc": "0.9.5"
+  }
+}
