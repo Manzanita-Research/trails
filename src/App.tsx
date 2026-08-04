@@ -231,7 +231,7 @@ export function App() {
       <>
         <Topbar mode="minimal" />
         <main id="main">
-          <WelcomeView retry={retry} syncError={error} />
+          <WelcomeView hubUrl={data!.hubUrl} retry={retry} syncError={error} />
         </main>
       </>
     )

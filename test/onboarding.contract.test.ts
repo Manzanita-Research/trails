@@ -208,10 +208,15 @@ describe("onboarding bootstrap contract", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 2 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 3 })
     expect(
-      migrated.sqlite.query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1").get(),
-    ).toEqual({ boundary: 7, halo: 15, onboarding_version: 0 })
+      migrated.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
+    ).toEqual({
+      boundary: 7,
+      halo: 15,
+      onboarding_version: 0,
+      hub_url: "http://127.0.0.1:7412/",
+    })
     expect(migrated.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "7" })
     expect(migrated.sqlite.query("SELECT source_session_id, first_prompt FROM sessions").get()).toEqual({
       source_session_id: "legacy-session",

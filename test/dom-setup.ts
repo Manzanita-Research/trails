@@ -1,7 +1,16 @@
-import "@happy-dom/global-registrator/register.js"
 import { afterEach, expect } from "bun:test"
-// Happy DOM must register before Testing Library evaluates its document-bound helpers.
 
+const NativeHeaders = globalThis.Headers
+const NativeRequest = globalThis.Request
+const NativeResponse = globalThis.Response
+
+const { GlobalRegistrator } = await import("@happy-dom/global-registrator")
+GlobalRegistrator.register()
+globalThis.Headers = NativeHeaders
+globalThis.Request = NativeRequest
+globalThis.Response = NativeResponse
+
+// Happy DOM must register before Testing Library evaluates its document-bound helpers.
 const { default: _default, ...matchers } = await import("@testing-library/jest-dom/matchers")
 const { cleanup } = await import("@testing-library/react")
 

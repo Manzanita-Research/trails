@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createApp } from "../server/app"
+import { createApp, setAdvertisedHubUrl } from "../server/app"
 import { openDatabase, type TrailsDb } from "../server/db"
 import {
   BootstrapV1Schema,
@@ -18,6 +18,9 @@ const fixedTimestamp = "2026-07-01T12:30:00.000Z"
 const fixedNow = Date.parse(fixedTimestamp)
 const originalFetch = globalThis.fetch
 const databases = new Set<TrailsDb>()
+const privateHubUrl = "https://trails.example.ts.net/"
+const clientSetupCommand =
+  "curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- join https://trails.example.ts.net/"
 
 const firstTrail: IngestRequestV1 = {
   protocolVersion: 1,
@@ -60,9 +63,11 @@ function selectElement(element: HTMLElement): HTMLSelectElement {
   return element
 }
 
-function makeHarness(): Harness {
+
+function makeHarness(options: { readonly hubUrl?: string } = {}): Harness {
   const db = openDatabase(":memory:")
   databases.add(db)
+  if (options.hubUrl !== undefined) setAdvertisedHubUrl(db, options.hubUrl)
   const app = createApp({ db, now: () => fixedNow })
   const failedSettingsPatches: SettingsPatch[] = []
   const settingsRequests: SettingsPatch[] = []
@@ -155,7 +160,7 @@ async function expectCanonical(
 
 describe("first-run onboarding", () => {
   test("moves from a truthful empty Welcome into the first trail without completing on navigation", async () => {
-    const harness = makeHarness()
+    const harness = makeHarness({ hubUrl: privateHubUrl })
     const user = userEvent.setup()
     render(<App />)
 
@@ -170,6 +175,9 @@ describe("first-run onboarding", () => {
     expect(
       screen.getByText("Transcripts are parsed on the source Mac. Transcript bodies never reach the hub."),
     ).toBeTruthy()
+    expect(screen.getByRole("heading", { name: "Add another Mac" })).toBeTruthy()
+    expect(screen.getByText(clientSetupCommand)).toBeTruthy()
+    expect(screen.getByText("That Mac’s hostname will be its name in Trails.")).toBeTruthy()
 
     await user.tab()
     const checkAgain = screen.getByRole("button", { name: "check again" })
@@ -186,6 +194,12 @@ describe("first-run onboarding", () => {
     const waitingStatus = await screen.findByRole("status")
     expect(waitingStatus.textContent).toBe("Checked just now — still waiting for a supported session.")
     expect(document.activeElement).toBe(checkAgain)
+    await user.tab()
+    const copy = screen.getByRole("button", { name: "copy" })
+    expect(document.activeElement).toBe(copy)
+    await user.click(copy)
+    expect(await navigator.clipboard.readText()).toBe(clientSetupCommand)
+    expect(screen.getByRole("button", { name: "copied" })).toBeTruthy()
     await user.click(screen.getByText("troubleshooting"))
     expect(screen.getByText("~/.local/bin/trails collect --once")).toBeTruthy()
     expect(
@@ -224,6 +238,23 @@ describe("first-run onboarding", () => {
     expect(document.activeElement).toBe(days)
     expect(screen.getByRole("button", { name: "read my day" })).toBeTruthy()
     expect((await harness.bootstrap()).preferences.onboardingVersion).toBe(0)
+  })
+
+  test("keeps a loopback-only hub out of the remote client command", async () => {
+    makeHarness()
+    const user = userEvent.setup()
+    render(<App />)
+
+    expect(
+      await screen.findByRole("heading", { name: "Trails hasn’t received a supported session yet" }),
+    ).toBeTruthy()
+    expect(screen.queryByRole("heading", { name: "Add another Mac" })).toBeNull()
+    expect(screen.queryByText(/sh -s -- join/)).toBeNull()
+    await user.click(screen.getByText("troubleshooting"))
+    const tailscaleFlag = screen.getByText("--tailscale")
+    expect(tailscaleFlag.closest("p")?.textContent).toContain(
+      "To add another Mac, rerun hub setup with --tailscale; this page will then show its exact setup command.",
+    )
   })
 
   test("keeps settings and completion canonical across failures and the completion refresh", async () => {

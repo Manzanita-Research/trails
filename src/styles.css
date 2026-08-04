@@ -177,6 +177,23 @@ button { font: inherit; color: inherit; }
 .welcome-copy p { margin: 0 0 18px; color: var(--prose); }
 .welcome-check { color: var(--ink); }
 .welcome-copy [role="status"] { color: var(--quiet); margin-top: 18px; }
+.welcome-join {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--hairline);
+}
+.welcome-join h2 { margin: 0 0 12px; font-size: 1rem; font-weight: 500; }
+.welcome-join > p { margin-bottom: 12px; }
+.welcome-command-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+}
+.welcome-copy-button { margin-top: 10px; color: var(--ink); }
+.welcome-copy-button:focus-visible { outline-offset: 4px; }
+.welcome-join [role="alert"] { color: var(--s6); }
+.welcome-join .welcome-join-note { margin: 10px 0 0; color: var(--quiet); font-size: 0.85rem; }
 .welcome-troubleshooting { margin-top: 32px; color: var(--quiet); }
 .welcome-troubleshooting summary { width: fit-content; cursor: pointer; }
 .welcome-troubleshooting p { margin-top: 16px; }

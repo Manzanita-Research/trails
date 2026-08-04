@@ -69,6 +69,15 @@ function incrementRevision(db: TrailsDb): number {
   return revision
 }
 
+export function setAdvertisedHubUrl(db: TrailsDb, hubUrl: string): number {
+  return db.sqlite.transaction(() => {
+    const current = db.sqlite.query("SELECT hub_url FROM settings WHERE id = 1").get() as { hub_url: string }
+    if (current.hub_url === hubUrl) return revisionOf(db)
+    db.sqlite.query("UPDATE settings SET hub_url = ? WHERE id = 1").run(hubUrl)
+    return incrementRevision(db)
+  })()
+}
+
 async function readJson(request: Request, maximumBytes: number): Promise<unknown> {
   const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase()
   if (contentType !== "application/json") throw new ApiError("invalid_request", "Content-Type must be application/json", 400)
@@ -154,11 +163,12 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     first_prompt: string | null
   }>
   const settings = db.sqlite
-    .query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1")
+    .query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1")
     .get() as {
     boundary: 4 | 5 | 6 | 7
     halo: 0 | 5 | 10 | 15
     onboarding_version: number
+    hub_url: string
   }
   const indexed = db.sqlite.query("SELECT MAX(updated_at) AS at FROM sessions").get() as { at: number | null }
   const assignments: Record<string, string> = {}
@@ -188,6 +198,7 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     revision: revisionOf(db),
     generatedAt: new Date(now).toISOString(),
     indexedAt: indexed.at === null ? null : new Date(indexed.at).toISOString(),
+    hubUrl: settings.hub_url,
     timezone: TIMEZONE,
     sessions: sessionRows.map((row) => ({
       id: String(row.id),

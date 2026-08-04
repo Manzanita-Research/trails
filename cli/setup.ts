@@ -11,6 +11,7 @@ export interface SetupActions {
   readonly configureCollector: (server: string, name?: string) => void
   readonly install: (kind: "server" | "collector", options?: SetupInstallOptions) => Promise<void>
   readonly collect: () => Promise<void>
+  readonly advertiseHub: (url: string) => void
   readonly waitForServer: (server: string) => Promise<void>
   readonly tailnetUrl: (service?: string) => string
 }
@@ -27,6 +28,7 @@ export async function runSetup(request: SetupRequest, actions: SetupActions): Pr
     await actions.install("collector")
     const url = tailscale ? actions.tailnetUrl(request.service) : HUB_LOOPBACK_URL
     if (tailscale) await actions.waitForServer(url)
+    actions.advertiseHub(url)
     return url
   }
 

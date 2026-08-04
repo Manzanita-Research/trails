@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { createApp } from "../server/app"
+import { createApp, setAdvertisedHubUrl } from "../server/app"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
 import { MIGRATIONS } from "../server/migrations"
@@ -92,7 +92,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -100,15 +100,18 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(2)
+    expect(userVersion.user_version).toBe(3)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
     expect(Object.values(busyTimeout)[0]).toBe(5000)
     expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "0" })
-    expect(database.sqlite.query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1").get()).toEqual({
+    expect(
+      database.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
+    ).toEqual({
       boundary: 6,
       halo: 10,
       onboarding_version: 0,
+      hub_url: "http://127.0.0.1:7412/",
     })
 
     const tableNames = (database.sqlite
@@ -137,12 +140,30 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(2)
-    expect(reopened.sqlite.query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1").get()).toEqual({
+    expect(reopenedVersion.user_version).toBe(3)
+    expect(
+      reopened.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
+    ).toEqual({
       boundary: 6,
       halo: 15,
       onboarding_version: 0,
+      hub_url: "http://127.0.0.1:7412/",
     })
+  })
+})
+
+describe("advertised hub URL", () => {
+  test("publishes the setup URL and revisions only visible changes", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ db: database })
+    const url = "https://trails.example.ts.net/"
+
+    expect(setAdvertisedHubUrl(database, url)).toBe(1)
+    expect(setAdvertisedHubUrl(database, url)).toBe(1)
+    const response = await request(app, "GET", "/api/bootstrap")
+    expect(response.status).toBe(200)
+    expect(await json<BootstrapV1>(response)).toMatchObject({ revision: 1, hubUrl: url })
   })
 })
 
@@ -200,6 +221,7 @@ describe("ingest and bootstrap", () => {
     const bootstrap = await json<BootstrapV1>(response)
     expect(bootstrap.protocolVersion).toBe(1)
     expect(bootstrap.revision).toBe(4)
+    expect(bootstrap.hubUrl).toBe("http://127.0.0.1:7412/")
     expect(bootstrap.timezone).toBe("America/Los_Angeles")
     expect(bootstrap.sessions).toHaveLength(2)
     expect(bootstrap.sessions.map((entry: { id: string }) => entry.id)).toEqual([String(stored.id), String(stored.id + 1)])

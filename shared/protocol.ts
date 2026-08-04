@@ -124,6 +124,7 @@ export const BootstrapV1Schema = Schema.Struct({
   revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
   generatedAt: CanonicalTimestampSchema,
   indexedAt: Schema.NullOr(CanonicalTimestampSchema),
+  hubUrl: trimmedString(1, 2048),
   timezone: Schema.Literal("America/Los_Angeles"),
   sessions: Schema.Array(BootstrapSessionV1Schema),
   summaries: Schema.Struct({ sessions: StringRecordSchema, days: StringRecordSchema }),

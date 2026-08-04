@@ -36,6 +36,7 @@ const bootstrap = () => ({
   revision: 3,
   generatedAt: "2026-07-01T17:02:00.000Z",
   indexedAt: "2026-07-01T17:01:00.000Z",
+  hubUrl: "https://trails.example.ts.net/",
   timezone: "America/Los_Angeles",
   sessions: [
     {
@@ -190,6 +191,8 @@ describe("bootstrap and mutation schemas", () => {
       changed(bootstrap(), (copy) => (copy.revision = -1)),
       changed(bootstrap(), (copy) => (copy.generatedAt = "2026-07-01T17:02:00Z")),
       changed(bootstrap(), (copy) => (copy.indexedAt = "2026-07-01T17:01:00Z")),
+      changed(bootstrap(), (copy) => (copy.hubUrl = "")),
+      changed(bootstrap(), (copy) => (copy.hubUrl = "h".repeat(2049))),
       changed(bootstrap(), (copy) => (copy.timezone = "UTC")),
       changed(bootstrap(), (copy) => (copy.sessions[0].id = "")),
       changed(bootstrap(), (copy) => (copy.sessions[0].id = "i".repeat(65))),
