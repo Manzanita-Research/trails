@@ -3,6 +3,7 @@
   "version": "0.1.0-alpha.4",
   "private": true,
   "type": "module",
+  "workspaces": ["apps/*"],
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "build:web": "vite build",
@@ -14,7 +15,11 @@
     "test": "bun test",
     "check": "tsc --noEmit",
     "worker:dev": "wrangler dev --config wrangler.jsonc",
-    "worker:deploy": "wrangler deploy --config wrangler.jsonc"
+    "worker:deploy": "wrangler deploy --config wrangler.jsonc",
+    "docs:dev": "bun run --cwd apps/docs dev",
+    "docs:build": "bun run --cwd apps/docs build",
+    "docs:check": "bun run --cwd apps/docs typecheck",
+    "docs:deploy": "bun run --cwd apps/docs deploy"
   },
   "dependencies": {
     "effect": "^3.22.0",

@@ -1,0 +1,21 @@
+---
+import { Code } from "@/components/ui/code";
+import { ALPHA_INSTALLER_URL } from "@/lib/release";
+
+type Mode = "local" | "tailscale" | "join" | "service" | "serviceJoin";
+
+interface Props {
+  mode: Mode;
+}
+
+const { mode } = Astro.props;
+const commands: Record<Mode, string> = {
+  local: `curl -fsSL ${ALPHA_INSTALLER_URL} | sh -s -- \\\n  hub --name "Home Mac"`,
+  tailscale: `curl -fsSL ${ALPHA_INSTALLER_URL} | sh -s -- \\\n  hub --tailscale --name "Home Mac"`,
+  join: `curl -fsSL ${ALPHA_INSTALLER_URL} | sh -s -- \\\n  join https://your-hub.your-tailnet.ts.net/ --name "Laptop"`,
+  service: `curl -fsSL ${ALPHA_INSTALLER_URL} | sh -s -- \\\n  hub --service svc:trails --name "Home Mac"`,
+  serviceJoin: `curl -fsSL ${ALPHA_INSTALLER_URL} | sh -s -- \\\n  join https://trails.your-tailnet.ts.net/ --name "Laptop"`,
+};
+---
+
+<Code code={commands[mode]} lang="sh" />

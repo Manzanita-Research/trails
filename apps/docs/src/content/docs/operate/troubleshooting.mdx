@@ -1,0 +1,88 @@
+---
+title: Troubleshooting
+description: Resolve common local setup, collection, optional Tailscale, and service failures.
+audience: human
+sidebar:
+  order: 2
+---
+
+## The local web app does not open
+
+On the hub Mac:
+
+1. Confirm the Mac is awake and logged in.
+2. Open the exact local URL: `http://127.0.0.1:7412/`.
+3. Rerun the same hub installer command you originally used.
+
+A local installation does not require Tailscale. Do not add `--tailscale` merely to recover the loopback service.
+
+## A private MagicDNS URL does not open
+
+This applies only to hubs configured with `--tailscale`.
+
+1. Confirm Tailscale says **Connected** on the hub and viewing device.
+2. Confirm both devices use the same tailnet.
+3. Confirm `http://127.0.0.1:7412/` still opens on the hub itself.
+4. Rerun hub setup with `--tailscale` and open the exact HTTPS URL it prints.
+
+Trails never opens a LAN listener. A local-network address such as `192.168.x.x:7412` is not a supported access path.
+
+## A stable Service URL does not open
+
+For `svc:trails`, also confirm:
+
+1. the `trails` Service is defined for `tcp:443`;
+2. the hub has the intended tag-based identity;
+3. tailnet grants and SSH rules still permit the required access;
+4. the advertised service host is approved;
+5. `https://trails.your-tailnet.ts.net/` opens before any spoke is moved to it.
+
+See [Stable Tailscale Service](/advanced/tailscale-services) for the complete sequence and tag-ownership warning.
+
+## New sessions do not appear
+
+New and changed sessions normally arrive within one minute. On the Mac where the session was created, run a one-off collection:
+
+```sh
+trails collect --once
+```
+
+For one Mac, the configured collector URL should be `http://127.0.0.1:7412/`. For a spoke, confirm its configured hub URL is healthy from that Mac.
+
+Trails currently recognizes local sessions from Claude Code, Codex, omp, and pi. An unsupported tool will not appear.
+
+## `trails` is not found
+
+The installer puts the binary at `~/.local/bin/trails`. Add that directory to your shell profile:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Open a new shell, then confirm the installation:
+
+```sh
+trails version
+```
+
+## Setup fails
+
+Rerun the same installer command once, preserving `--tailscale` or `--service svc:trails` if that is the hub's established mode.
+
+If setup still fails, preserve the command output and the relevant error log:
+
+```text
+~/.local/state/trails/com.manzanita.trails.server.error.log
+~/.local/state/trails/com.manzanita.trails.collector.error.log
+~/.local/state/trails/com.manzanita.trails.backup.error.log
+```
+
+Only the hub has server and backup logs. Every participating Mac has a collector log—including the hub, because it collects its own sessions too.
+
+## Summaries use first prompts
+
+This fallback does not mean collection failed. Timeline and project activity are stored before optional summary generation. Summary jobs may be delayed when the authenticated inference relay is unavailable.
+
+## A multi-Mac hub was offline
+
+Leave spoke collectors running. A failed submission does not advance their local collection cursor, and each collector tries again on the next scheduled run. Once the hub is reachable, changed sessions are submitted idempotently.

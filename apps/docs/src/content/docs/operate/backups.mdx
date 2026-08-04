@@ -1,0 +1,42 @@
+---
+title: Backups
+description: Where the primary Mac stores canonical data and how daily SQLite backups are retained.
+audience: human
+sidebar:
+  order: 1
+---
+
+The Mac that runs the canonical service—called the hub—owns the trails database and daily backups. A one-Mac installation already includes this complete backup path. Optional spokes keep collection state, but they are not database replicas.
+
+## Paths on the hub
+
+| Data | Path |
+| --- | --- |
+| Canonical database | `~/.manzanita/trails/trails.sqlite` |
+| Daily backups | `~/.manzanita/trails/backups/` |
+
+The installer configures a backup job for 03:00 local time. Trails uses SQLite's backup API so the snapshot remains consistent even when the live database is using write-ahead logging.
+
+The latest 14 committed backups are retained by default.
+
+## Create an additional backup
+
+The installed CLI can write a one-off, consistent backup:
+
+```sh
+trails backup --output "$HOME/Desktop/trails-backup.sqlite"
+```
+
+To write into a directory and let trails choose the timestamped file name:
+
+```sh
+trails backup --output-dir "$HOME/Desktop/trails-backups" --retain 14
+```
+
+<Aside type="caution" title="Restoring during the alpha">
+  Trails does not yet provide a restore command. Preserve the live database and the backup you want to use, then ask the person who invited you for the current recovery procedure before replacing files.
+</Aside>
+
+## What a backup contains
+
+A hub backup contains canonical trails state: normalized session observations, summaries, project and engagement organization, settings, and thread state. It does not contain the raw coding-agent transcript files that remain on each originating Mac.

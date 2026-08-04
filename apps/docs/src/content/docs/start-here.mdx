@@ -1,0 +1,62 @@
+---
+title: Start with one Mac
+description: Install the complete trails system locally. No second Mac or Tailscale account required.
+audience: human
+sidebar:
+  order: 0
+  badge: Start here
+---
+
+One Mac is a complete trails installation. It runs the private web app and canonical SQLite database, collects its own coding-agent sessions, and makes a daily backup.
+
+You need macOS and a Terminal. Existing sessions from Claude Code, Codex, omp, or pi make trails useful immediately; new sessions appear after installation too.
+
+You do **not** need a second Mac, Tailscale, Bun, Node, a repository checkout, or a public server.
+
+## Install
+
+Run this on the Mac where you use coding agents:
+
+<InstallCommand mode="local" />
+
+Replace `Home Mac` with the name you want trails to show for that computer.
+
+Setup downloads and verifies the correct standalone binary, starts the local service and collector, indexes existing sessions, and schedules daily backups.
+
+## Open trails
+
+When setup finishes, open:
+
+**[http://127.0.0.1:7412/](http://127.0.0.1:7412/)**
+
+The service always listens on loopback. In this default mode, trails stays local to this Mac and does not open a listener on your LAN.
+
+<Aside type="note" title="Why trails calls this Mac the hub">
+  The hub is simply the Mac that owns canonical state. It is also a collector and can be the computer you work on every day. “Hub” does not mean separate server hardware or a separate server product.
+</Aside>
+
+## What happens next
+
+- New and changed sessions normally appear within one minute.
+- The Mac must remain awake and logged in while you use trails.
+- The canonical database lives at `~/.manzanita/trails/trails.sqlite`.
+- A consistent SQLite backup runs every day at 03:00; the latest 14 are retained.
+- If optional generated summaries are unavailable, trails uses the first prompt as fallback copy. Timeline collection continues.
+
+## Go further when you need to
+
+<CardGrid>
+  <Card title="Add other Macs" icon="ph:devices" href="/add-other-macs">
+    Optional. Connect work spread across several Macs through Tailscale.
+  </Card>
+  <Card title="Learn the views" icon="ph:path" href="/using-trails">
+    Read days, review a week, and return to active threads.
+  </Card>
+  <Card title="See how it works" icon="ph:circles-three-plus" href="/concepts/how-it-works">
+    Follow a local session from its source log to a readable day.
+  </Card>
+</CardGrid>
+
+<Aside type="caution" title="Private alpha">
+  Current version: <AlphaVersion />. Installation details and stored data may change between alpha releases. Rerunning the same installer mode is the supported update path.
+</Aside>

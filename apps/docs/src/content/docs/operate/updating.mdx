@@ -1,0 +1,60 @@
+---
+title: Update trails
+description: Rerun the same setup mode without losing device identity, canonical data, or backups.
+audience: human
+sidebar:
+  order: 0
+---
+
+Current alpha version: <AlphaVersion />.
+
+Rerun the same installer mode you originally used. The installer downloads and verifies the current architecture-specific binary, replaces the installed binary atomically, and waits for the upgraded launchd service to become healthy.
+
+## One-Mac installation
+
+Use the default local hub command:
+
+<InstallCommand mode="local" />
+
+When it finishes, open `http://127.0.0.1:7412/`.
+
+## Multi-Mac hub using MagicDNS
+
+Preserve `--tailscale`:
+
+<InstallCommand mode="tailscale" />
+
+Omitting `--tailscale` would switch setup back to local mode and report the loopback URL instead of verifying the private MagicDNS URL.
+
+## Hub using a stable Tailscale Service
+
+Preserve the exact service identifier:
+
+<InstallCommand mode="service" />
+
+The service host must still be approved and healthy in the Tailscale admin console.
+
+## Spoke Mac
+
+Use the same healthy hub URL and device name you used when joining:
+
+<InstallCommand mode="join" />
+
+If the spoke uses the advanced stable Service, use that stable URL instead:
+
+<InstallCommand mode="serviceJoin" />
+
+## What is preserved
+
+An update preserves:
+
+- device identity;
+- collector and server configuration;
+- the canonical hub database;
+- daily backups.
+
+The installer reconfigures and restarts only the relevant trails launchd services. Running the original command again is also the first recovery step when a background service stopped unexpectedly.
+
+<Aside type="caution" title="Keep the original mode">
+  Do not add `--tailscale` or `--service` to a local one-Mac update. Do not remove them from a hub that serves spokes. The installer preserves data in every mode, but the flag decides which URL setup configures and verifies.
+</Aside>
