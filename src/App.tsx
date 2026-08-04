@@ -24,6 +24,16 @@ import { FirstTrailGuide } from "./components/FirstTrailGuide"
 
 type ShellMode = "loading" | "hub-error" | "welcome" | "onboarding" | "loaded"
 
+interface TooltipState {
+  readonly project: string
+  readonly start: number
+  readonly end: number
+  readonly left: number
+  readonly top: number
+}
+
+const ORGANIZE_PANEL_ID = "organize-projects-panel"
+
 function shellModeOf(data: BootstrapV1 | null, loading: boolean): ShellMode {
   if (data === null) return loading ? "loading" : "hub-error"
   if (data.sessions.length === 0) return "welcome"
@@ -49,7 +59,8 @@ function LoadedApp({
   const [view, setView] = useState<ListView | "project">("days")
   const [lastListView, setLastListView] = useState<ListView>("days")
   const [projectKey, setProjectKey] = useState<string | null>(null)
-  const [sortOpen, setSortOpen] = useState(false)
+  const [openPanel, setOpenPanel] = useState<null | "organize">(null)
+  const organizeTriggerRef = useRef<HTMLButtonElement>(null)
   const [dayIdx, setDayIdx] = useState(0)
 
   const sessions = useMemo(() => prepSessions(bootstrap.sessions), [bootstrap.sessions])
@@ -69,7 +80,7 @@ function LoadedApp({
     for (const session of sessions) projects.set(session.project, session.org)
     return projects
   }, [sessions])
-  const tooltipRef = useRef<HTMLDivElement>(null)
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null)
 
   useEffect(() => {
     if (view !== "days") return
@@ -101,7 +112,7 @@ function LoadedApp({
       if (view !== "project") setLastListView(view)
       setProjectKey(project)
       setView("project")
-      setSortOpen(false)
+      setOpenPanel(null)
       scrollTo({ top: 0 })
     },
     openDay: (date) => {
@@ -131,21 +142,25 @@ function LoadedApp({
   }
 
   const onMove = (event: React.MouseEvent) => {
-    const tip = tooltipRef.current
-    if (!tip) return
     const hit = (event.target as Element).closest?.("rect.hit") as SVGRectElement | null
     if (!hit) {
-      tip.hidden = true
+      setTooltip(null)
       return
     }
-    const { p, a, b } = hit.dataset
-    const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    tip.innerHTML = `<span class="sq" style="background:${engColor(trails.engOf(p!))}"></span><b>${escape(
-      trails.dispName(p!),
-    )}</b> · ${fmtClock(+a!)}–${fmtClock(+b! + 1)} · ${fmtDur(+b! - +a! + 1)}`
-    tip.hidden = false
-    tip.style.left = `${Math.min(event.clientX + 14, innerWidth - 340)}px`
-    tip.style.top = `${event.clientY + 16}px`
+    const { p: project, a, b } = hit.dataset
+    const start = Number(a)
+    const end = Number(b)
+    if (!project || !Number.isFinite(start) || !Number.isFinite(end)) {
+      setTooltip(null)
+      return
+    }
+    setTooltip({
+      project,
+      start,
+      end,
+      left: Math.min(event.clientX + 14, innerWidth - 340),
+      top: event.clientY + 16,
+    })
   }
 
   const showView = (nextView: ListView) => {
@@ -155,20 +170,26 @@ function LoadedApp({
 
   return (
     <TrailsCtx.Provider value={trails}>
-      <div onMouseMove={onMove}>
+      <div onMouseMove={onMove} onMouseLeave={() => setTooltip(null)}>
         {onboarding ? (
           <Topbar
             mode="onboarding"
             view={view}
             onView={showView}
-            onToggleSort={() => setSortOpen(!sortOpen)}
+            organizeExpanded={openPanel === "organize"}
+            organizeControls={ORGANIZE_PANEL_ID}
+            organizeTriggerRef={organizeTriggerRef}
+            onOrganize={() => setOpenPanel(openPanel === "organize" ? null : "organize")}
           />
         ) : (
           <Topbar
             mode="loaded"
             view={view}
             onView={showView}
-            onToggleSort={() => setSortOpen(!sortOpen)}
+            organizeExpanded={openPanel === "organize"}
+            organizeControls={ORGANIZE_PANEL_ID}
+            organizeTriggerRef={organizeTriggerRef}
+            onOrganize={() => setOpenPanel(openPanel === "organize" ? null : "organize")}
             boundary={boundary}
             setBoundary={(value) => mutations.updateSettings({ boundary: value })}
             halo={halo}
@@ -177,7 +198,7 @@ function LoadedApp({
         )}
         {syncError && (
           <div className="sync-error" role="status">
-            Sync paused — showing the last loaded snapshot. <button onClick={() => void retry()}>retry</button>
+            Sync paused — the last snapshot is still shown. <button onClick={() => void retry()}>retry</button> reconnects.
           </div>
         )}
         <main id="main">
@@ -186,7 +207,7 @@ function LoadedApp({
               boundary={boundary}
               halo={halo}
               updateSettings={mutations.updateSettings}
-              onOrganize={() => setSortOpen(true)}
+              onOrganize={() => setOpenPanel("organize")}
             />
           )}
           {view === "days" && <DaysView dayIdx={dayIdx} onDayIdx={setDayIdx} />}
@@ -200,8 +221,26 @@ function LoadedApp({
             />
           )}
         </main>
-        <SortPanel open={sortOpen} onClose={() => setSortOpen(false)} />
-        <div ref={tooltipRef} className="tooltip" hidden />
+        <SortPanel
+          id={ORGANIZE_PANEL_ID}
+          open={openPanel === "organize"}
+          onClose={() => setOpenPanel(null)}
+          fallbackFocusRef={organizeTriggerRef}
+        />
+        {tooltip && (
+          <div className="tooltip" style={{ left: tooltip.left, top: tooltip.top }}>
+            <span className="sq" aria-hidden="true" style={{ background: engColor(trails.engOf(tooltip.project)) }} />
+            <b>{trails.dispName(tooltip.project)}</b> · {fmtClock(tooltip.start)}–{fmtClock(tooltip.end + 1)} ·{" "}
+            {fmtDur(tooltip.end - tooltip.start + 1)}
+          </div>
+        )}
+        <span className="sr-only" aria-live="polite">
+          {tooltip
+            ? `${trails.dispName(tooltip.project)}; ${fmtClock(tooltip.start)} to ${fmtClock(
+                tooltip.end + 1,
+              )}; ${fmtDur(tooltip.end - tooltip.start + 1)}`
+            : ""}
+        </span>
       </div>
     </TrailsCtx.Provider>
   )
@@ -211,15 +250,42 @@ export function App() {
   const { data, loading, error, retry, mutations } = useBootstrap()
   const mode = shellModeOf(data, loading)
 
-  if (mode === "loading" || mode === "hub-error") {
+  if (mode === "loading") {
     return (
       <>
         <Topbar mode="minimal" />
         <main id="main">
           <section className="view empty-state">
-            <h1 className="display">{mode === "loading" ? "Loading trails…" : "Trails couldn't reach the hub"}</h1>
-            {mode === "hub-error" && error && <p>{error}</p>}
-            {mode === "hub-error" && <button onClick={() => void retry()}>retry</button>}
+            <h1 className="display">Loading trails…</h1>
+          </section>
+        </main>
+      </>
+    )
+  }
+
+  if (mode === "hub-error") {
+    return (
+      <>
+        <Topbar mode="minimal" />
+        <main id="main">
+          <section className="view empty-state">
+            <h1 className="display">Trails couldn’t load the hub.</h1>
+            <p>
+              On one Mac, confirm the hub Mac is awake and open{" "}
+              <a href="http://127.0.0.1:7412/">http://127.0.0.1:7412/</a>.
+            </p>
+            <p>On multiple Macs, use the private URL printed by setup.</p>
+            <button className="text-action" onClick={() => void retry()}>
+              retry
+            </button>
+            {error && (
+              <details>
+                <summary>technical detail</summary>
+                <pre>
+                  <code>{error}</code>
+                </pre>
+              </details>
+            )}
           </section>
         </main>
       </>
