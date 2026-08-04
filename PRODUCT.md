@@ -24,7 +24,7 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 
 ## Operating Context
 
-- Raw material: local Claude Code, Codex, omp, and pi session logs. A periodic collector parses changed files on each Mac and submits normalized observations to the owner's Mini; transcript paths and bodies never cross the source-machine boundary.
+- Raw material: local Claude Code, Codex, omp, and pi session logs. A periodic collector parses changed files on each Mac and submits normalized observations to the owner's hub; transcript paths and bodies never cross the source-machine boundary.
 - Days are human-shaped: the working day starts around 6 am; 1 am work belongs to the evening it grew out of. Timezone currently pinned to America/Los_Angeles.
 - Work states: threads are in motion, waiting on you, or resting — resting is a real state, not a failure state. No deadlines, no priority scores. Divergence (new ideas mid-thread) gets caught without abandoning the current thread.
 - Billing model: attention-hours roll into day-credits (¼ ≥ 1h, ½ ≥ 2.5h, full ≥ 5.5h), matching how freelance billing actually works.
@@ -33,9 +33,9 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 
 ## Capabilities and Constraints
 
-- **Multi-machine is implemented.** One always-on Mac Mini owns the canonical SQLite-backed service behind Tailscale; a one-shot collector on each Mac syncs idempotently every 60 seconds.
+- **Multi-machine is implemented.** One always-on hub Mac owns the canonical SQLite-backed service behind Tailscale; a one-shot collector on each spoke Mac syncs idempotently every 60 seconds.
 - **Privacy boundary:** normalized metadata and bounded digests may leave a source machine. Full transcript bodies and local transcript paths do not. Browser bootstrap omits source-local session IDs and digests.
-- **Distribution shape:** two standalone macOS executables (`arm64`, `x64`) embed Bun, SQLite, and the built client. Target Macs require no runtime or repository checkout. Users hold the Mini, database, tailnet, backups, and Cloudflare token.
+- **Distribution shape:** two standalone macOS executables (`arm64`, `x64`) embed Bun, SQLite, and the built client. Target Macs require no runtime or repository checkout. Users hold the hub, database, tailnet, backups, and Cloudflare token.
 - Stack: Bun, `bun:sqlite`, Vite, React 19, TypeScript, Effect, Tailscale Serve, launchd, and a narrowly scoped authenticated Cloudflare Workers AI relay.
 - Terminology in use: threads, engagements, day-credits, divergence pocket, attention vs. wall clock, human-shaped days, in motion / waiting on you / resting / dormant.
 - Still unimplemented product directions: Akasha vault bridge and invoice export from the week view.
@@ -48,7 +48,7 @@ Time trackers assume you work in blocks and require you to log as you go. Trails
 
 ## Evidence on Hand
 
-- A working end-to-end implementation: standalone Mini service, periodic multi-Mac collectors, canonical SQLite state, Days/Week/Threads/project views, durable summaries, Tailscale/launchd installer, and WAL-safe backups.
+- A working end-to-end implementation: standalone hub service, periodic multi-Mac collectors, canonical SQLite state, Days/Week/Threads/project views, durable summaries, Tailscale/launchd installer, and WAL-safe backups.
 - No testimonials, case studies, benchmarks, pricing, or third-party proof exist. Future marketing/docs work must not fabricate any.
 
 ## Product Principles

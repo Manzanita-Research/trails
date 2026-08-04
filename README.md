@@ -23,10 +23,10 @@ You do **not** need Bun, Node, a repository checkout, or a public server.
 Run this on the always-on Mac:
 
 ```bash
-curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Studio Mini"
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Home Hub"
 ```
 
-Replace `Studio Mini` with the name you want Trails to show for that Mac.
+Replace `Home Hub` with the name you want Trails to show for that Mac.
 
 Setup downloads the correct binary for your Mac, verifies it, installs the private web service and daily backup, indexes existing sessions, and starts a collector that checks for changes every minute.
 
@@ -49,6 +49,23 @@ curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
 
 The installer verifies the hub before changing local state, indexes sessions already on that Mac, and starts its minute collector. Repeat this step on each additional Mac.
 
+### Optional: use a stable `trails` address
+
+By default, the private URL follows the hub machine's MagicDNS name. Tailnet administrators can instead define a [Tailscale Service](https://tailscale.com/docs/features/tailscale-services) named `trails`, which keeps the URL stable if Trails later moves to another hub:
+
+```text
+https://trails.your-tailnet.ts.net/
+```
+
+Tailscale Services require a pre-defined `svc:trails` service, a tag-authenticated hub, and service-host approval. After those prerequisites are complete, set up the hub with:
+
+```bash
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- \
+  hub --service svc:trails --name "Home Hub"
+```
+
+Omit `--service` on ordinary user-authenticated Macs. Trails then uses the hub machine's MagicDNS URL without changing its Tailscale identity.
+
 ## What happens next
 
 - New and changed sessions normally appear within one minute.
@@ -65,7 +82,7 @@ Rerun the same installer command you originally used. The binary is replaced ato
 Hub:
 
 ```bash
-curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Studio Mini"
+curl -fsSL https://fancy-cairn-p89p.here.now/install.sh | sh -s -- hub --name "Home Hub"
 ```
 
 Joined Mac:
@@ -118,7 +135,7 @@ If the optional summary relay is enabled, it receives only bounded summary input
 
 ## Alpha release
 
-Current version: `0.1.0-alpha.1`
+Current version: `0.1.0-alpha.3`
 
 The temporary installer and architecture-specific binaries are hosted at:
 

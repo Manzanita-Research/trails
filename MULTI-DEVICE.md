@@ -1,13 +1,13 @@
 # Multi-device architecture
 
-**Status:** Implemented on `feat/tailscale-hub`  
-**Decision:** One always-on Mac Mini owns Trails behind Tailscale. Cloudflare is an authenticated inference relay, not canonical storage.
+**Status:** Implemented on `main`  
+**Decision:** One always-on hub Mac owns Trails behind Tailscale. Cloudflare is an authenticated inference relay, not canonical storage.
 
 ## System
 
 ```mermaid
 flowchart LR
-  A[MacBook collector<br/>one-shot every 60s] -->|Tailscale HTTPS<br/>normalized observations| M[Mac Mini<br/>standalone trails binary]
+  A[MacBook collector<br/>one-shot every 60s] -->|Tailscale HTTPS<br/>normalized observations| M[Hub Mac<br/>standalone trails binary]
   B[Other Mac collector<br/>one-shot every 60s] -->|Tailscale HTTPS| M
   M --> D[(SQLite WAL<br/>canonical state)]
   M --> K[Daily serialized backups]
@@ -16,7 +16,9 @@ flowchart LR
   W -->|summary + model| M
 ```
 
-Tailscale supplies the private network and HTTPS access boundary. It does not run or store Trails. The Mini process binds only to `127.0.0.1:7412`; the installer refuses a non-loopback server and a conflicting Tailscale Serve root.
+Tailscale supplies the private network and HTTPS access boundary. It does not run or store Trails. The hub process binds only to `127.0.0.1:7412`; the installer refuses a non-loopback server and a conflicting node Serve root.
+
+Node-based setup uses the hub machine's MagicDNS URL. An explicit `--service svc:trails` setup instead advertises HTTPS through a pre-defined Tailscale Service and reports the stable `https://trails.<tailnet>.ts.net/` URL. Named services are opt-in because Tailscale requires a tag-authenticated host, tailnet administrator configuration, and service-host approval; ordinary user-authenticated Macs retain node-based Serve.
 
 ## Standalone distribution
 
@@ -29,7 +31,7 @@ Tailscale supplies the private network and HTTPS access boundary. It does not ru
 
 Target Macs run the matching file without Bun, Node, a source checkout, or sidecar assets. Source and release machines require Bun 1.3.14 or newer.
 
-## Canonical Mini state
+## Canonical hub state
 
 `trails serve` opens `~/.manzanita/trails/trails.sqlite` with WAL, foreign keys, and a five-second busy timeout. Ordered migrations create:
 
@@ -70,7 +72,7 @@ The collector sends:
 - LA-local minute buckets
 - a bounded summary digest
 
-It never sends a transcript path or body. The Mini scopes identity by `(machine_id, source, source_session_id)`, hashes decoded records in fixed field order, and exposes only global SQLite IDs to browsers. Browser bootstrap contains no source session ID, digest, or path.
+It never sends a transcript path or body. The hub scopes identity by `(machine_id, source, source_session_id)`, hashes decoded records in fixed field order, and exposes only global SQLite IDs to browsers. Browser bootstrap contains no source session ID, digest, or path.
 
 ## Summary work
 
@@ -86,7 +88,7 @@ Authorization: Bearer <TRAILS_AI_TOKEN>
 {"kind":"session"|"day","input":"..."}
 ```
 
-The Worker owns both system prompts and `@cf/moonshotai/kimi-k2.5`. Input is capped at 9,000 characters for sessions and 12,000 for days. The tracked Wrangler configuration contains no token or static assets. A missing Mini AI config disables inference without disabling Trails; an unsafe or malformed present config is a startup error.
+The Worker owns both system prompts and `@cf/moonshotai/kimi-k2.5`. Input is capped at 9,000 characters for sessions and 12,000 for days. The tracked Wrangler configuration contains no token or static assets. A missing hub AI config disables inference without disabling Trails; an unsafe or malformed present config is a startup error.
 
 ## launchd operations
 
@@ -110,7 +112,7 @@ Restore is intentionally manual: stop the server label, remove stale WAL/SHM sid
 
 ## Failure modes
 
-- **Mini unavailable:** collectors retry on their next scheduled run; browser views retain the latest loaded snapshot but mutations cannot complete.
+- **Hub unavailable:** collectors retry on their next scheduled run; browser views retain the latest loaded snapshot but mutations cannot complete.
 - **Collector file changes during parsing:** the file is not checkpointed and is retried next run.
 - **Collector crash:** the next process steals only a lock whose recorded PID is dead.
 - **Inference disabled or unavailable:** collection and UI continue; summary jobs remain pending or back off durably.

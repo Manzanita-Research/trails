@@ -80,11 +80,11 @@ Sharp-edged bars (no radius or ≤2px). Day-page lanes are dense: solid presence
 
 ## Network and State Behavior
 
-The browser is a reader/editor over the Mini's canonical state, not a local cache owner. Render the shell immediately, then one calm loading sentence while the first bootstrap arrives. An empty database is a legitimate first-run state: explain that no sessions have arrived and point to `trails collect --once`; never mention source-repository scripts or generated JSON.
+The browser is a reader/editor over the hub's canonical state, not a local cache owner. Render the shell immediately, then one calm loading sentence while the first bootstrap arrives. An empty database is a legitimate first-run state: explain that no sessions have arrived and point to `trails collect --once`; never mention source-repository scripts or generated JSON.
 
 After the first successful load, preserve the last complete snapshot through polling or mutation failures. Show one quiet inline sync message with an explicit retry action; do not blank the day, replace it with skeletons, or pretend a failed write succeeded. Mutations are asynchronous and controls disable only for the record being saved. Server acknowledgement and the next canonical bootstrap decide the visible state.
 
-Settings, assignments, engagement names, project display names, pocket items, summaries, and session observations are shared Mini state. View selection, open panels, current day, and current project remain transient browser navigation. A second browser should converge through revision polling without reload, but synchronization adds no notification badge, toast stack, or collaborative-presence chrome.
+Settings, assignments, engagement names, project display names, pocket items, summaries, and session observations are shared hub state. View selection, open panels, current day, and current project remain transient browser navigation. A second browser should converge through revision polling without reload, but synchronization adds no notification badge, toast stack, or collaborative-presence chrome.
 
 ## Do's and Don'ts
 

@@ -113,7 +113,7 @@ describe("collector state and locking", () => {
     const statePath = join(directory, "nested", "collector.json")
     const state: CollectorState = {
       protocolVersion: 1,
-      target: { server: "https://mini.example/", deviceId: "device-1", deviceName: "Laptop" },
+      target: { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" },
       files: { "/tmp/fixture.jsonl": { size: 20, mtimeMs: 1234 } },
     }
     await Effect.runPromise(saveCollectorState(statePath, state))

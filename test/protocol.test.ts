@@ -27,7 +27,7 @@ const session = () => ({
 
 const request = () => ({
   protocolVersion: 1,
-  device: { id: "device-1", name: "Desk Mini" },
+  device: { id: "device-1", name: "Desk Mac" },
   sessions: [session()],
 })
 
@@ -39,7 +39,7 @@ const bootstrap = () => ({
   sessions: [
     {
       id: "42",
-      machine: { id: "device-1", name: "Desk Mini" },
+      machine: { id: "device-1", name: "Desk Mac" },
       source: "claude",
       cwd: "/work/project",
       branch: "main",

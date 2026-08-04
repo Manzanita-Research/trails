@@ -19,6 +19,7 @@ export type InstallKind = "server" | "collector"
 export interface InstallOptions {
   readonly kind: InstallKind
   readonly dryRun?: boolean
+  readonly service?: string
 }
 
 interface LaunchDefinition {
@@ -186,7 +187,16 @@ function tailscalePath(): string | null {
     : null)
 }
 
-export function currentTailnetUrl(): string {
+export function normalizeTailscaleService(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (!/^svc:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value)) {
+    throw new Error("Tailscale service must be svc:<dns-label>")
+  }
+  return value
+}
+
+export function currentTailnetUrl(service?: string): string {
+  const normalizedService = normalizeTailscaleService(service)
   const executable = tailscalePath()
   if (!executable) throw new Error("Tailscale is required")
   const status = run(executable, ["status", "--json"])
@@ -200,7 +210,11 @@ export function currentTailnetUrl(): string {
   const self = typeof value === "object" && value !== null && "Self" in value ? value.Self : null
   const dnsName = typeof self === "object" && self !== null && "DNSName" in self ? self.DNSName : null
   if (typeof dnsName !== "string" || !dnsName) throw new Error("Tailscale did not report a MagicDNS name")
-  return `https://${dnsName.replace(/\.$/, "")}/`
+  const nodeName = dnsName.replace(/\.$/, "")
+  if (!normalizedService) return `https://${nodeName}/`
+  const separator = nodeName.indexOf(".")
+  if (separator < 0) throw new Error("Tailscale did not report a complete MagicDNS name")
+  return `https://${normalizedService.slice(4)}${nodeName.slice(separator)}/`
 }
 
 export async function install(options: InstallOptions): Promise<void> {
@@ -214,13 +228,14 @@ export async function install(options: InstallOptions): Promise<void> {
     throw new Error("collector configuration is required before installation")
   }
   const aiConfig = options.kind === "server" ? loadServerConfig() : null
+  const service = options.kind === "server" ? normalizeTailscaleService(options.service) : undefined
   const tailscale = options.kind === "server" ? tailscalePath() : null
   if (options.kind === "server" && !tailscale) throw new Error("Tailscale is required for server installation")
   await writableAncestor(destination)
   await writableAncestor(launchAgentDirectory)
   await writableAncestor(stateDirectory)
 
-  if (tailscale) {
+  if (tailscale && !service) {
     const status = run(tailscale, ["serve", "status", "--json"])
     if (status.exitCode !== 0) throw new Error("unable to inspect Tailscale Serve status")
     let rootProxy: string | null
@@ -240,7 +255,7 @@ export async function install(options: InstallOptions): Promise<void> {
     console.log(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`)
   }
   if (options.kind === "server") {
-    console.log(`Tailscale preflight: root -> ${tailscaleProxy}`)
+    console.log(`Tailscale preflight: ${service ? `${service} https:443` : "node root"} -> ${tailscaleProxy}`)
     if (!aiConfig) console.warn("AI is disabled; summary jobs will remain pending")
   }
   if (options.dryRun) return
@@ -262,13 +277,22 @@ export async function install(options: InstallOptions): Promise<void> {
     if (bootout.exitCode !== 0 && !isMissingLaunchdService(bootout.stderr)) {
       throw new Error(`failed to stop ${definition.label}`)
     }
-    const bootstrap = run(launchctl, ["bootstrap", domain, plistPath])
-    if (bootstrap.exitCode !== 0) throw new Error(`failed to load ${definition.label}`)
+    let bootstrap = run(launchctl, ["bootstrap", domain, plistPath])
+    for (let attempt = 0; bootstrap.exitCode !== 0 && attempt < 4; attempt++) {
+      await Bun.sleep(250)
+      bootstrap = run(launchctl, ["bootstrap", domain, plistPath])
+    }
+    if (bootstrap.exitCode !== 0) throw new Error(`failed to load ${definition.label}: ${bootstrap.stderr.trim()}`)
     const kickstart = run(launchctl, ["kickstart", "-k", service])
     if (kickstart.exitCode !== 0) throw new Error(`failed to start ${definition.label}`)
   }
   if (tailscale) {
-    const applied = run(tailscale, ["serve", "--bg", "--yes", tailscaleProxy])
-    if (applied.exitCode !== 0) throw new Error("failed to configure Tailscale Serve")
+    const args = service
+      ? ["serve", `--service=${service}`, "--https=443", "--yes", tailscaleProxy]
+      : ["serve", "--bg", "--yes", tailscaleProxy]
+    const applied = run(tailscale, args)
+    if (applied.exitCode !== 0) {
+      throw new Error(`failed to configure Tailscale Serve: ${applied.stderr.trim()}`)
+    }
   }
 }

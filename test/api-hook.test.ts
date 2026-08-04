@@ -110,7 +110,7 @@ describe("bootstrap request ordering", () => {
     const errors: Array<string | null> = []
     const requester = createBootstrapRequester({
       request: async () => {
-        throw new Error("Mini unavailable")
+        throw new Error("Hub unavailable")
       },
       read: () => data,
       write: (payload) => {
@@ -126,6 +126,6 @@ describe("bootstrap request ordering", () => {
     await requester.fetch(true)
 
     expect(data).toBe(loaded)
-    expect(errors).toEqual(["Mini unavailable"])
+    expect(errors).toEqual(["Hub unavailable"])
   })
 })

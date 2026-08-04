@@ -155,10 +155,8 @@ function LoadedApp({
           {sessions.length === 0 ? (
             <section className="view empty-state">
               <h1 className="display">No sessions yet</h1>
-              <p>Configure this Mac's collector, then run one collection:</p>
-              <code>trails configure collector --server https://your-mini.ts.net/</code>
-              <br />
-              <code>trails collect --once</code>
+              <p>Collectors have not sent any supported sessions yet.</p>
+              <code>trails setup join https://your-hub.your-tailnet.ts.net/</code>
             </section>
           ) : (
             <>
@@ -188,7 +186,7 @@ export function App() {
     return (
       <main id="main">
         <section className="view empty-state">
-          <h1 className="display">{loading ? "Loading trails…" : "Trails couldn't reach the Mini"}</h1>
+          <h1 className="display">{loading ? "Loading trails…" : "Trails couldn't reach the hub"}</h1>
           {error && <p>{error}</p>}
           {!loading && <button onClick={() => void retry()}>retry</button>}
         </section>

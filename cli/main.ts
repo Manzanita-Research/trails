@@ -15,7 +15,7 @@ import { createApp } from "../server/app"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { createInferenceClient, summarySupervisor } from "../server/summaries"
 import { createBackup } from "../server/backup"
-import { currentTailnetUrl, install } from "./install"
+import { currentTailnetUrl, install, normalizeTailscaleService } from "./install"
 import { runSetup, type SetupActions } from "./setup"
 
 const VERSION = packageJson.version
@@ -43,14 +43,14 @@ function printUsage(): void {
   console.log(`trails ${VERSION}
 
 Commands:
-  setup hub [--name NAME]
+  setup hub [--name NAME] [--service svc:NAME]
   setup join URL [--name NAME]
   serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
   configure collector --server URL [--name NAME] [--reset-device-id]
   configure server --ai-url URL --ai-token-stdin
   backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
-  install server|collector [--dry-run]
+  install server|collector [--dry-run] [--service svc:NAME]
   version`)
 }
 
@@ -168,7 +168,9 @@ async function backup(args: string[]): Promise<void> {
 
 async function installCommand(args: string[]): Promise<void> {
   if (args[0] !== "server" && args[0] !== "collector") throw new Error("install requires server or collector")
-  await install({ kind: args[0], dryRun: args.includes("--dry-run") })
+  const service = normalizeTailscaleService(valueAfter(args, "--service"))
+  if (args[0] === "collector" && service) throw new Error("--service is available only for server installation")
+  await install({ kind: args[0], dryRun: args.includes("--dry-run"), service })
 }
 
 async function waitForServer(server: string): Promise<void> {
@@ -198,23 +200,25 @@ async function waitForServer(server: string): Promise<void> {
 async function setupCommand(args: string[]): Promise<void> {
   const mode = args[0]
   const name = valueAfter(args, "--name")
+  const service = normalizeTailscaleService(valueAfter(args, "--service"))
   const actions: SetupActions = {
     configureCollector: (server, deviceName) => {
       const config = configureCollector({ server, name: deviceName })
       console.log(`configured ${config.deviceName} for ${config.server}`)
     },
-    install: (kind) => install({ kind, dryRun: false }),
+    install: (kind, tailscaleService) => install({ kind, dryRun: false, service: tailscaleService }),
     collect: () => collect(["--once"]),
     waitForServer,
     tailnetUrl: currentTailnetUrl,
   }
   if (mode === "hub") {
-    const url = await runSetup({ mode, name }, actions)
+    const url = await runSetup({ mode, name, service }, actions)
     console.log(`Trails is ready at ${url}`)
     console.log(`Join another Mac with: trails setup join ${url}`)
     return
   }
   if (mode === "join") {
+    if (service) throw new Error("--service is available only for hub setup")
     const server = args[1]
     if (!server || server.startsWith("--")) throw new Error("setup join requires the hub URL")
     const url = await runSetup({ mode, server: normalizeCollectorServer(server), name }, actions)

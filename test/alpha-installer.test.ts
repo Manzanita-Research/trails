@@ -50,7 +50,7 @@ describe("temporary alpha installer", () => {
     const { root, installer } = await fixture()
     const artifact = join(root, "trails-darwin-arm64")
     const process = Bun.spawn(
-      ["/bin/sh", installer, "join", "https://mini.example.ts.net/", "--name", "Laptop"],
+      ["/bin/sh", installer, "join", "https://hub.example.ts.net/", "--name", "Laptop"],
       {
         env: {
           HOME: root,
@@ -64,7 +64,7 @@ describe("temporary alpha installer", () => {
 
     expect(await process.exited).toBe(0)
     expect(await readFile(join(root, "setup-args"), "utf8")).toBe(
-      "setup join https://mini.example.ts.net/ --name Laptop\n",
+      "setup join https://hub.example.ts.net/ --name Laptop\n",
     )
     const installed = join(root, ".local/bin/trails")
     expect((await stat(installed)).mode & 0o111).not.toBe(0)
