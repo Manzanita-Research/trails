@@ -7,15 +7,26 @@ interface Props extends HTMLAttributes<"article"> {
   title: string;
   /** Iconify icon name, e.g. `ph:lightning`. */
   icon?: string;
+  /** When present, the entire card is an anchor. */
+  href?: string;
 }
 
-const { title, icon, class: className, ...attrs } = Astro.props;
+const { title, icon, href, class: className, ...attrs } = Astro.props;
+const Tag = href ? "a" : "article";
 ---
 
-<article class={cn("my-4 rounded-lg bg-card p-5 shadow-sm ring ring-border", className)} {...attrs}>
+<Tag
+  class={cn(
+    "my-4 rounded-lg bg-card p-5 shadow-sm ring ring-border",
+    href && "block no-underline transition-colors hover:bg-accent hover:ring-border-strong",
+    className,
+  )}
+  href={href}
+  {...attrs}
+>
   {icon && <Icon name={icon} class="mb-2.5 block w-6 h-6 text-foreground" />}
   <h3 class="m-0 text-base font-semibold leading-snug text-foreground">{title}</h3>
   <div class="mt-1.5 text-sm leading-normal text-muted-foreground">
     <slot />
   </div>
-</article>
+</Tag>
