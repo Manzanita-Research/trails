@@ -120,7 +120,7 @@ If the optional summary relay is enabled, it receives only bounded summary input
 
 ## Alpha release
 
-Current version: `0.1.0-alpha.3`
+Current version: `0.1.0-alpha.4`
 
 The temporary installer and architecture-specific binaries are hosted at:
 

@@ -284,8 +284,9 @@ export async function install(options: InstallOptions): Promise<void> {
       throw new Error(`failed to stop ${definition.label}`)
     }
     let bootstrap = run(launchctl, ["bootstrap", domain, plistPath])
-    for (let attempt = 0; bootstrap.exitCode !== 0 && attempt < 4; attempt++) {
-      await Bun.sleep(250)
+    for (const delay of [250, 500, 1_000, 2_000, 4_000]) {
+      if (bootstrap.exitCode === 0) break
+      await Bun.sleep(delay)
       bootstrap = run(launchctl, ["bootstrap", domain, plistPath])
     }
     if (bootstrap.exitCode !== 0) throw new Error(`failed to load ${definition.label}: ${bootstrap.stderr.trim()}`)
