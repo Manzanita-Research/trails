@@ -153,6 +153,7 @@ function selectJobs(db: TrailsDb, now: number, inFlight: Set<string>): SummaryJo
   ]
   return jobs
     .filter((job) => !inFlight.has(job.key))
+    .filter((job) => job.kind === "session" || !dayMembers(db, job).some((member) => member.pending))
     .sort((a, b) => a.availableAt - b.availableAt || a.key.localeCompare(b.key))
     .slice(0, Math.max(0, 2 - inFlight.size))
 }

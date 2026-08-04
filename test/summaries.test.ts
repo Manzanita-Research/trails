@@ -128,6 +128,28 @@ describe("summary work", () => {
     db.close()
   })
 
+  test("pending day jobs cannot starve the session summaries they depend on", async () => {
+    await ingest(
+      db,
+      START,
+      session("dependency-a", "digest a", { date: "2026-08-01" }),
+      session("dependency-b", "digest b", { date: "2026-08-02" }),
+      session("dependency-c", "digest c", { date: "2026-08-03" }),
+    )
+    db.sqlite.query("UPDATE day_summary_jobs SET available_at = ?").run(START)
+    const kinds: Array<"session" | "day"> = []
+    const inference: InferenceClient = {
+      summarize: (kind) => {
+        kinds.push(kind)
+        return Effect.succeed({ text: `${kind} summary`, model: "fake-model" })
+      },
+    }
+
+    expect(await Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED }))).toBe(2)
+    expect(kinds).toEqual(["session", "session"])
+    expect(db.sqlite.query("SELECT count(*) AS count FROM session_summaries").get()).toEqual({ count: 2 })
+  })
+
   test("waits five minutes, persists retry state, and resumes at the exact backoff", async () => {
     await ingest(db, START, session("settling", "private bounded digest"))
     db.sqlite.exec("DELETE FROM day_summary_jobs")
