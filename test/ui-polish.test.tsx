@@ -70,7 +70,7 @@ function inputElement(element: HTMLElement): HTMLInputElement {
 }
 
 
-async function makeLoadedHarness(): Promise<Harness> {
+async function makeLoadedHarness({ withDaySummary = true }: { withDaySummary?: boolean } = {}): Promise<Harness> {
   const db = openDatabase(":memory:")
   databases.add(db)
   const app = createApp({ db, now: () => fixedNow })
@@ -86,12 +86,14 @@ async function makeLoadedHarness(): Promise<Harness> {
     body: JSON.stringify(sessions),
   })
   expect(response.status).toBe(200)
-  db.sqlite
-    .query(
-      `INSERT INTO day_summaries(work_date, project, boundary, model, summary, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run("2026-07-01", activeProject, 6, "synthetic", "The active project gained a clear beta journey.", fixedNow)
+  if (withDaySummary) {
+    db.sqlite
+      .query(
+        `INSERT INTO day_summaries(work_date, project, boundary, model, summary, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run("2026-07-01", activeProject, 6, "synthetic", "The active project gained a clear beta journey.", fixedNow)
+  }
   response = await serverRequest("/api/settings", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -263,6 +265,17 @@ describe("beta interaction clarity", () => {
     expect(screen.getByText("technical detail")).toBeTruthy()
     expect(screen.getByText("request failed (500)")).toBeTruthy()
     expect(screen.queryByText(/unreachable/i)).toBeNull()
+  })
+
+  test("explains when indexed activity is waiting for summaries", async () => {
+    await makeLoadedHarness({ withDaySummary: false })
+    render(<App />)
+
+    expect(await screen.findByText("Project summaries haven’t arrived yet.")).toBeTruthy()
+    expect(
+      screen.getByText("Your indexed activity is already visible above. Summaries will appear here when they’re ready."),
+    ).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /jump to day summary/ })).toBeNull()
   })
 
   test("keeps all timeline geometry and full accessible labels inside 390 pixels", async () => {

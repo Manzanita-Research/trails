@@ -315,23 +315,26 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
         <ActivityKey />
 
 
-        {notes.length > 0 && (
-          <>
-            <h2 className="sect">the day, by project</h2>
-            <div className="notes" ref={notesRef}>
-              {notes.map(({ project, note }) => (
-                <div key={project} data-project={project} className="note">
-                  <button className="proj-cap" onClick={() => t.openProject(project)}>
-                    <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
-                    {t.dispName(project)}
-                  </button>
-                  <span className="sum">
-                    <Ticks text={note} />
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
+        <h2 className="sect">the day, by project</h2>
+        {notes.length > 0 ? (
+          <div className="notes" ref={notesRef}>
+            {notes.map(({ project, note }) => (
+              <div key={project} data-project={project} className="note">
+                <button className="proj-cap" onClick={() => t.openProject(project)}>
+                  <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
+                  {t.dispName(project)}
+                </button>
+                <span className="sum">
+                  <Ticks text={note} />
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="summary-empty">
+            <strong>Project summaries haven’t arrived yet.</strong>
+            <span>Your indexed activity is already visible above. Summaries will appear here when they’re ready.</span>
+          </div>
         )}
 
         <Pager older={older} newer={newer} idx={idx} onDayIdx={onDayIdx} foot />

@@ -344,9 +344,11 @@ pre code, .welcome-command { overflow-wrap: anywhere; word-break: break-word; }
 
 /* the day's story — one short per-project paragraph, in timeline order */
 .sect { margin: 52px 0 0; font-size: 0.78rem; font-weight: 500; letter-spacing: 0.06em; color: var(--quiet); }
-.sect + .notes { margin-top: 18px; }
+.sect + .notes, .sect + .summary-empty { margin-top: 18px; }
 
 .notes { display: flex; flex-direction: column; gap: 1.6rem; }
+.summary-empty { display: flex; flex-direction: column; gap: 6px; max-width: 62ch; color: var(--quiet); line-height: 1.5; }
+.summary-empty strong { color: var(--ink); font-weight: 500; }
 .note { display: grid; grid-template-columns: 170px minmax(0, 1fr); align-items: baseline; }
 .sq { width: 8px; height: 8px; }
 .proj-cap {
