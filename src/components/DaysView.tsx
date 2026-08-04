@@ -14,6 +14,7 @@ import {
 } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { HourGrid, LaneMarks, makeX, useWidth } from "./timeline"
+import { ActivityKey } from "./ActivityKey"
 
 const LABEL_W = 150
 const LANE_H = 15
@@ -246,6 +247,8 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
           </div>
           <DayTimeline dayProjects={projMap} widthPx={widthPx} cutoff={cutoff} active={activeProj} onPick={jumpTo} />
         </div>
+        <ActivityKey />
+
 
         {notes.length > 0 && (
           <>

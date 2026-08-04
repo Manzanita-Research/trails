@@ -19,6 +19,16 @@ import { WeekView } from "./components/WeekView"
 import { ThreadsView } from "./components/ThreadsView"
 import { ProjectView } from "./components/ProjectView"
 import { SortPanel } from "./components/SortPanel"
+import { WelcomeView } from "./components/WelcomeView"
+import { FirstTrailGuide } from "./components/FirstTrailGuide"
+
+type ShellMode = "loading" | "hub-error" | "welcome" | "onboarding" | "loaded"
+
+function shellModeOf(data: BootstrapV1 | null, loading: boolean): ShellMode {
+  if (data === null) return loading ? "loading" : "hub-error"
+  if (data.sessions.length === 0) return "welcome"
+  return data.preferences.onboardingVersion < 1 ? "onboarding" : "loaded"
+}
 
 const backLabels: Record<ListView, string> = { days: "days", week: "the week", threads: "threads" }
 
@@ -27,11 +37,13 @@ function LoadedApp({
   mutations,
   syncError,
   retry,
+  onboarding,
 }: {
   readonly bootstrap: BootstrapV1
   readonly mutations: BootstrapMutations
   readonly syncError: string | null
   readonly retry: () => Promise<void>
+  readonly onboarding: boolean
 }) {
   const { boundary, halo, assignments, customEngagements, names, pocket } = bootstrap.preferences
   const [view, setView] = useState<ListView | "project">("days")
@@ -136,46 +148,56 @@ function LoadedApp({
     tip.style.top = `${event.clientY + 16}px`
   }
 
+  const showView = (nextView: ListView) => {
+    setView(nextView)
+    setLastListView(nextView)
+  }
+
   return (
     <TrailsCtx.Provider value={trails}>
       <div onMouseMove={onMove}>
-        <Topbar
-          view={view}
-          onView={(nextView) => {
-            setView(nextView)
-            setLastListView(nextView)
-          }}
-          onToggleSort={() => setSortOpen(!sortOpen)}
-          boundary={boundary}
-          setBoundary={(value) => mutations.updateSettings({ boundary: value })}
-          halo={halo}
-          setHalo={(value) => mutations.updateSettings({ halo: value })}
-        />
+        {onboarding ? (
+          <Topbar
+            mode="onboarding"
+            view={view}
+            onView={showView}
+            onToggleSort={() => setSortOpen(!sortOpen)}
+          />
+        ) : (
+          <Topbar
+            mode="loaded"
+            view={view}
+            onView={showView}
+            onToggleSort={() => setSortOpen(!sortOpen)}
+            boundary={boundary}
+            setBoundary={(value) => mutations.updateSettings({ boundary: value })}
+            halo={halo}
+            setHalo={(value) => mutations.updateSettings({ halo: value })}
+          />
+        )}
         {syncError && (
           <div className="sync-error" role="status">
             Sync paused — showing the last loaded snapshot. <button onClick={() => void retry()}>retry</button>
           </div>
         )}
         <main id="main">
-          {sessions.length === 0 ? (
-            <section className="view empty-state">
-              <h1 className="display">No sessions yet</h1>
-              <p>This Mac is both the hub and its first collector. Supported sessions normally appear within one minute.</p>
-              <code>trails collect --once</code>
-            </section>
-          ) : (
-            <>
-              {view === "days" && <DaysView dayIdx={dayIdx} onDayIdx={setDayIdx} />}
-              {view === "week" && <WeekView />}
-              {view === "threads" && <ThreadsView />}
-              {view === "project" && projectKey && (
-                <ProjectView
-                  project={projectKey}
-                  backLabel={backLabels[lastListView]}
-                  onBack={() => setView(lastListView)}
-                />
-              )}
-            </>
+          {onboarding && view === "days" && (
+            <FirstTrailGuide
+              boundary={boundary}
+              halo={halo}
+              updateSettings={mutations.updateSettings}
+              onOrganize={() => setSortOpen(true)}
+            />
+          )}
+          {view === "days" && <DaysView dayIdx={dayIdx} onDayIdx={setDayIdx} />}
+          {view === "week" && <WeekView />}
+          {view === "threads" && <ThreadsView />}
+          {view === "project" && projectKey && (
+            <ProjectView
+              project={projectKey}
+              backLabel={backLabels[lastListView]}
+              onBack={() => setView(lastListView)}
+            />
           )}
         </main>
         <SortPanel open={sortOpen} onClose={() => setSortOpen(false)} />
@@ -187,16 +209,41 @@ function LoadedApp({
 
 export function App() {
   const { data, loading, error, retry, mutations } = useBootstrap()
-  if (!data) {
+  const mode = shellModeOf(data, loading)
+
+  if (mode === "loading" || mode === "hub-error") {
     return (
-      <main id="main">
-        <section className="view empty-state">
-          <h1 className="display">{loading ? "Loading trails…" : "Trails couldn't reach the hub"}</h1>
-          {error && <p>{error}</p>}
-          {!loading && <button onClick={() => void retry()}>retry</button>}
-        </section>
-      </main>
+      <>
+        <Topbar mode="minimal" />
+        <main id="main">
+          <section className="view empty-state">
+            <h1 className="display">{mode === "loading" ? "Loading trails…" : "Trails couldn't reach the hub"}</h1>
+            {mode === "hub-error" && error && <p>{error}</p>}
+            {mode === "hub-error" && <button onClick={() => void retry()}>retry</button>}
+          </section>
+        </main>
+      </>
     )
   }
-  return <LoadedApp bootstrap={data} mutations={mutations} syncError={error} retry={retry} />
+
+  if (mode === "welcome") {
+    return (
+      <>
+        <Topbar mode="minimal" />
+        <main id="main">
+          <WelcomeView retry={retry} syncError={error} />
+        </main>
+      </>
+    )
+  }
+
+  return (
+    <LoadedApp
+      bootstrap={data!}
+      mutations={mutations}
+      syncError={error}
+      retry={retry}
+      onboarding={mode === "onboarding"}
+    />
+  )
 }

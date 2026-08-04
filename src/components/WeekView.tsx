@@ -14,6 +14,7 @@ import {
 } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { TicksRow, useWidth } from "./timeline"
+import { ActivityKey } from "./ActivityKey"
 
 const STRIP_H = 34
 const BAR_H = 5
@@ -201,14 +202,7 @@ export function WeekView() {
               <span className="swatch" style={{ background: engColor(eng) }} /> {eng.name}
             </div>
           ))}
-        <div className="spread">
-          <div className="k">
-            <span className="swatch" style={{ background: "var(--s1)" }} /> you present
-          </div>
-          <div className="k">
-            <span className="swatch" style={{ background: "var(--s1)", opacity: 0.22 }} /> agents running
-          </div>
-        </div>
+        <ActivityKey />
       </div>
       <p className="credit-note">
         ¼ ≥ 1 h · ½ ≥ 2.5 h · full ≥ 5.5 h of attention. Credits are a starting point for your invoice, not the invoice.
