@@ -10,5 +10,17 @@
     "isolatedModules": true,
     "types": ["vite/client", "@cloudflare/workers-types", "bun"]
   },
-  "include": ["cli", "collector", "server", "shared", "src", "worker", "scripts", "test", "vite.config.ts"]
+  "include": [
+    "cli",
+    "collector",
+    "feedback-worker",
+    "server",
+    "shared",
+    "src",
+    "worker",
+    "scripts",
+    "test",
+    "vite.config.ts",
+    "node_modules/@testing-library/jest-dom/types/bun.d.ts"
+  ]
 }

@@ -146,6 +146,42 @@ export const ProjectPatchSchema = Schema.Struct({
 export const EngagementCreateSchema = Schema.Struct({ name: trimmedString(1, 80) })
 export const PocketCreateSchema = Schema.Struct({ text: trimmedString(1, 500) })
 
+const FeedbackSourceCountsV1Schema = Schema.Struct({
+  claude: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  codex: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  omp: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  pi: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+})
+
+const FeedbackContextV1Schema = Schema.Struct({
+  appVersion: trimmedString(1, 40),
+  view: Schema.Literal("loading", "hub-error", "welcome", "days", "week", "threads", "project"),
+  revision: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
+  workDate: Schema.NullOr(LocalDateSchema),
+  sourceCounts: Schema.NullOr(FeedbackSourceCountsV1Schema),
+  viewport: Schema.Struct({
+    width: Schema.Number.pipe(Schema.int(), Schema.between(1, 10_000)),
+    height: Schema.Number.pipe(Schema.int(), Schema.between(1, 10_000)),
+  }),
+  syncError: Schema.Boolean,
+})
+
+export const FeedbackSubmissionV1Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(1),
+  id: Schema.UUID,
+  kind: Schema.Literal("confusing", "broken", "idea", "delight"),
+  message: trimmedString(1, 2_000),
+  followUp: Schema.NullOr(trimmedString(1, 200)),
+  createdAt: CanonicalTimestampSchema,
+  context: Schema.NullOr(FeedbackContextV1Schema),
+})
+
+export const FeedbackReceiptV1Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(1),
+  id: Schema.UUID,
+  status: Schema.Literal("received"),
+})
+
 export type IngestSessionV1 = Schema.Schema.Type<typeof IngestSessionV1Schema> & {
   readonly source: Source
   readonly activity: ReadonlyArray<ActivityTuple>
@@ -160,6 +196,8 @@ export type SettingsPatch = Schema.Schema.Type<typeof SettingsPatchSchema>
 export type ProjectPatch = Schema.Schema.Type<typeof ProjectPatchSchema>
 export type EngagementCreate = Schema.Schema.Type<typeof EngagementCreateSchema>
 export type PocketCreate = Schema.Schema.Type<typeof PocketCreateSchema>
+export type FeedbackSubmissionV1 = Schema.Schema.Type<typeof FeedbackSubmissionV1Schema>
+export type FeedbackReceiptV1 = Schema.Schema.Type<typeof FeedbackReceiptV1Schema>
 
 export function decodeExact<S extends Schema.Schema.AnyNoContext>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input)

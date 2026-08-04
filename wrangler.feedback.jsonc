@@ -1,0 +1,31 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "trails-beta-feedback",
+	"main": "feedback-worker/index.ts",
+	"account_id": "6ea60fd330c24329c4c6a76937db8d8a",
+	"compatibility_date": "2026-07-01",
+	"workers_dev": true,
+	"ratelimits": [
+		{
+			"name": "FEEDBACK_RATE_LIMITER",
+			"namespace_id": "8042026",
+			"simple": {
+				"limit": 5,
+				"period": 60
+			}
+		}
+	],
+	"triggers": {
+		"crons": [
+			"17 3 * * *"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "FEEDBACK_DB",
+			"database_name": "trails-beta-feedback",
+			"database_id": "02548ec2-8e99-445b-a182-e17978934d19",
+			"migrations_dir": "feedback-worker/migrations"
+		}
+	]
+}
