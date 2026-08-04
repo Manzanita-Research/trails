@@ -56,6 +56,25 @@ Current limits are:
 
 If the relay is unavailable, timeline collection continues. Trails uses the session's first prompt as fallback copy.
 
+## Optional beta feedback
+
+Feedback leaves the browser only when you press **send**. Every report contains the selected feedback kind, your message, an optional follow-up, and the time you created it.
+
+Safe context is off by default. If you turn on **include safe context**, trails adds only:
+
+- the trails app version and current view;
+- the canonical hub revision;
+- the selected work date when you are in Days or Project;
+- session counts grouped by Claude Code, Codex, omp, and pi;
+- viewport width and height;
+- whether browser synchronization is currently in an error state.
+
+Safe context never includes a URL or tailnet detail, device or project name, local path, branch, prompt, summary, identifier, digest, transcript content, or browser user-agent.
+
+The browser writes the report directly to a separate Cloudflare feedback Worker and D1 database. That endpoint accepts writes from allowed trails origins and has no public read route. Feedback records expire after 90 days and are deleted by the next daily cleanup.
+
+This expiring feedback store is separate from the inference relay above. It never becomes canonical trails state; the hub Mac’s SQLite database remains canonical for sessions and organization.
+
 <Aside type="note" title="You hold the system">
   Your hub Mac owns the database and backups. A tailnet and inference token are optional. Trails does not need a hosted application server.
 </Aside>

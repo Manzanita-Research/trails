@@ -60,8 +60,14 @@ Canonical SQLite state includes:
 
 Browsers are readers and editors over that canonical state. A second browser converges on the same organization.
 
-## Cloudflare's narrow role
+## Cloudflare’s bounded roles
 
-Cloudflare does not host the trails application or database. When optional summary generation is enabled, a small authenticated Worker relays bounded inputs to Workers AI. Complete transcripts are not sent through that relay. SQLite on the hub remains canonical.
+Cloudflare does not host the trails application or its canonical database.
+
+When optional summary generation is enabled, an authenticated inference Worker relays bounded inputs to Workers AI. Complete transcripts are not sent through that relay.
+
+When a tester explicitly sends beta feedback, the browser writes that report to a separate public-write Worker and expiring D1 store with no public read route. Safe context is opt-in and bounded; feedback expires after 90 days and is deleted by the next daily cleanup.
+
+The inference relay and feedback store are separate. SQLite on the hub Mac remains canonical for trails session and organization state.
 
 [Read the exact privacy boundary →](/concepts/privacy)

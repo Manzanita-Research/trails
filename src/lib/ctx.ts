@@ -6,7 +6,8 @@ import type { BootstrapV1 } from "../../shared/protocol"
 export interface Trails {
   sessions: Session[]
   summaries: Summaries
-  scanTime: number
+  nowTime: number
+  indexedAt: number | null
   boundary: number
   halo: number
   days: [string, DayMap][]

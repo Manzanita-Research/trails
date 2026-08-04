@@ -1,107 +1,216 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type RefObject } from "react"
 
 export type ListView = "days" | "week" | "threads"
 
-export function Topbar({
-  view,
-  onView,
-  onToggleSort,
-  boundary,
-  setBoundary,
-  halo,
-  setHalo,
-}: {
-  view: string
-  onView: (v: ListView) => void
-  onToggleSort: () => void
-  boundary: 4 | 5 | 6 | 7
-  setBoundary: (boundary: 4 | 5 | 6 | 7) => Promise<void>
-  halo: 0 | 5 | 10 | 15
-  setHalo: (halo: 0 | 5 | 10 | 15) => Promise<void>
-}) {
+type FeedbackTriggerProps = {
+  readonly feedbackExpanded: boolean
+  readonly feedbackControls: string
+  readonly feedbackTriggerRef: RefObject<HTMLButtonElement | null>
+  readonly onFeedback: () => void
+}
+
+type MinimalTopbarProps = FeedbackTriggerProps & {
+  readonly mode: "minimal"
+}
+
+type OrganizationTriggerProps = {
+  readonly organizeExpanded: boolean
+  readonly organizeControls: string
+  readonly organizeTriggerRef: RefObject<HTMLButtonElement | null>
+  readonly onOrganize: () => void
+}
+
+type OnboardingTopbarProps = OrganizationTriggerProps &
+  FeedbackTriggerProps & {
+  readonly mode: "onboarding"
+  readonly view: ListView | "project"
+  readonly onView: (view: ListView) => void
+  }
+
+type LoadedTopbarProps = OrganizationTriggerProps &
+  FeedbackTriggerProps & {
+  readonly mode: "loaded"
+  readonly view: ListView | "project"
+  readonly onView: (view: ListView) => void
+  readonly boundary: 4 | 5 | 6 | 7
+  readonly setBoundary: (boundary: 4 | 5 | 6 | 7) => Promise<void>
+  readonly halo: 0 | 5 | 10 | 15
+  readonly setHalo: (halo: 0 | 5 | 10 | 15) => Promise<void>
+  }
+
+export type TopbarProps = MinimalTopbarProps | OnboardingTopbarProps | LoadedTopbarProps
+
+const tabs: [ListView, string][] = [
+  ["days", "days"],
+  ["week", "week"],
+  ["threads", "threads"],
+]
+
+export function Topbar(props: TopbarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [saving, setSaving] = useState<"boundary" | "halo" | null>(null)
-  const controlsRef = useRef<HTMLDivElement>(null)
+  const settingsDialogRef = useRef<HTMLDivElement>(null)
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null)
+  const firstSettingsSelectRef = useRef<HTMLSelectElement>(null)
+  const settingsWasOpenRef = useRef(false)
+  const settingsId = "settings-dialog"
 
   useEffect(() => {
-    if (!settingsOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (!controlsRef.current?.contains(e.target as Node)) setSettingsOpen(false)
+    if (!settingsOpen) {
+      if (settingsWasOpenRef.current) {
+        settingsWasOpenRef.current = false
+        settingsTriggerRef.current?.focus()
+      }
+      return
+    }
+
+    settingsWasOpenRef.current = true
+    firstSettingsSelectRef.current?.focus()
+
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      const onTrigger = settingsTriggerRef.current?.contains(target)
+      const inDialog = settingsDialogRef.current?.contains(target)
+      if (!onTrigger && !inDialog) setSettingsOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      event.preventDefault()
+      setSettingsOpen(false)
     }
     document.addEventListener("mousedown", onDown)
-    return () => document.removeEventListener("mousedown", onDown)
+    document.addEventListener("keydown", onKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", onDown)
+      document.removeEventListener("keydown", onKeyDown)
+    }
   }, [settingsOpen])
 
-  const tabs: [ListView, string][] = [
-    ["days", "days"],
-    ["week", "week"],
-    ["threads", "threads"],
-  ]
+  useEffect(() => {
+    if (props.mode !== "loaded") setSettingsOpen(false)
+  }, [props.mode])
 
   return (
     <header className="topbar">
       <div className="topbar-inner">
         <span className="wordmark">trails</span>
-        <nav className="nav" aria-label="views">
-          {tabs.map(([key, label]) => (
-            <button key={key} className={`nav-link${view === key ? " is-on" : ""}`} onClick={() => onView(key)}>
-              {label}
-            </button>
-          ))}
-        </nav>
-        <div className="controls" ref={controlsRef}>
-          <button className="quiet-btn" onClick={onToggleSort}>
-            sort projects
-          </button>
-          <button className="quiet-btn" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(!settingsOpen)}>
-            settings
-          </button>
-          <div className="settings-pop" hidden={!settingsOpen}>
-            <label className="control">
-              <span>day starts</span>
-              <select
-                value={boundary}
-                disabled={saving === "boundary"}
-                onChange={async (event) => {
-                  setSaving("boundary")
-                  try {
-                    await setBoundary(Number(event.target.value) as 4 | 5 | 6 | 7)
-                  } finally {
-                    setSaving(null)
-                  }
-                }}
-              >
-                <option value={4}>4 am</option>
-                <option value={5}>5 am</option>
-                <option value={6}>6 am</option>
-                <option value={7}>7 am</option>
-              </select>
-            </label>
-            <label
-              className="control"
-              title="Minutes of presence credited around each prompt you typed — reading, reviewing, thinking. Tune it until day totals feel honest."
+        {props.mode === "minimal" ? (
+          <div className="controls">
+            <button
+              ref={props.feedbackTriggerRef}
+              className="quiet-btn"
+              aria-expanded={props.feedbackExpanded}
+              aria-controls={props.feedbackControls}
+              onClick={props.onFeedback}
             >
-              <span>attention halo</span>
-              <select
-                value={halo}
-                disabled={saving === "halo"}
-                onChange={async (event) => {
-                  setSaving("halo")
-                  try {
-                    await setHalo(Number(event.target.value) as 0 | 5 | 10 | 15)
-                  } finally {
-                    setSaving(null)
-                  }
-                }}
-              >
-                <option value={0}>none</option>
-                <option value={5}>± 5 min</option>
-                <option value={10}>± 10 min</option>
-                <option value={15}>± 15 min</option>
-              </select>
-            </label>
+              feedback
+            </button>
           </div>
-        </div>
+        ) : (
+          <>
+            <nav className="nav" aria-label="views">
+              {tabs.map(([key, label]) => (
+                <button
+                  key={key}
+                  className={`nav-link${props.view === key ? " is-on" : ""}`}
+                  onClick={() => props.onView(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+            <div className="controls">
+              <button
+                ref={props.organizeTriggerRef}
+                className="quiet-btn"
+                aria-expanded={props.organizeExpanded}
+                aria-controls={props.organizeControls}
+                onClick={props.onOrganize}
+              >
+                organize projects
+              </button>
+              <button
+                ref={props.feedbackTriggerRef}
+                className="quiet-btn"
+                aria-expanded={props.feedbackExpanded}
+                aria-controls={props.feedbackControls}
+                onClick={props.onFeedback}
+              >
+                feedback
+              </button>
+              {props.mode === "loaded" && (
+                <>
+                  <button
+                    ref={settingsTriggerRef}
+                    className="quiet-btn"
+                    aria-expanded={settingsOpen}
+                    aria-controls={settingsId}
+                    onClick={() => setSettingsOpen((open) => !open)}
+                  >
+                    settings
+                  </button>
+                  <div
+                    ref={settingsDialogRef}
+                    id={settingsId}
+                    className="settings-pop"
+                    role="dialog"
+                    aria-label="settings"
+                    hidden={!settingsOpen}
+                  >
+                    <label className="control">
+                      <span>day starts</span>
+                      <select
+                        ref={firstSettingsSelectRef}
+                        value={props.boundary}
+                        disabled={saving === "boundary"}
+                        onChange={async (event) => {
+                          setSaving("boundary")
+                          try {
+                            await props.setBoundary(Number(event.target.value) as 4 | 5 | 6 | 7)
+                          } finally {
+                            setSaving(null)
+                          }
+                        }}
+                      >
+                        <option value={4}>4 am</option>
+                        <option value={5}>5 am</option>
+                        <option value={6}>6 am</option>
+                        <option value={7}>7 am</option>
+                      </select>
+                    </label>
+                    <label className="control control-with-help">
+                      <span className="control-copy">
+                        <span>attention halo</span>
+                        <span id="attention-halo-help" className="control-help">
+                          nearby reading, reviewing, and thinking time counted around your prompts
+                        </span>
+                      </span>
+                      <select
+                        aria-label="attention halo"
+                        aria-describedby="attention-halo-help"
+                        value={props.halo}
+                        disabled={saving === "halo"}
+                        onChange={async (event) => {
+                          setSaving("halo")
+                          try {
+                            await props.setHalo(Number(event.target.value) as 0 | 5 | 10 | 15)
+                          } finally {
+                            setSaving(null)
+                          }
+                        }}
+                      >
+                        <option value={0}>none</option>
+                        <option value={5}>± 5 min</option>
+                        <option value={10}>± 10 min</option>
+                        <option value={15}>± 15 min</option>
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </header>
   )

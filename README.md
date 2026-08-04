@@ -118,6 +118,10 @@ Trails does **not** send transcript paths or transcript bodies to the hub. The w
 
 If the optional summary relay is enabled, it receives only bounded summary input—not complete transcripts. Session input is capped at 9,000 characters and day input at 12,000 characters.
 
+Sending beta feedback is explicit. The browser sends only the feedback kind, message, optional follow-up, and creation time unless you opt in to safe context. Safe context is limited to the trails version, current view, canonical revision, selected work date on Days or Project, counts by Claude Code/Codex/omp/pi source, viewport dimensions, and whether synchronization is in an error state. It never includes URLs or tailnet details, device or project names, paths, branches, prompts, summaries, identifiers, digests, transcript content, or user-agent.
+
+Feedback goes directly from the browser to a separate public-write Cloudflare Worker and D1 database with no public read route. It expires after 90 days and is deleted by the next daily cleanup. This feedback store is separate from the optional inference relay; canonical session and organization state remains in SQLite on the hub Mac.
+
 ## Alpha release
 
 Current version: `0.1.0-alpha.5`

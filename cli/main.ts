@@ -11,7 +11,7 @@ import {
   normalizeCollectorServer,
 } from "./config"
 import { join, resolve } from "node:path"
-import { createApp } from "../server/app"
+import { createApp, setAdvertisedHubUrl } from "../server/app"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { createInferenceClient, summarySupervisor } from "../server/summaries"
 import { createBackup } from "../server/backup"
@@ -214,6 +214,14 @@ async function setupCommand(args: string[]): Promise<void> {
     collect: () => collect(["--once"]),
     waitForServer,
     tailnetUrl: currentTailnetUrl,
+    advertiseHub: (url) => {
+      const database = openDatabase(process.env.TRAILS_DB_PATH ?? DEFAULT_DB_PATH)
+      try {
+        setAdvertisedHubUrl(database, normalizeCollectorServer(url))
+      } finally {
+        database.close()
+      }
+    },
   }
   if (mode === "hub") {
     const url = await runSetup({ mode, name, tailscale, service }, actions)

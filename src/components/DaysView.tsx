@@ -1,21 +1,20 @@
 import { useEffect, useRef, useState } from "react"
+import { localParts, workdayOf } from "../../shared/domain"
 import { Ticks } from "./SessLine"
 import {
   credit,
-  creditWord,
   dowName,
   engColor,
   fmtClock24,
   fmtDur,
   focusMinutes,
   fullDate,
-  shiftDate,
   type DayMap,
 } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { HourGrid, LaneMarks, makeX, useWidth } from "./timeline"
+import { ActivityKey } from "./ActivityKey"
 
-const LABEL_W = 150
 const LANE_H = 15
 const LANE_GAP = 8
 
@@ -24,62 +23,110 @@ function DayTimeline({
   widthPx,
   cutoff,
   active,
+  noteProjects,
   onPick,
 }: {
   dayProjects: DayMap
   widthPx: number
   cutoff?: number
   active?: string | null
+  noteProjects: ReadonlySet<string>
   onPick?: (project: string) => void
 }) {
   const t = useTrails()
-  const plotW = Math.max(320, widthPx - LABEL_W)
+  const labelW = widthPx >= 500 ? 150 : 108
+  const plotW = widthPx - labelW
   const projects = [...dayProjects.entries()].sort((a, b) => Math.min(...a[1].all) - Math.min(...b[1].all))
   const H = projects.length * (LANE_H + LANE_GAP) - LANE_GAP + 34
-  const X = makeX(LABEL_W, plotW, t.boundary)
+  const X = makeX(labelW, plotW, t.boundary)
   const cutX = cutoff !== undefined ? X(cutoff) : null
   // marks always end at the cutoff, so only the right side is clear — no room there, no label
   const cutLabel = cutX !== null && cutX < widthPx - 120
 
   return (
-    <svg className="day-svg" width={widthPx} height={H} viewBox={`0 0 ${widthPx} ${H}`} role="img" aria-label="activity timeline">
-      <HourGrid X={X} topPad={0} H={H} boundary={t.boundary} />
-      {cutX !== null && cutoff !== undefined && (
-        <g>
-          <line x1={cutX} y1={0} x2={cutX} y2={H - 24} stroke="var(--quiet)" strokeWidth={1} strokeDasharray="2 5" />
-          {cutLabel && (
-            <text x={cutX + 7} y={10} fill="var(--quiet)" fontSize={11}>
-              indexed to {fmtClock24(cutoff)}
-            </text>
-          )}
-        </g>
-      )}
+    <svg
+      className="day-svg"
+      width={widthPx}
+      height={H}
+      viewBox={`0 0 ${widthPx} ${H}`}
+      role="group"
+      aria-label="activity timeline"
+    >
+      <g aria-hidden="true">
+        <HourGrid X={X} topPad={0} H={H} boundary={t.boundary} />
+        {cutX !== null && cutoff !== undefined && (
+          <g>
+            <line
+              x1={cutX}
+              y1={0}
+              x2={cutX}
+              y2={H - 24}
+              stroke="var(--quiet)"
+              strokeWidth={1}
+              strokeDasharray="2 5"
+            />
+            {cutLabel && (
+              <text x={cutX + 7} y={10} fill="var(--quiet)" fontSize={11}>
+                indexed to {fmtClock24(cutoff)}
+              </text>
+            )}
+          </g>
+        )}
+      </g>
       {projects.map(([project, data], i) => {
         const y = i * (LANE_H + LANE_GAP)
         const name = t.dispName(project)
         const isActive = project === active
+        const pickProject = noteProjects.has(project) ? onPick : undefined
+        const labelLimit = widthPx < 500 ? 14 : 20
+        const visibleName = name.length > labelLimit ? `${name.slice(0, labelLimit - 1)}…` : name
+        const firstMinute = Math.min(...data.all)
+        const lastMinute = Math.max(...data.all)
+        const accessibleLabel = `${name}; activity from ${fmtClock24(firstMinute)} to ${fmtClock24(lastMinute)}; jump to day summary.`
+
         return (
-          <g key={project} className="lane" onClick={() => onPick?.(project)}>
-            {/* one full-width hit area per row, so hover reads the whole lane,
-                not just the painted marks — rows tile with half the gap each */}
-            <rect
-              className="lane-hit"
-              x={0}
-              y={y - LANE_GAP / 2}
-              width={widthPx}
-              height={LANE_H + LANE_GAP}
-              fill="transparent"
-            />
+          <g
+            key={project}
+            className={pickProject ? "day-lane lane lane-actionable" : "day-lane lane-inert"}
+            role={pickProject ? "button" : undefined}
+            tabIndex={pickProject ? 0 : undefined}
+            aria-label={pickProject ? accessibleLabel : undefined}
+            onClick={pickProject ? () => pickProject(project) : undefined}
+            onKeyDown={
+              pickProject
+                ? (event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return
+                    event.preventDefault()
+                    pickProject(project)
+                  }
+                : undefined
+            }
+          >
+            {pickProject && (
+              <rect
+                className="lane-hit"
+                x={0}
+                y={y - LANE_GAP / 2}
+                width={widthPx}
+                height={LANE_H + LANE_GAP}
+                fill="transparent"
+                aria-hidden="true"
+              />
+            )}
             <text
               x={0}
               y={y + LANE_H - 3}
               fill={isActive ? "var(--ink)" : "var(--quiet)"}
               fontSize={12.5}
               fontWeight={isActive ? 600 : 400}
+              aria-hidden={pickProject ? "true" : undefined}
+              aria-label={pickProject ? undefined : name}
             >
-              {name.length > 20 ? name.slice(0, 19) + "…" : name}
+              {visibleName}
             </text>
-            <LaneMarks data={data} X={X} y={y} laneH={LANE_H} color={engColor(t.engOf(project))} project={project} />
+            <g aria-hidden="true">
+              <LaneMarks data={data} X={X} y={y} laneH={LANE_H} color={engColor(t.engOf(project))} project={project} />
+            </g>
           </g>
         )
       })}
@@ -102,10 +149,20 @@ function Pager({
 }) {
   return (
     <nav className={foot ? "pager pager-foot" : "pager"} aria-label="adjacent days">
-      <button disabled={!older} title={older ? "or press ←" : undefined} onClick={() => older && onDayIdx(idx + 1)}>
+      <button
+        disabled={!older}
+        title={older ? "or press ←" : undefined}
+        aria-keyshortcuts="ArrowLeft"
+        onClick={() => older && onDayIdx(idx + 1)}
+      >
         {older ? `← ${dowName(older[0])}` : "← older"}
       </button>
-      <button disabled={!newer} title={newer ? "or press →" : undefined} onClick={() => newer && onDayIdx(idx - 1)}>
+      <button
+        disabled={!newer}
+        title={newer ? "or press →" : undefined}
+        aria-keyshortcuts="ArrowRight"
+        onClick={() => newer && onDayIdx(idx - 1)}
+      >
         {newer ? `${dowName(newer[0])} →` : "newer →"}
       </button>
     </nav>
@@ -208,14 +265,20 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
 
   const focus = focusMinutes([...projMap.values()].map((p) => p.user), t.halo)
   const agentMin = new Set([...projMap.values()].flatMap((p) => [...p.all])).size
-  const word = creditWord[credit(focus)]
+  const creditValue = credit(focus)
+  const dayCredit =
+    creditValue === 1 ? "full" : creditValue === 0.5 ? "half" : creditValue === 0.25 ? "quarter" : null
 
-  // where the index stops: shown only on the workday the scan belongs to
-  const scanD = new Date(t.scanTime)
-  const scanIso = `${scanD.getFullYear()}-${String(scanD.getMonth() + 1).padStart(2, "0")}-${String(scanD.getDate()).padStart(2, "0")}`
-  const scanWorkday = scanD.getHours() < t.boundary ? shiftDate(scanIso, -1) : scanIso
-  const scanMin = scanD.getHours() * 60 + scanD.getMinutes()
-  const cutoff = scanWorkday === date ? (scanMin < t.boundary * 60 ? scanMin + 1440 : scanMin) : undefined
+  // where the index stops: shown only on the workday of the latest accepted session change
+  const indexedParts = t.indexedAt === null ? null : localParts(new Date(t.indexedAt).toISOString())
+  const indexedWorkday =
+    indexedParts === null ? null : workdayOf(indexedParts.date, indexedParts.minute, t.boundary)
+  const cutoff =
+    indexedParts !== null && indexedWorkday === date
+      ? indexedParts.minute < t.boundary * 60
+        ? indexedParts.minute + 1440
+        : indexedParts.minute
+      : undefined
 
   // story order = timeline order: first activity of the day first
   const notes = [...projMap.entries()]
@@ -233,33 +296,45 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
             attention <b>{fmtDur(focus)}</b>
             <span className="sep">·</span>
             agents <b>{fmtDur(agentMin)}</b>
-            {word && (
+            {dayCredit && (
               <>
                 <span className="sep">·</span>
-                {word}
+                day credit: {dayCredit}
               </>
             )}
           </div>
-          <DayTimeline dayProjects={projMap} widthPx={widthPx} cutoff={cutoff} active={activeProj} onPick={jumpTo} />
+          <DayTimeline
+            dayProjects={projMap}
+            widthPx={widthPx}
+            cutoff={cutoff}
+            active={activeProj}
+            noteProjects={new Set(notes.map(({ project }) => project))}
+            onPick={jumpTo}
+          />
         </div>
+        <ActivityKey />
 
-        {notes.length > 0 && (
-          <>
-            <h2 className="sect">the day, by project</h2>
-            <div className="notes" ref={notesRef}>
-              {notes.map(({ project, note }) => (
-                <div key={project} data-project={project} className="note">
-                  <button className="proj-cap" onClick={() => t.openProject(project)}>
-                    <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
-                    {t.dispName(project)}
-                  </button>
-                  <span className="sum">
-                    <Ticks text={note} />
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
+
+        <h2 className="sect">the day, by project</h2>
+        {notes.length > 0 ? (
+          <div className="notes" ref={notesRef}>
+            {notes.map(({ project, note }) => (
+              <div key={project} data-project={project} className="note">
+                <button className="proj-cap" onClick={() => t.openProject(project)}>
+                  <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
+                  {t.dispName(project)}
+                </button>
+                <span className="sum">
+                  <Ticks text={note} />
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="summary-empty">
+            <strong>Project summaries haven’t arrived yet.</strong>
+            <span>Your indexed activity is already visible above. Summaries will appear here when they’re ready.</span>
+          </div>
         )}
 
         <Pager older={older} newer={newer} idx={idx} onDayIdx={onDayIdx} foot />

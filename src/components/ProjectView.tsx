@@ -1,12 +1,19 @@
-import { useState } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { engColor, fmtDur, focusMinutes, fullDate } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { LaneMarks, makeX, TicksRow, useWidth } from "./timeline"
 import { DayNote } from "./SessLine"
+import { EngagementSelect } from "./EngagementSelect"
 
 export function ProjectView({ project, onBack, backLabel }: { project: string; onBack: () => void; backLabel: string }) {
   const t = useTrails()
-  const [saving, setSaving] = useState<"rename" | "engagement" | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameDraft, setRenameDraft] = useState("")
+  const [renameSaving, setRenameSaving] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const renameButtonRef = useRef<HTMLButtonElement>(null)
+  const restoreRenameFocusRef = useRef(false)
   const [ref, width] = useWidth<HTMLElement>()
   const widthPx = Math.min(1100, width)
   const eng = t.engOf(project)
@@ -20,36 +27,50 @@ export function ProjectView({ project, onBack, backLabel }: { project: string; o
   const stripW = Math.max(320, widthPx - 170 - 36)
   const X = makeX(0, stripW, t.boundary)
 
-  const onRename = async () => {
-    const next = prompt("Display name for this project (empty to reset):", t.dispName(project))
-    if (next === null) return
-    setSaving("rename")
-    try {
-      await t.rename(project, next.trim() || null)
-    } finally {
-      setSaving(null)
+  useEffect(() => {
+    if (renaming && !renameSaving) renameInputRef.current?.focus()
+  }, [renameError, renameSaving, renaming])
+
+  useEffect(() => {
+    if (!renaming && restoreRenameFocusRef.current) {
+      restoreRenameFocusRef.current = false
+      renameButtonRef.current?.focus()
     }
+  }, [renaming])
+
+  const beginRename = () => {
+    setRenameDraft(t.dispName(project))
+    setRenameError(null)
+    setRenaming(true)
   }
 
-  const onEngChange = async (value: string) => {
-    setSaving("engagement")
+  const cancelRename = () => {
+    if (renameSaving) return
+    restoreRenameFocusRef.current = true
+    setRenaming(false)
+    setRenameDraft("")
+    setRenameError(null)
+  }
+
+  const saveRename = async (event: FormEvent) => {
+    event.preventDefault()
+    setRenameSaving(true)
+    setRenameError(null)
     try {
-      if (value === "__new__") {
-        const name = prompt("Name the engagement (a client, a practice, a life area):")?.trim()
-        if (!name) return
-        const engagementId = await t.addEngagement(name)
-        await t.assign(project, engagementId)
-      } else {
-        await t.assign(project, value)
-      }
+      await t.rename(project, renameDraft.trim() || null)
+      restoreRenameFocusRef.current = true
+      setRenaming(false)
+      setRenameDraft("")
+    } catch {
+      setRenameError("Couldn’t rename this project. Try again.")
     } finally {
-      setSaving(null)
+      setRenameSaving(false)
     }
   }
 
   return (
     <section ref={ref} className="view">
-      <button className="back-btn" onClick={onBack}>
+      <button type="button" className="back-btn" onClick={onBack}>
         ← back to {backLabel}
       </button>
       <h1 className="display detail-title">
@@ -59,24 +80,48 @@ export function ProjectView({ project, onBack, backLabel }: { project: string; o
       <div className="detail-meta">
         <span className="detail-path">~/{project}</span>
         <div className="detail-tools">
-          <button className="quiet-btn" disabled={saving === "rename"} onClick={() => void onRename()}>
-            rename
-          </button>
-          <label className="detail-file">
-            files under
-            <select
-              value={eng.id}
-              disabled={saving === "engagement"}
-              onChange={(event) => void onEngChange(event.target.value)}
+          {renaming ? (
+            <form
+              className="rename-editor"
+              onSubmit={(event) => void saveRename(event)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && !renameSaving) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  cancelRename()
+                }
+              }}
             >
-              {t.engs.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-              <option value="__new__">+ new engagement…</option>
-            </select>
-          </label>
+              <label>
+                project name
+                <input
+                  ref={renameInputRef}
+                  type="text"
+                  value={renameDraft}
+                  maxLength={80}
+                  disabled={renameSaving}
+                  onChange={(event) => {
+                    setRenameDraft(event.target.value)
+                    setRenameError(null)
+                  }}
+                />
+              </label>
+              <div className="rename-editor-actions">
+                <button type="submit" disabled={renameSaving}>
+                  {renameSaving ? "saving…" : "save"}
+                </button>
+                <button type="button" disabled={renameSaving} onClick={cancelRename}>
+                  cancel
+                </button>
+              </div>
+              {renameError ? <p role="alert">{renameError}</p> : null}
+            </form>
+          ) : (
+            <button ref={renameButtonRef} type="button" className="quiet-btn" onClick={beginRename}>
+              rename
+            </button>
+          )}
+          <EngagementSelect project={project} label="engagement" showLabel className="detail-file" />
         </div>
       </div>
       <div className="facts">

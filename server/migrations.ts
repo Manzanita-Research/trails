@@ -118,4 +118,16 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
       CREATE INDEX day_jobs_available ON day_summary_jobs(available_at);
     `,
   },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE settings ADD COLUMN onboarding_version INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE settings ADD COLUMN hub_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:7412/';
+    `,
+  },
 ]
