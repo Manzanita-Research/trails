@@ -145,6 +145,7 @@ export function ThreadsView() {
               <span className="text">{item.text}</span>
               <button
                 className="del"
+                aria-label="delete note"
                 title="let it go"
                 disabled={saving === item.id}
                 onClick={() => void deletePocket(item.id)}

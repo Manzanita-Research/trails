@@ -18,6 +18,13 @@ window.resizeTo(1440, 900)
 
 expect.extend(matchers)
 
+// Happy DOM exposes dialog APIs but does not translate Escape key presses into native cancel events.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented) return
+  const dialog = document.querySelector<HTMLDialogElement>("dialog[open]")
+  if (dialog) dialog.dispatchEvent(new Event("cancel", { cancelable: true }))
+})
+
 const originalFetch = globalThis.fetch
 
 afterEach(() => {
