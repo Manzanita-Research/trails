@@ -29,6 +29,30 @@ trails collect --once [--server URL] [--device-id ID] [--device-name NAME] [--st
 
 Runs one collection pass and exits. Without overrides it reads the installed collector configuration. The hub uses the same command to collect its own sessions.
 
+## Capture Midjourney generations (experimental)
+
+```text
+trails capture midjourney [--job JOB_ID ...] [--project ABSOLUTE_PATH]
+  [--since ISO] [--limit 1..50] [--dry-run]
+  [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
+```
+
+`--job` is the immediate agent-driven path. It requires `--project`, captures only the named successful generation or variation, and leaves the reconciliation cursor unchanged:
+
+```sh
+trails capture midjourney --job JOB_ID --project /absolute/path/to/project
+```
+
+Without `--job`, the command repairs history strictly after the saved `(enqueue_time, id)` cursor. The first repair requires a bounded start:
+
+```sh
+trails capture midjourney --since 2026-08-03T17:00:00.000Z --limit 50
+```
+
+This integration is experimental because Midjourney has no supported public history API. It uses a short-lived isolated `ego-browser` task with the user's existing login, fails closed on authentication or response drift, and stores only validated provider fields plus four offline WebP thumbnails. It never exports cookies, browser storage, authorization headers, account fields, raw responses, or CDN URLs. `--dry-run` uploads nothing, saves no state, and prints only source, count, image, and cursor facts.
+
+The scheduled collector does not run Midjourney capture.
+
 ## Serve
 
 ```text
