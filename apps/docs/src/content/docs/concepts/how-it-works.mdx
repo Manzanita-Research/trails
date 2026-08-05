@@ -41,7 +41,7 @@ Trails renders both in one lane instead of collapsing them into wall-clock durat
 
 ## Adding spokes
 
-When work is spread across several Macs, Tailscale can privately connect them. The hub still collects its own sessions and remains canonical. Each additional spoke parses its own sessions locally and sends normalized observations to the hub every minute.
+When work is spread across several Macs, Tailscale can privately connect them. The hub still collects its own data and remains canonical. Each additional spoke parses its own coding sessions locally and sends normalized observations to the hub every minute. When capture is enabled, a collecting Mac also sends the bounded capture record and decoded image evidence described in the [privacy boundary](/concepts/privacy).
 
 The hub service still binds only to `127.0.0.1:7412`. Tailscale Serve proxies that loopback service privately; trails never listens on the LAN. Tailscale carries encrypted network traffic but does not store trails data.
 
@@ -52,6 +52,7 @@ The hub service still binds only to `127.0.0.1:7412`. Tailscale Serve proxies th
 Canonical SQLite state includes:
 
 - normalized session observations;
+- bounded capture metadata, exact minute attention, and offline image bytes;
 - project names and assignments;
 - thread and divergence-pocket state;
 - generated summaries;

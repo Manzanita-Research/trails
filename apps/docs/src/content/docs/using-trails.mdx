@@ -12,11 +12,14 @@ Trails organizes agent-heavy work around the questions you ask when memory gets 
 
 The day view is the primary reading surface. Each project gets one timeline lane:
 
-- A pale wash shows when agents were active.
-- Solid color marks show minutes when you were present and steering.
-- The story below the timeline summarizes each project's contribution to the day.
+- A pale wash shows when coding agents were active.
+- Solid color marks show coding minutes when you were present and steering.
+- Outlined intervals show captured meetings; points show captured image generations.
+- The story below the timeline keeps coding summaries, meeting notes, and image evidence together in time order.
 
-Use the previous and next controls to page through days. Trails uses a human-shaped day boundary: work after midnight can remain attached to the evening it grew from rather than being split at 00:00.
+Captured records without an explicit project appear under **creative elsewhere**. They remain part of the day without inventing a project page. Image generations appear only as evidence tiles inside the story; project themes remain automatic context.
+
+Use the previous and next controls to page through days. Trails uses a human-shaped day boundary: work after midnight can remain attached to the evening it grew from rather than being split at 00:00. The attention halo applies only to coding prompts; capture intervals and points count at their exact minutes, with overlaps counted once.
 
 ## Week
 
@@ -41,4 +44,4 @@ Projects are discovered from session working directories and repository context.
 
 ## When a summary is missing
 
-Summary generation waits for changed sessions to settle before processing them. If the optional inference relay is unavailable, trails continues to work and uses the first prompt as a fallback. Timeline activity and normalized session observations do not depend on generated prose.
+Summary generation waits for changed coding sessions to settle before processing them. If the optional inference relay is unavailable, trails continues to work and uses the first prompt as a fallback. Timeline activity and normalized session observations do not depend on generated prose. Capture cards render directly from bounded stored fields and do not enter summary inference.

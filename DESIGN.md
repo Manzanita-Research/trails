@@ -16,7 +16,7 @@ trails takes its color from a Northern California coastal day — pre-dawn indig
 The character is contemporary California calm: simple like the original prototype, crisp like fine typesetting, warm through color choice alone. Days live on discrete pages you page through quickly (yesterday, the day before) so how your time changed is one keystroke away; the week stacks the same strips for the ritual review. No kitsch, no retro print, no productivity-app scorekeeping.
 
 **Key Characteristics:**
-- Flat everything: solid colors, no gradients, no shadows, no textures, no imagery
+- Flat everything: solid colors, no gradients, no shadows, no textures, no decorative imagery
 - Sky-derived project colors are the only chroma; the chrome around them is ink on fog
 - One lane per project: a pale wash spans agent-active time, solid full-color marks overlay where you were present
 - Dense timeline: lanes ~14–16px tall with small gaps, like the original prototype — the day reads at a glance
@@ -46,6 +46,7 @@ Warm neutral ground, dusk ink, and a small set of coastal project colors; chroma
 **The Folded Sky Rule.** The palette is the coastal day folded into the interface: project colors come from sky moments (dawn, marine layer, golden hour, dusk) and no hue outside that family enters the system.
 **The Tint Rule.** In a timeline lane, a pale wash (~20–28% of the project color, slightly slimmer) spans all agent-active time, and full-strength solid marks layer on top of it wherever the person was actually present — the prototype's layered grammar, kept. Agent time with no presence reads as bare wash. No second encoding — no icons, hatching, or badges.
 **The No Scenery Rule.** No photography, illustration, texture, or gradient behind or around data — ever.
+**Evidence images.** Captured imagery may appear inside a bounded content record as source evidence. It never sits behind or around the timeline, data, or chrome, and it never becomes project-world scenery.
 
 ## Typography
 

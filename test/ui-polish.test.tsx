@@ -3,8 +3,15 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createApp } from "../server/app"
 import { openDatabase, type TrailsDb } from "../server/db"
-import { BootstrapV1Schema, decodeExact, type BootstrapV1, type IngestRequestV2 } from "../shared/protocol"
+import {
+  BootstrapV1Schema,
+  decodeExact,
+  type BootstrapV1,
+  type IngestCapturesRequestV1,
+  type IngestRequestV2,
+} from "../shared/protocol"
 import { App } from "../src/App"
+import { attentionMinutes, buildDays, CREATIVE_ELSEWHERE_PROJECT } from "../src/lib/data"
 
 const origin = "http://trails.test"
 const fixedNow = Date.parse("2026-07-01T19:30:00.000Z")
@@ -12,6 +19,7 @@ const activeProject = "code/acme/very-long-project-name"
 const inertProject = "code/acme/inert-project"
 const originalFetch = globalThis.fetch
 const originalPrompt = window.prompt
+const originalScrollTo = globalThis.scrollTo
 const databases = new Set<TrailsDb>()
 
 interface Harness {
@@ -54,6 +62,135 @@ const sessions: IngestRequestV2 = {
       firstPrompt: null,
       activity: [[Math.floor(Date.parse("2026-07-01T17:00:00.000Z") / 60_000), 2, 0]],
       digest: null,
+    },
+  ],
+}
+const captureBytes = Buffer.from("RIFF\x08\x00\x00\x00WEBPsynthetic").toString("base64")
+function pacificUtcMinute(date: string, minute: number): number {
+  const hour = String(Math.floor(minute / 60)).padStart(2, "0")
+  const minuteOfHour = String(minute % 60).padStart(2, "0")
+  return Math.floor(Date.parse(`${date}T${hour}:${minuteOfHour}:00-07:00`) / 60_000)
+}
+const captures: IngestCapturesRequestV1 = {
+  protocolVersion: 1,
+  device: { id: "source-mac", name: "Source Mac" },
+  captures: [
+    {
+      source: "midjourney",
+      sourceRecordId: "generation-parent",
+      project: null,
+      projectHint: "Active project",
+      title: "Forest study",
+      startedAt: "2026-07-01T16:30:00.000Z",
+      endedAt: null,
+      summaryInput: "A mossy trail through redwoods",
+      attentionMinutes: [pacificUtcMinute("2026-07-01", 510)],
+      payload: {
+        eventType: "imagine",
+        jobType: "generation",
+        parentSourceRecordId: null,
+        parentGrid: null,
+      },
+      images: Array.from({ length: 4 }, (_, index) => ({
+        index,
+        mime: "image/webp" as const,
+        width: 640,
+        height: 640,
+        bytes: captureBytes,
+      })),
+    },
+    {
+      source: "midjourney",
+      sourceRecordId: "generation-child",
+      project: "/Users/tester/code/acme/very-long-project-name",
+      projectHint: "Active project",
+      title: "Forest study variation",
+      startedAt: "2026-07-01T16:50:00.000Z",
+      endedAt: null,
+      summaryInput: "The same trail at blue hour",
+      attentionMinutes: [pacificUtcMinute("2026-07-01", 530)],
+      payload: {
+        eventType: "variation",
+        jobType: "generation",
+        parentSourceRecordId: "generation-parent",
+        parentGrid: 1,
+      },
+      images: Array.from({ length: 4 }, (_, index) => ({
+        index,
+        mime: "image/webp" as const,
+        width: 640,
+        height: 640,
+        bytes: captureBytes,
+      })),
+    },
+    {
+      source: "midjourney",
+      sourceRecordId: "generation-orphan",
+      project: "/Users/tester/code/acme/very-long-project-name",
+      projectHint: "Active project",
+      title: "Earlier variation",
+      startedAt: "2026-07-01T17:10:00.000Z",
+      endedAt: null,
+      summaryInput: "A variation whose parent belongs to an earlier day",
+      attentionMinutes: [pacificUtcMinute("2026-07-01", 550)],
+      payload: {
+        eventType: "variation",
+        jobType: "generation",
+        parentSourceRecordId: "generation-from-earlier-work",
+        parentGrid: 2,
+      },
+      images: Array.from({ length: 4 }, (_, index) => ({
+        index,
+        mime: "image/webp" as const,
+        width: 640,
+        height: 640,
+        bytes: captureBytes,
+      })),
+    },
+    {
+      source: "granola",
+      sourceRecordId: "meeting-unassigned",
+      project: null,
+      projectHint: "Studio",
+      title: "Creative review",
+      startedAt: "2026-07-01T17:30:00.000Z",
+      endedAt: "2026-07-01T18:00:00.000Z",
+      summaryInput: "Reviewed the current visual direction and chose the quieter composition.",
+      attentionMinutes: Array.from({ length: 30 }, (_, index) => pacificUtcMinute("2026-07-01", 570 + index)),
+      payload: {
+        attendeeCount: 3,
+      },
+      images: [],
+    },
+    {
+      source: "granola",
+      sourceRecordId: "meeting-point",
+      project: null,
+      projectHint: "Studio",
+      title: "Quick note",
+      startedAt: "2026-07-01T18:10:00.000Z",
+      endedAt: null,
+      summaryInput: "Captured one exact point without inventing a scheduled interval.",
+      attentionMinutes: [pacificUtcMinute("2026-07-01", 610)],
+      payload: {
+        attendeeCount: 0,
+      },
+      images: [],
+    },
+    {
+      source: "granola",
+      sourceRecordId: "prior-project-note",
+      project: "/Users/tester/code/acme/very-long-project-name",
+      projectHint: "Active project",
+      title: "Prior project note",
+      startedAt: "2026-06-30T18:10:00.000Z",
+      endedAt: null,
+      summaryInput: "A capture-only project day remains connected to its existing project.",
+      attentionMinutes: [pacificUtcMinute("2026-06-30", 610)],
+      payload: {
+        attendeeCount: 0,
+      },
+      images: [],
     },
   ],
 }
@@ -126,6 +263,12 @@ async function makeLoadedHarness({
       )
       .run("2026-07-01", activeProject, 6, "synthetic", "The active project gained a clear beta journey.", fixedNow)
   }
+  response = await serverRequest("/api/captures", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(captures),
+  })
+  if (response.status !== 200) throw new Error(await response.text())
   response = await serverRequest("/api/settings", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -171,10 +314,64 @@ async function makeLoadedHarness({
 }
 
 afterEach(() => {
+  globalThis.scrollTo = originalScrollTo
+
   globalThis.fetch = originalFetch
   window.prompt = originalPrompt
   for (const database of databases) database.close()
   databases.clear()
+})
+describe("ambient day-weave arithmetic", () => {
+  test("discovers capture-only days and folds exact capture minutes at the workday boundary", () => {
+    const captureRows: BootstrapV1["captures"] = [
+      {
+        id: "capture-before-boundary",
+        source: "granola",
+        project: null,
+        projectHint: "Studio",
+        title: "Early review",
+        startedAt: "2026-07-02T05:00:00.000Z",
+        endedAt: null,
+        summaryInput: "A bounded note",
+        attentionMinutes: [["2026-07-02", 300]],
+        updatedAt: "2026-07-02T05:00:00.000Z",
+        payload: { attendeeCount: 1 },
+        images: [],
+      },
+      {
+        id: "capture-after-boundary",
+        source: "midjourney",
+        project: "code/acme/art",
+        projectHint: "Art",
+        title: "Morning study",
+        startedAt: "2026-07-02T10:00:00.000Z",
+        endedAt: null,
+        summaryInput: "A bounded prompt",
+        attentionMinutes: [["2026-07-02", 600]],
+        updatedAt: "2026-07-02T10:00:00.000Z",
+        payload: {
+          eventType: "imagine",
+          jobType: "generation",
+          parentGrid: null,
+          hasParent: false,
+          parentCaptureId: null,
+        },
+        images: [],
+      },
+    ]
+
+    const days = buildDays([], captureRows, 6)
+    expect(days.map(([date]) => date)).toEqual(["2026-07-02", "2026-07-01"])
+    expect(days[0]![1].get("code/acme/art")?.midjourney).toEqual(new Set([600]))
+    expect(days[1]![1].get(CREATIVE_ELSEWHERE_PROJECT)?.granola).toEqual(new Set([1740]))
+    expect(days[1]![1].get(CREATIVE_ELSEWHERE_PROJECT)?.sessions.size).toBe(0)
+  })
+
+  test("unions source attention once while applying halo only to coding", () => {
+    expect(attentionMinutes([new Set([100, 120])], [new Set([110, 111, 140])], 10)).toBe(42)
+    expect(attentionMinutes([new Set([100])], [new Set([100])], 0)).toBe(1)
+    expect(attentionMinutes([], [new Set([200, 201])], 15)).toBe(2)
+  })
 })
 
 describe("beta interaction clarity", () => {
@@ -190,6 +387,13 @@ describe("beta interaction clarity", () => {
       ),
     ).toBeTruthy()
     expect(screen.queryByRole("button", { name: "organize projects" })).toBeNull()
+    expect(
+      screen.getByRole("button", {
+        name: /very-long-project-name; activity from .*; jump to day story\./,
+      }),
+    ).toBeTruthy()
+    expect(screen.getByRole("button", { name: /inert-project; activity from .*; jump to day story\./ })).toBeTruthy()
+    expect(screen.getByRole("button", { name: /creative elsewhere; activity from .*; jump to day story\./ })).toBeTruthy()
 
     const settingsAction = screen.getByRole("button", { name: "settings" })
     await user.click(settingsAction)
@@ -315,15 +519,84 @@ describe("beta interaction clarity", () => {
     expect(screen.queryByText(/unreachable/i)).toBeNull()
   })
 
-  test("explains when indexed activity is waiting for summaries", async () => {
+  test("weaves capture evidence through day, week, and existing project views", async () => {
+    await makeLoadedHarness()
+    const user = userEvent.setup()
+    render(<App />)
+
+    const timeline = await screen.findByRole("group", { name: "activity timeline" })
+    const dayFacts = screen.getAllByText((_, element) => element?.classList.contains("facts") === true)[0]!
+    expect(dayFacts.textContent).toContain("attention 1h 52m")
+    expect(timeline.querySelectorAll('[data-kind="meeting"]')).toHaveLength(2)
+    expect(timeline.querySelectorAll('[data-kind="image"]')).toHaveLength(3)
+    const meetingMark = timeline.querySelector('[data-kind="meeting"]')
+    if (!(meetingMark instanceof SVGElement)) throw new Error("expected a meeting mark")
+    await user.hover(userEventElement(meetingMark))
+    expect(await screen.findByText(/meeting · 9:30 am–10:00 am/)).toBeTruthy()
+
+    const creativeLane = screen.getByRole("button", { name: /creative elsewhere; activity from/ })
+    const scrollCalls: unknown[][] = []
+    globalThis.scrollTo = ((...args: unknown[]) => scrollCalls.push(args)) as typeof scrollTo
+    await user.click(userEventElement(creativeLane))
+    expect(scrollCalls.length).toBeGreaterThan(0)
+    scrollCalls.length = 0
+    creativeLane.focus()
+    await user.keyboard("{Enter}")
+    expect(scrollCalls.length).toBeGreaterThan(0)
+
+    const images = screen.getAllByRole("img", { name: /Forest study, image/ })
+    expect(images).toHaveLength(4)
+    expect(images.every((image) => image.getAttribute("loading") === "lazy")).toBe(true)
+    const parentCard = screen.getByRole("heading", { name: "Forest study" }).closest("article")
+    if (!(parentCard instanceof HTMLElement)) throw new Error("expected the parent capture card")
+    const originalScrollIntoView = Element.prototype.scrollIntoView
+    let lineageTarget: string | null = null
+    Element.prototype.scrollIntoView = function () {
+      lineageTarget = this.id
+    }
+    try {
+      await user.click(screen.getByRole("button", { name: "view parent generation" }))
+      expect(lineageTarget === parentCard.id).toBe(true)
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView
+    }
+    expect(screen.queryByRole("link", { name: "open in Granola" })).toBeNull()
+    expect(screen.getByText("variation from earlier work")).toBeTruthy()
+    expect(screen.getByText("10:10 · 0 attendees")).toBeTruthy()
+    const creativeElsewhere = document.querySelector(".proj-cap-static")
+    if (!(creativeElsewhere instanceof HTMLElement)) throw new Error("expected the capture-only project label")
+    expect(creativeElsewhere.classList.contains("proj-cap-static")).toBe(true)
+    expect(screen.queryByRole("button", { name: "creative elsewhere" })).toBeNull()
+
+    await user.keyboard("{ArrowLeft}")
+    expect(await screen.findByRole("heading", { name: "Tuesday, June 30" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "very-long-project-name" })).toBeTruthy()
+    await user.keyboard("{ArrowRight}")
+    expect(await screen.findByRole("heading", { name: "Wednesday, July 1" })).toBeTruthy()
+
+    await user.click(screen.getByRole("button", { name: "week" }))
+    const weekFacts = (await screen.findAllByText((_, element) => element?.classList.contains("facts") === true))[0]!
+    expect(weekFacts.textContent).toContain("attention 1h 53m")
+    expect([...document.querySelectorAll(".wk-eng .name")].map((element) => element.textContent)).toContain("elsewhere")
+    expect([...document.querySelectorAll(".wk-eng")].map((element) => element.textContent)).toContain("elsewhere32m")
+
+    await user.click(screen.getByRole("button", { name: "days" }))
+    await user.click(screen.getByRole("button", { name: "very-long-project-name" }))
+    expect(await screen.findByRole("heading", { name: "very-long-project-name" })).toBeTruthy()
+    const projectFacts = screen.getAllByText((_, element) => element?.classList.contains("facts") === true)[0]!
+    expect(projectFacts.textContent).toContain("attention 1h 22m")
+    expect(document.querySelectorAll('.detail-strip [data-kind="image"]')).toHaveLength(2)
+  })
+
+  test("keeps ambient evidence visible while coding summaries are pending", async () => {
     await makeLoadedHarness({ withDaySummary: false })
     render(<App />)
 
-    expect(await screen.findByText("Project summaries haven’t arrived yet.")).toBeTruthy()
     expect(
-      screen.getByText("Your indexed activity is already visible above. Summaries will appear here when they’re ready."),
-    ).toBeTruthy()
-    expect(screen.queryByRole("button", { name: /jump to day summary/ })).toBeNull()
+      (await screen.findAllByText("Coding activity is visible above. Its project summary hasn’t arrived yet.")).length,
+    ).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText("Creative review")).toBeTruthy()
+    expect(screen.getAllByRole("button", { name: /jump to day story/ }).length).toBeGreaterThanOrEqual(1)
   })
 
   test("keeps all timeline geometry and full accessible labels inside 390 pixels", async () => {
@@ -338,7 +611,7 @@ describe("beta interaction clarity", () => {
       expect(screen.getByText("very-long-pro…")).toBeTruthy()
       expect(
         screen.getByRole("button", {
-          name: /very-long-project-name; activity from .*; jump to day summary\./,
+          name: /very-long-project-name; activity from .*; jump to day story\./,
         }),
       ).toBeTruthy()
       for (const element of timeline.querySelectorAll("line, rect, text")) {

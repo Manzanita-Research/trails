@@ -10,6 +10,7 @@ import {
   fmtClock,
   fmtDur,
   nameOf,
+  orgOf,
   prepSessions,
 } from "./lib/data"
 import { TrailsCtx, type Trails } from "./lib/ctx"
@@ -36,6 +37,7 @@ interface TooltipState {
   readonly project: string
   readonly start: number
   readonly end: number
+  readonly kind: "agent" | "you" | "meeting" | "image"
   readonly left: number
   readonly top: number
 }
@@ -86,7 +88,11 @@ function LoadedApp({
     () => (bootstrap.indexedAt === null ? null : new Date(bootstrap.indexedAt).getTime()),
     [bootstrap.indexedAt],
   )
-  const days = useMemo(() => buildDays(sessions, boundary), [sessions, boundary])
+  const days = useMemo(
+    () => buildDays(sessions, bootstrap.captures, boundary),
+    [sessions, bootstrap.captures, boundary],
+  )
+  const codingProjects = useMemo(() => new Set(sessions.map((session) => session.project)), [sessions])
   const topOrgs = useMemo(() => computeTopOrgs(sessions), [sessions])
   const engs = useMemo(
     () => engagementList(topOrgs, customEngagements, assignments),
@@ -95,8 +101,11 @@ function LoadedApp({
   const orgByProject = useMemo(() => {
     const projects = new Map<string, string>()
     for (const session of sessions) projects.set(session.project, session.org)
+    for (const capture of bootstrap.captures) {
+      if (capture.project) projects.set(capture.project, orgOf(capture.project))
+    }
     return projects
-  }, [sessions])
+  }, [sessions, bootstrap.captures])
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
 
   useEffect(() => {
@@ -121,6 +130,7 @@ function LoadedApp({
 
   const trails: Trails = {
     sessions,
+    captures: bootstrap.captures,
     summaries: bootstrap.summaries,
     nowTime,
     indexedAt,
@@ -131,7 +141,9 @@ function LoadedApp({
     engs,
     engOf: (project) => engagementOf(project, orgByProject.get(project) ?? "(unknown)", assignments, engs),
     dispName: (project) => names[project] ?? nameOf(project),
+    hasCodingProject: (project) => codingProjects.has(project),
     openProject: (project) => {
+      if (!codingProjects.has(project)) return
       if (view === "settings") {
         setProjectBackView("settings")
       } else if (view !== "project") {
@@ -168,22 +180,28 @@ function LoadedApp({
     sessSummary: (id) => bootstrap.summaries.sessions[id],
     daySummary: (date, project) => bootstrap.summaries.days[`${date}|${project}`],
   }
-
   const onMove = (event: React.MouseEvent) => {
-    const hit = (event.target as Element).closest?.("rect.hit") as SVGRectElement | null
+    const hit = (event.target as Element).closest?.(".hit") as SVGElement | null
     if (!hit) {
       setTooltip(null)
       return
     }
-    const { p: project, a, b } = hit.dataset
+    const { p: project, a, b, kind } = hit.dataset
     const start = Number(a)
     const end = Number(b)
-    if (!project || !Number.isFinite(start) || !Number.isFinite(end)) {
+    if (
+      !project ||
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      !kind ||
+      !["agent", "you", "meeting", "image"].includes(kind)
+    ) {
       setTooltip(null)
       return
     }
     setTooltip({
       project,
+      kind: kind as TooltipState["kind"],
       start,
       end,
       left: Math.min(event.clientX + 14, innerWidth - 340),
@@ -252,15 +270,23 @@ function LoadedApp({
         {tooltip && (
           <div className="tooltip" style={{ left: tooltip.left, top: tooltip.top }}>
             <span className="sq" aria-hidden="true" style={{ background: engColor(trails.engOf(tooltip.project)) }} />
-            <b>{trails.dispName(tooltip.project)}</b> · {fmtClock(tooltip.start)}–{fmtClock(tooltip.end + 1)} ·{" "}
-            {fmtDur(tooltip.end - tooltip.start + 1)}
+            <b>{trails.dispName(tooltip.project)}</b> ·{" "}
+            {tooltip.kind === "image"
+              ? `image generation at ${fmtClock(tooltip.start)}`
+              : `${tooltip.kind === "meeting" ? "meeting · " : ""}${fmtClock(tooltip.start)}–${fmtClock(
+                  tooltip.end + 1,
+                )} · ${fmtDur(tooltip.end - tooltip.start + 1)}`}
           </div>
         )}
         <span className="sr-only" aria-live="polite">
           {tooltip
-            ? `${trails.dispName(tooltip.project)}; ${fmtClock(tooltip.start)} to ${fmtClock(
-                tooltip.end + 1,
-              )}; ${fmtDur(tooltip.end - tooltip.start + 1)}`
+            ? `${trails.dispName(tooltip.project)}; ${
+                tooltip.kind === "image"
+                  ? `image generation at ${fmtClock(tooltip.start)}`
+                  : `${tooltip.kind === "meeting" ? "meeting; " : ""}${fmtClock(tooltip.start)} to ${fmtClock(
+                      tooltip.end + 1,
+                    )}; ${fmtDur(tooltip.end - tooltip.start + 1)}`
+              }`
             : ""}
         </span>
       </div>

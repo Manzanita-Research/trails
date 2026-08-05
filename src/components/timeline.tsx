@@ -38,7 +38,8 @@ export function HourGrid({
   return <>{items}</>
 }
 
-// agent wash underneath, solid user marks on top; data attrs feed the shared tooltip
+// coding wash and attention, exact meeting outlines, and image-generation points
+// share one project-colored lane; data attrs feed the shared tooltip
 export function LaneMarks({
   data,
   X,
@@ -86,6 +87,40 @@ export function LaneMarks({
           height={laneH}
           fill={color}
         />
+      ))}
+      {runsOf(data.granola).map(([a, b]) => (
+        <rect
+          key={`g${a}`}
+          className="hit"
+          data-p={project}
+          data-a={a}
+          data-b={b}
+          data-kind="meeting"
+          x={X(a)}
+          y={y + 1}
+          width={Math.max(3, X(b + 1) - X(a))}
+          height={laneH - 2}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.5}
+        />
+      ))}
+      {[...data.midjourney].map((minute) => (
+        <g key={`m${minute}`}>
+          <circle cx={X(minute)} cy={y + laneH / 2} r={3.5} fill={color} />
+          <rect
+            className="hit"
+            data-p={project}
+            data-a={minute}
+            data-b={minute}
+            data-kind="image"
+            x={X(minute) - 5}
+            y={y}
+            width={10}
+            height={laneH}
+            fill="transparent"
+          />
+        </g>
       ))}
     </>
   )

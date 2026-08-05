@@ -1,19 +1,20 @@
 import {
+  attentionMinutes,
   credit,
   engColor,
+  firstMinuteOf,
   fmtCredits,
   fmtDur,
-  focusMinutes,
   fullDate,
   labelDate,
-  runsOf,
+  lastMinuteOf,
   shiftDate,
   workdayToday,
   type DayMap,
   type Engagement,
 } from "../lib/data"
 import { useTrails } from "../lib/ctx"
-import { TicksRow, useWidth } from "./timeline"
+import { LaneMarks, TicksRow, useWidth } from "./timeline"
 import { ActivityKey } from "./ActivityKey"
 
 const STRIP_H = 34
@@ -41,10 +42,10 @@ function WeekStrip({ projMap, widthPx }: { projMap: DayMap; widthPx: number }) {
   const t = useTrails()
   const B = t.boundary * 60
   const X = (min: number) => ((min - B) / 1440) * widthPx
-  const spans: [string, { min: number; max: number }][] = [...projMap.entries()].map(([p, d]) => {
-    const all = [...d.all]
-    return [p, { min: Math.min(...all), max: Math.max(...all) }]
-  })
+  const spans: [string, { min: number; max: number }][] = [...projMap.entries()].map(([project, data]) => [
+    project,
+    { min: firstMinuteOf(data), max: lastMinuteOf(data) },
+  ])
   const lanes = packLanes(spans)
   const laneCount = Math.max(...[...lanes.values()]) + 1
   const ys = laneYs(laneCount)
@@ -55,14 +56,15 @@ function WeekStrip({ projMap, widthPx }: { projMap: DayMap; widthPx: number }) {
         const y = ys[lanes.get(project) ?? 0]
         const color = engColor(t.engOf(project))
         return (
-          <g key={project}>
-            {runsOf(data.all).map(([a, b]) => (
-              <rect key={`a${a}`} x={X(a)} y={y} width={Math.max(1.5, X(b + 1) - X(a))} height={BAR_H} fill={color} opacity={0.22} />
-            ))}
-            {runsOf(data.user).map(([a, b]) => (
-              <rect key={`u${a}`} x={X(a)} y={y} width={Math.max(2, X(b + 1) - X(a))} height={BAR_H} fill={color} />
-            ))}
-          </g>
+          <LaneMarks
+            key={project}
+            data={data}
+            X={X}
+            y={y}
+            laneH={BAR_H}
+            color={color}
+            project={project}
+          />
         )
       })}
     </svg>
@@ -92,7 +94,13 @@ export function WeekView() {
       const dates = Array.from({ length: 7 }, (_, i) => shiftDate(monday, i))
       const dayRows = dates.map((date) => {
         const projMap = dayLookup.get(date)
-        const focus = projMap ? focusMinutes([...projMap.values()].map((p) => p.user), t.halo) : 0
+        const focus = projMap
+          ? attentionMinutes(
+              [...projMap.values()].map((project) => project.user),
+              [...projMap.values()].flatMap((project) => [project.granola, project.midjourney]),
+              t.halo,
+            )
+          : 0
         const agent = projMap ? new Set([...projMap.values()].flatMap((p) => [...p.all])).size : 0
         return { date, projMap, focus, agent, credit: credit(focus) }
       })
@@ -105,15 +113,20 @@ export function WeekView() {
       const perEng = new Map<string, { eng: Engagement; mins: number; credits: number }>()
       for (const { projMap } of dayRows) {
         if (!projMap) continue
-        const byEng = new Map<string, { eng: Engagement; sets: Set<number>[] }>()
+        const byEng = new Map<
+          string,
+          { eng: Engagement; coding: Set<number>[]; captures: Set<number>[] }
+        >()
         for (const [project, data] of projMap) {
           const eng = t.engOf(project)
           engById.set(eng.id, eng)
-          if (!byEng.has(eng.id)) byEng.set(eng.id, { eng, sets: [] })
-          byEng.get(eng.id)!.sets.push(data.user)
+          if (!byEng.has(eng.id)) byEng.set(eng.id, { eng, coding: [], captures: [] })
+          const row = byEng.get(eng.id)!
+          row.coding.push(data.user)
+          row.captures.push(data.granola, data.midjourney)
         }
-        for (const [id, { eng, sets }] of byEng) {
-          const f = focusMinutes(sets, t.halo)
+        for (const [id, { eng, coding, captures }] of byEng) {
+          const f = attentionMinutes(coding, captures, t.halo)
           const cur = perEng.get(id) ?? { eng, mins: 0, credits: 0 }
           cur.mins += f
           cur.credits += credit(f)

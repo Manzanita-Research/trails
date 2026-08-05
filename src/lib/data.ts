@@ -1,11 +1,12 @@
 // pure data helpers — everything derived from the scan lives here, ui-free
 import { computeTopOrgs, localParts, nameOf, normalizeCwd, orgOf, shiftDate, workdayOf } from "../../shared/domain"
-import type { BootstrapSessionV1, BootstrapV1 } from "../../shared/protocol"
+import type { BootstrapCaptureV1, BootstrapSessionV1, BootstrapV1 } from "../../shared/protocol"
 
 export { computeTopOrgs, nameOf, normalizeCwd, orgOf, shiftDate }
 
 export type RawSession = BootstrapSessionV1
 export type Summaries = BootstrapV1["summaries"]
+export type Capture = BootstrapCaptureV1
 
 export type Session = RawSession & {
   idx: number
@@ -19,10 +20,19 @@ export interface Engagement {
   slot: number | null
 }
 
+export interface CaptureSpan {
+  capture: Capture
+  min: number
+  max: number
+}
+
 export interface DayProject {
   all: Set<number>
   user: Set<number>
+  granola: Set<number>
+  midjourney: Set<number>
   sessions: Map<number, { min: number; max: number }>
+  captures: Map<string, CaptureSpan>
 }
 
 export type DayMap = Map<string, DayProject>
@@ -134,47 +144,98 @@ export function fmtCredits(n: number): string {
   return whole ? `${whole}${frac}` : frac || "0"
 }
 
-export function buildDays(sessions: Session[], boundary: number): [string, DayMap][] {
+export const CREATIVE_ELSEWHERE_PROJECT = "creative elsewhere"
+
+function emptyDayProject(): DayProject {
+  return {
+    all: new Set(),
+    user: new Set(),
+    granola: new Set(),
+    midjourney: new Set(),
+    sessions: new Map(),
+    captures: new Map(),
+  }
+}
+
+export function firstMinuteOf(project: DayProject): number {
+  return Math.min(...project.all, ...project.granola, ...project.midjourney)
+}
+
+export function lastMinuteOf(project: DayProject): number {
+  return Math.max(...project.all, ...project.granola, ...project.midjourney)
+}
+
+export function buildDays(
+  sessions: ReadonlyArray<Session>,
+  captures: ReadonlyArray<Capture>,
+  boundary: number,
+): [string, DayMap][] {
   const B = boundary * 60
   const days = new Map<string, DayMap>()
-  for (const s of sessions) {
-    for (const [date, minute, , u] of s.activity) {
+  const projectFor = (workday: string, project: string): DayProject => {
+    let day = days.get(workday)
+    if (!day) days.set(workday, (day = new Map()))
+    let value = day.get(project)
+    if (!value) day.set(project, (value = emptyDayProject()))
+    return value
+  }
+  for (const session of sessions) {
+    for (const [date, minute, , userEvents] of session.activity) {
       const workday = minute < B ? shiftDate(date, -1) : date
-      const dispMin = minute < B ? minute + 1440 : minute
-      let day = days.get(workday)
-      if (!day) days.set(workday, (day = new Map()))
-      let proj = day.get(s.project)
-      if (!proj) day.set(s.project, (proj = { all: new Set(), user: new Set(), sessions: new Map() }))
-      proj.all.add(dispMin)
-      if (u > 0) proj.user.add(dispMin)
-      let span = proj.sessions.get(s.idx)
-      if (!span) proj.sessions.set(s.idx, (span = { min: dispMin, max: dispMin }))
-      span.min = Math.min(span.min, dispMin)
-      span.max = Math.max(span.max, dispMin)
+      const displayMinute = minute < B ? minute + 1440 : minute
+      const project = projectFor(workday, session.project)
+      project.all.add(displayMinute)
+      if (userEvents > 0) project.user.add(displayMinute)
+      let span = project.sessions.get(session.idx)
+      if (!span) project.sessions.set(session.idx, (span = { min: displayMinute, max: displayMinute }))
+      span.min = Math.min(span.min, displayMinute)
+      span.max = Math.max(span.max, displayMinute)
+    }
+  }
+  for (const capture of captures) {
+    const projectName = capture.project ?? CREATIVE_ELSEWHERE_PROJECT
+    for (const [date, minute] of capture.attentionMinutes) {
+      const workday = minute < B ? shiftDate(date, -1) : date
+      const displayMinute = minute < B ? minute + 1440 : minute
+      const project = projectFor(workday, projectName)
+      project[capture.source].add(displayMinute)
+      let span = project.captures.get(capture.id)
+      if (!span) {
+        project.captures.set(capture.id, (span = { capture, min: displayMinute, max: displayMinute }))
+      }
+      span.min = Math.min(span.min, displayMinute)
+      span.max = Math.max(span.max, displayMinute)
     }
   }
   return [...days.entries()].sort((a, b) => b[0].localeCompare(a[0]))
 }
 
-// union length of user-minutes each expanded ±halo
-export function focusMinutes(userMinuteSets: Set<number>[], halo: number): number {
-  const mins = [...new Set(userMinuteSets.flatMap((set) => [...set]))].sort((a, b) => a - b)
-  if (!mins.length) return 0
+// interval union: coding points receive ±halo; capture minutes remain exact
+export function attentionMinutes(
+  codingUserSets: ReadonlyArray<ReadonlySet<number>>,
+  captureMinuteSets: ReadonlyArray<ReadonlySet<number>>,
+  halo: number,
+): number {
+  const intervals: Array<[number, number]> = []
+  for (const minutes of codingUserSets) {
+    for (const minute of minutes) intervals.push([minute - halo, minute + halo])
+  }
+  for (const minutes of captureMinuteSets) {
+    for (const minute of minutes) intervals.push([minute, minute])
+  }
+  intervals.sort((left, right) => left[0] - right[0] || left[1] - right[1])
+  if (intervals.length === 0) return 0
   let total = 0
-  let start = mins[0] - halo
-  let end = mins[0] + halo
-  for (let i = 1; i < mins.length; i++) {
-    const lo = mins[i] - halo
-    const hi = mins[i] + halo
-    if (lo <= end + 1) end = Math.max(end, hi)
+  let [start, end] = intervals[0]!
+  for (const [nextStart, nextEnd] of intervals.slice(1)) {
+    if (nextStart <= end + 1) end = Math.max(end, nextEnd)
     else {
       total += end - start + 1
-      start = lo
-      end = hi
+      start = nextStart
+      end = nextEnd
     }
   }
-  total += end - start + 1
-  return total
+  return total + end - start + 1
 }
 
 // runs of consecutive minutes → [start, end] pairs
