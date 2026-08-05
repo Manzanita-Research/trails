@@ -1,13 +1,15 @@
 import packageJson from "../package.json" with { type: "json" }
 import { Effect, Fiber } from "effect"
-import { runCollection } from "../collector/sync"
+import { runOneShotCollection } from "../collector/once"
 import { DEFAULT_STATE_PATH } from "../collector/state"
 import { parseSourceRoot } from "../collector/sources"
 import {
   configureCollector,
+  configureGranola,
   configureServer,
   loadCollectorConfig,
   loadServerConfig,
+  disableGranola,
   normalizeCollectorServer,
 } from "./config"
 import { join, resolve } from "node:path"
@@ -51,6 +53,8 @@ Commands:
   capture midjourney [--job JOB_ID ...] [--project ABSOLUTE_PATH] [--since ISO] [--limit 1..50] [--dry-run]
   configure collector --server URL [--name NAME] [--reset-device-id]
   configure server --ai-url URL --ai-token-stdin
+  configure granola --created-after ISO [--binary ABSOLUTE_PATH]
+  configure granola --disable
   backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
   install server|collector [--dry-run] [--tailscale] [--service svc:NAME]
   version`)
@@ -112,18 +116,24 @@ async function collect(args: string[]): Promise<void> {
     throw new Error("collector server and device identity are not configured")
   }
   const sourceRoots = valuesAfter(args, "--source-root")
-  const result = await Effect.runPromise(
-    runCollection({
-      server,
-      deviceId,
-      deviceName,
-      statePath: resolve(valueAfter(args, "--state") ?? DEFAULT_STATE_PATH),
-      roots: sourceRoots.length ? sourceRoots.map(parseSourceRoot) : undefined,
-    }),
-  )
-  console.log(
-    `collected ${result.uploaded}, unchanged ${result.unchanged}, ignored ${result.ignored}, revision ${result.revision ?? "unchanged"}`,
-  )
+  const result = await runOneShotCollection({
+    server,
+    deviceId,
+    deviceName,
+    statePath: resolve(valueAfter(args, "--state") ?? DEFAULT_STATE_PATH),
+    roots: sourceRoots.length ? sourceRoots.map(parseSourceRoot) : undefined,
+    granola: config?.granola ?? null,
+  })
+  if (result.sessions) {
+    console.log(
+      `collected ${result.sessions.uploaded}, unchanged ${result.sessions.unchanged}, ignored ${result.sessions.ignored}, revision ${result.sessions.revision ?? "unchanged"}`,
+    )
+  }
+  if (result.granola) {
+    console.log(
+      `collected ${result.granola.uploaded} Granola note${result.granola.uploaded === 1 ? "" : "s"}, revision ${result.granola.revision ?? "unchanged"}`,
+    )
+  }
 }
 
 async function configure(args: string[]): Promise<void> {
@@ -147,7 +157,22 @@ async function configure(args: string[]): Promise<void> {
     console.log(`configured AI relay ${config.aiUrl}`)
     return
   }
-  throw new Error("configure requires collector or server")
+  if (args[0] === "granola") {
+    if (args.includes("--disable")) {
+      disableGranola()
+      console.log("disabled local Granola collection")
+      return
+    }
+    const createdAfter = valueAfter(args, "--created-after")
+    if (!createdAfter) throw new Error("configure granola requires --created-after")
+    const config = configureGranola({
+      initialCreatedAfter: createdAfter,
+      binaryPath: valueAfter(args, "--binary"),
+    })
+    console.log(`configured local Granola collection from ${config.granola!.initialCreatedAfter}`)
+    return
+  }
+  throw new Error("configure requires collector, granola, or server")
 }
 
 async function backup(args: string[]): Promise<void> {

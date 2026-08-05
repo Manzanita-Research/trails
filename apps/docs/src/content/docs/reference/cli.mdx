@@ -27,7 +27,7 @@ With no network flag, setup returns `http://127.0.0.1:7412/`. `--tailscale` addi
 trails collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
 ```
 
-Runs one collection pass and exits. Without overrides it reads the installed collector configuration. The hub uses the same command to collect its own sessions.
+Runs one collection pass and exits. Without overrides it reads the installed collector configuration. The hub uses the same command to collect its own sessions. When Granola is configured, the command runs coding-session collection first and Granola collection second with independent checkpoints; a provider failure returns a nonzero exit without erasing the other provider's successful checkpoint.
 
 ## Capture Midjourney generations (experimental)
 
@@ -66,11 +66,19 @@ Starts the canonical HTTP service. Installed hubs use port `7412` and always bin
 ```text
 trails configure collector --server URL [--name NAME] [--reset-device-id]
 trails configure server --ai-url URL --ai-token-stdin
+trails configure granola --created-after ISO [--binary ABSOLUTE_PATH]
+trails configure granola --disable
 ```
 
 Collector configuration sets the canonical hub endpoint and local display name. `--reset-device-id` intentionally creates a new collector identity on the next run.
 
 Server configuration enables the optional authenticated inference relay. The token is read from standard input so it does not appear in shell history or process arguments.
+
+Granola configuration requires an existing collector target and a running Granola Desktop app, but no paid API plan or API key. The default binary is Granola's bundled local Companion CLI at `/Applications/Granola.app/Contents/Resources/bin/granola`; `--binary` supports nonstandard installations. The first pull starts after `--created-after`. Later passes rescan the previous 24 hours so meetings are picked up after Granola finishes their summaries. Changing `--created-after` starts a new source cursor scope, including when the boundary moves earlier.
+
+Trails invokes only local `notes list` and `notes get` commands and never requests `notes transcript get`. It keeps bounded title, generated summary or local note fallback, scheduled time or one creation-time point, and attendee count. The local CLI does not expose folder membership or a canonical note URL, so these captures remain unassigned. Owner and invitee identities, calendar metadata, transcripts, raw command responses, and Granola credentials never enter the hub. Trails does not read Granola's encrypted database or credential files.
+
+`--disable` removes the local collection configuration.
 
 ## Back up
 

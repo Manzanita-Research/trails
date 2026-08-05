@@ -14,6 +14,8 @@ Trails is designed around metadata over transcripts. Each stage derives the smal
 - Local transcript file paths.
 - The original session files owned by Claude Code, Codex, omp, or pi.
 - Parsing of those files.
+- Browser credentials, cookies, authorization headers, remote image URLs, and raw Midjourney responses.
+- Granola credentials, transcripts, attendee identities, owner data, calendar metadata, raw command responses, and encrypted local storage.
 
 Trails never sends transcript bodies or transcript paths to the hub.
 
@@ -35,7 +37,16 @@ Each spoke sends normalized observations over a private Tailscale connection to 
 - minute-level activity;
 - a bounded digest used for optional summarization.
 
-The hub stores these observations in its local SQLite database. Tailscale transports the encrypted connection; it does not run trails or store trails data.
+When capture is enabled, the collecting Mac also sends:
+
+- a capture source ID used for idempotent ingestion;
+- explicit project attribution or a bounded display hint;
+- bounded title and prompt or meeting-summary text;
+- timestamps and exact minute attention;
+- source-specific lineage and attendee-count fields;
+- four decoded Midjourney image payloads.
+
+The hub stores normalized sessions plus captured metadata and image bytes in its local SQLite database and daily backups. Tailscale transports the encrypted connection; it does not run trails or store trails data. Browser credentials, remote image URLs, raw provider responses, Granola credentials, transcripts, and attendee identities never enter the hub.
 
 Tailscale Serve exposes the hub's loopback service privately to authorized devices on the tailnet. Trails still does not open a LAN listener or public endpoint.
 
@@ -43,6 +54,7 @@ Tailscale Serve exposes the hub's loopback service privately to authorized devic
 
 The web app receives the information needed to render the timeline and save your organization. It does not receive source-local session identifiers or bounded digests.
 
+For captures, the browser receives bounded titles, summaries, timestamps, attribution, source-specific counts or lineage, and same-origin image URLs. Image bytes remain behind the hub's authenticated network boundary; the browser never receives their original remote URLs. Local Granola captures include neither note URLs nor folder membership.
 In local mode the browser connects to `http://127.0.0.1:7412/`. In multi-Mac mode an authorized tailnet device can use the private HTTPS URL configured by Tailscale Serve.
 
 ## May reach the inference relay

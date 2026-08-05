@@ -349,8 +349,6 @@ describe("capture ingest protocol v1", () => {
       endedAt: "2026-07-01T18:00:00.000Z",
       payload: {
         attendeeCount: 3,
-        folders: ["Research"],
-        webUrl: "https://app.granola.ai/notes/note-1",
       },
       images: [],
     }
@@ -360,7 +358,7 @@ describe("capture ingest protocol v1", () => {
     ).toBe("granola")
     rejects(IngestCapturesRequestV1Schema, {
       ...captureRequest(),
-      captures: [{ ...granola, payload: { ...granola.payload, webUrl: "https://granola.example/notes/note-1" } }],
+      captures: [{ ...granola, payload: { ...granola.payload, folders: ["Research"] } }],
     })
     rejects(
       IngestCapturesRequestV1Schema,

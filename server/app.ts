@@ -365,8 +365,6 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
         source: "granola",
         payload: {
           attendeeCount: payload.attendeeCount as number,
-          folders: payload.folders as string[],
-          webUrl: payload.webUrl as string | null,
         },
       }
     }),

@@ -14,11 +14,17 @@ import { homedir, hostname } from "node:os"
 import { dirname, join } from "node:path"
 import { decodeExact } from "../shared/protocol"
 
+export interface GranolaCollectorConfig {
+  readonly binaryPath: string
+  readonly initialCreatedAfter: string
+}
+
 export interface CollectorConfig {
-  readonly protocolVersion: 1
+  readonly protocolVersion: 2
   readonly server: string
   readonly deviceId: string
   readonly deviceName: string
+  readonly granola: GranolaCollectorConfig | null
 }
 
 export interface ServerConfig {
@@ -27,11 +33,22 @@ export interface ServerConfig {
   readonly aiToken: string
 }
 
-const CollectorConfigSchema = Schema.Struct({
+const CollectorConfigV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   server: Schema.String,
   deviceId: Schema.String,
   deviceName: Schema.String,
+})
+const GranolaCollectorConfigSchema = Schema.Struct({
+  binaryPath: Schema.String,
+  initialCreatedAfter: Schema.String,
+})
+const CollectorConfigSchema = Schema.Struct({
+  protocolVersion: Schema.Literal(2),
+  server: Schema.String,
+  deviceId: Schema.String,
+  deviceName: Schema.String,
+  granola: Schema.NullOr(GranolaCollectorConfigSchema),
 })
 const ServerConfigSchema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
@@ -40,6 +57,7 @@ const ServerConfigSchema = Schema.Struct({
 })
 
 export const COLLECTOR_CONFIG_PATH = join(homedir(), ".config/trails/collector.json")
+export const DEFAULT_GRANOLA_CLI_PATH = "/Applications/Granola.app/Contents/Resources/bin/granola"
 export const SERVER_CONFIG_PATH = join(homedir(), ".config/trails/server.json")
 
 function isLoopback(host: string): boolean {
@@ -90,10 +108,27 @@ function atomicWrite(path: string, value: unknown): void {
 
 export function loadCollectorConfig(path = COLLECTOR_CONFIG_PATH): CollectorConfig | null {
   try {
-    return decodeExact(CollectorConfigSchema, JSON.parse(readFileSync(path, "utf8"))) as CollectorConfig
+    const info = statSync(path)
+    const currentUid = process.getuid?.()
+    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
+      throw new Error("collector configuration permissions are unsafe")
+    }
+    const input: unknown = JSON.parse(readFileSync(path, "utf8"))
+    let config: CollectorConfig
+    try {
+      config = decodeExact(CollectorConfigSchema, input) as CollectorConfig
+    } catch {
+      const legacy = decodeExact(CollectorConfigV1Schema, input)
+      config = { ...legacy, protocolVersion: 2, granola: null }
+    }
+    if (normalizeCollectorServer(config.server) !== config.server) {
+      throw new Error("collector configuration is invalid")
+    }
+    if (config.granola) validateGranolaConfig(config.granola)
+    return config
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
-    throw error
+    throw new Error("collector configuration is invalid")
   }
 }
 
@@ -108,11 +143,46 @@ export function configureCollector(options: {
   const deviceName = (options.name ?? existing?.deviceName ?? hostname()).trim()
   if (!deviceName || deviceName.length > 128) throw new Error("collector name must be 1..128 characters")
   const config: CollectorConfig = {
-    protocolVersion: 1,
+    protocolVersion: 2,
     server: normalizeCollectorServer(options.server),
     deviceId: !options.resetDeviceId && existing ? existing.deviceId : crypto.randomUUID(),
     deviceName,
+    granola: existing?.granola ?? null,
   }
+  atomicWrite(path, config)
+  return config
+}
+
+function validateGranolaConfig(config: GranolaCollectorConfig): void {
+  if (!config.binaryPath.startsWith("/")) throw new Error("Granola CLI path must be absolute")
+  const parsed = new Date(config.initialCreatedAfter)
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== config.initialCreatedAfter) {
+    throw new Error("Granola created-after must be a canonical UTC timestamp with milliseconds")
+  }
+}
+
+export function configureGranola(options: {
+  readonly initialCreatedAfter: string
+  readonly binaryPath?: string
+  readonly path?: string
+}): CollectorConfig {
+  const path = options.path ?? COLLECTOR_CONFIG_PATH
+  const existing = loadCollectorConfig(path)
+  if (!existing) throw new Error("configure the collector target before Granola")
+  const granola: GranolaCollectorConfig = {
+    binaryPath: options.binaryPath ?? DEFAULT_GRANOLA_CLI_PATH,
+    initialCreatedAfter: options.initialCreatedAfter,
+  }
+  validateGranolaConfig(granola)
+  const config: CollectorConfig = { ...existing, granola }
+  atomicWrite(path, config)
+  return config
+}
+
+export function disableGranola(path = COLLECTOR_CONFIG_PATH): CollectorConfig {
+  const existing = loadCollectorConfig(path)
+  if (!existing) throw new Error("configure the collector target before Granola")
+  const config: CollectorConfig = { ...existing, granola: null }
   atomicWrite(path, config)
   return config
 }
