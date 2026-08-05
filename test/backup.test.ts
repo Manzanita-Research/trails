@@ -4,9 +4,10 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { createBackup, isTrailsBackupName } from "../server/backup"
+import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { ingestSessions } from "../server/ingest"
-import type { IngestRequestV2 } from "../shared/protocol"
+import type { IngestCapturesRequestV1, IngestRequestV2 } from "../shared/protocol"
 
 const roots = new Set<string>()
 const databases = new Set<TrailsDb>()
@@ -56,6 +57,38 @@ const committedInput: IngestRequestV2 = {
   ],
 }
 
+const captureBytes = Buffer.from("offline capture bytes")
+const committedCaptureInput: IngestCapturesRequestV1 = {
+  protocolVersion: 1,
+  device: { id: "backup-device", name: "Backup Mac" },
+  captures: [
+    {
+      source: "midjourney",
+      sourceRecordId: "committed-capture",
+      project: "/Users/tester/code/acme/trails",
+      projectHint: null,
+      title: "Committed synthetic capture",
+      startedAt: "2026-08-03T17:02:00.000Z",
+      endedAt: null,
+      summaryInput: "Synthetic backup evidence",
+      attentionMinutes: [Math.floor(Date.parse("2026-08-03T17:02:00.000Z") / 60_000)],
+      payload: {
+        eventType: "imagine",
+        jobType: "generation",
+        parentSourceRecordId: null,
+        parentGrid: null,
+      },
+      images: Array.from({ length: 4 }, (_, index) => ({
+        index,
+        mime: "image/webp" as const,
+        width: 640,
+        height: 640,
+        bytes: captureBytes.toString("base64"),
+      })),
+    },
+  ],
+}
+
 describe("SQLite backups", () => {
   test("serializes an active WAL into an independently valid snapshot with only committed data", async () => {
     const root = await temporaryRoot()
@@ -68,10 +101,15 @@ describe("SQLite backups", () => {
       unchanged: 0,
       revision: 1,
     })
+    expect(await Effect.runPromise(ingestCaptures(writer, committedCaptureInput, 1_700_000_000_001))).toEqual({
+      accepted: 1,
+      unchanged: 0,
+      revision: 2,
+    })
     writer.sqlite
       .query("INSERT INTO pocket_items(id, text, created_at) VALUES (?, ?, ?)")
       .run("committed-pocket", "Visible after commit", 1_700_000_000_001)
-    writer.sqlite.query("UPDATE meta SET value = '2' WHERE key = 'state_revision'").run()
+    writer.sqlite.query("UPDATE meta SET value = '3' WHERE key = 'state_revision'").run()
     expect((await stat(`${databasePath}-wal`)).size).toBeGreaterThan(0)
 
     await mkdir(join(root, "exports"), { recursive: true })
@@ -85,7 +123,7 @@ describe("SQLite backups", () => {
       expect(await createBackup({ dbPath: databasePath, output })).toBe(output)
       const snapshot = trackedDatabase(output)
       expect(snapshot.sqlite.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" })
-      expect(snapshot.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "2" })
+      expect(snapshot.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "3" })
       expect(snapshot.sqlite
         .query("SELECT id, name FROM machines ORDER BY id")
         .all()).toEqual([{ id: "backup-device", name: "Backup Mac" }])
@@ -107,6 +145,15 @@ describe("SQLite backups", () => {
           user_event_count: 1,
         },
       ])
+      expect(snapshot.sqlite
+        .query("SELECT utc_minute FROM capture_attention")
+        .all()).toEqual([{ utc_minute: Math.floor(Date.parse("2026-08-03T17:02:00.000Z") / 60_000) }])
+      const imageRows = snapshot.sqlite
+        .query("SELECT image_index, bytes FROM capture_images ORDER BY image_index")
+        .all() as Array<{ image_index: number; bytes: Uint8Array }>
+      expect(imageRows).toHaveLength(4)
+      expect(imageRows.map((row) => row.image_index)).toEqual([0, 1, 2, 3])
+      expect(imageRows.every((row) => Buffer.from(row.bytes).equals(captureBytes))).toBe(true)
       expect(snapshot.sqlite
         .query("SELECT id, text FROM pocket_items ORDER BY id")
         .all()).toEqual([{ id: "committed-pocket", text: "Visible after commit" }])

@@ -303,4 +303,46 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
       UPDATE machines SET last_ingested_at = last_seen_at;
     `,
   },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE captures(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        machine_id TEXT NOT NULL REFERENCES machines(id),
+        source TEXT NOT NULL,
+        source_record_id TEXT NOT NULL,
+        project TEXT,
+        project_hint TEXT,
+        title TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        summary_input TEXT NOT NULL,
+        provider_payload TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(source, source_record_id)
+      );
+
+      CREATE TABLE capture_attention(
+        capture_id INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+        utc_minute INTEGER NOT NULL,
+        PRIMARY KEY(capture_id, utc_minute)
+      );
+
+      CREATE TABLE capture_images(
+        capture_id INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+        image_index INTEGER NOT NULL,
+        mime TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        bytes BLOB NOT NULL,
+        content_hash TEXT NOT NULL,
+        PRIMARY KEY(capture_id, image_index)
+      );
+
+      CREATE INDEX captures_started_at ON captures(started_at, id);
+      CREATE INDEX captures_project ON captures(project);
+      CREATE INDEX capture_attention_utc ON capture_attention(utc_minute, capture_id);
+    `,
+  },
 ]

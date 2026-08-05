@@ -5,6 +5,7 @@ import {
   BootstrapV1Schema,
   CollectorStatusV1Schema,
   EngagementCreateSchema,
+  IngestCapturesRequestV1Schema,
   IngestRequestV2Schema,
   MachinesV1Schema,
   SummarizationMetadataV1Schema,
@@ -14,11 +15,14 @@ import {
   SettingsPatchSchema,
   decodeExact,
   encodeExact,
-  type BootstrapV1,
+  type BootstrapCaptureV1,
   type BootstrapSessionV1,
+  type BootstrapV1,
+  type CaptureAttentionTupleV1,
   type MachinesV1,
 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
+import { ingestCaptures } from "./captures"
 import { ingestSessions } from "./ingest"
 import { rebuildDaySummaryJobs } from "./day-jobs"
 
@@ -152,11 +156,73 @@ function activitiesBySession(db: TrailsDb, timezone: string): Map<number, LocalA
   return output
 }
 
+function attentionByCapture(db: TrailsDb, timezone: string): Map<number, CaptureAttentionTupleV1[]> {
+  const rows = db.sqlite
+    .query("SELECT capture_id, utc_minute FROM capture_attention ORDER BY capture_id, utc_minute")
+    .all() as Array<{ capture_id: number; utc_minute: number }>
+  const utcByCapture = new Map<number, UtcActivityTuple[]>()
+  for (const row of rows) {
+    let attention = utcByCapture.get(row.capture_id)
+    if (!attention) utcByCapture.set(row.capture_id, (attention = []))
+    attention.push([row.utc_minute, 1, 1])
+  }
+  const output = new Map<number, CaptureAttentionTupleV1[]>()
+  for (const [captureId, attention] of utcByCapture) {
+    output.set(
+      captureId,
+      localActivityOf(attention, timezone).map(([date, minute]) => [date, minute]),
+    )
+  }
+  return output
+}
+
+type CaptureImageMetadata = {
+  readonly index: number
+  readonly mime: "image/jpeg" | "image/png" | "image/webp"
+  readonly width: number
+  readonly height: number
+  readonly byteLength: number
+  readonly hash: string
+}
+
+function imagesByCapture(db: TrailsDb): Map<number, CaptureImageMetadata[]> {
+  const rows = db.sqlite
+    .query(
+      `SELECT capture_id, image_index, mime, width, height, length(bytes) AS byte_length, content_hash
+       FROM capture_images ORDER BY capture_id, image_index`,
+    )
+    .all() as Array<{
+    capture_id: number
+    image_index: number
+    mime: CaptureImageMetadata["mime"]
+    width: number
+    height: number
+    byte_length: number
+    content_hash: string
+  }>
+  const output = new Map<number, CaptureImageMetadata[]>()
+  for (const row of rows) {
+    let images = output.get(row.capture_id)
+    if (!images) output.set(row.capture_id, (images = []))
+    images.push({
+      index: row.image_index,
+      mime: row.mime,
+      width: row.width,
+      height: row.height,
+      byteLength: row.byte_length,
+      hash: row.content_hash,
+    })
+  }
+  return output
+}
+
 export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
   const timezone = (
     db.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get() as { timezone: string }
   ).timezone
   const activity = activitiesBySession(db, timezone)
+  const captureAttention = attentionByCapture(db, timezone)
+  const captureImages = imagesByCapture(db)
   const sessionRows = db.sqlite
     .query(
       `SELECT s.id, m.id AS machine_id, m.name AS machine_name, s.source, s.cwd, s.branch,
@@ -176,6 +242,25 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     user_event_count: number
     first_prompt: string | null
   }>
+  const captureRows = db.sqlite
+    .query(
+      `SELECT id, source, source_record_id, project, project_hint, title, started_at, ended_at,
+         summary_input, provider_payload, updated_at FROM captures ORDER BY started_at, id`,
+    )
+    .all() as Array<{
+    id: number
+    source: BootstrapCaptureV1["source"]
+    source_record_id: string
+    project: string | null
+    project_hint: string | null
+    title: string
+    started_at: string
+    ended_at: string | null
+    summary_input: string
+    provider_payload: string
+    updated_at: number
+  }>
+  const captureIdBySourceRecord = new Map(captureRows.map((row) => [row.source_record_id, row.id]))
   const settings = db.sqlite
     .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
     .get() as {
@@ -185,7 +270,15 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     hub_url: string
     timezone: string
   }
-  const indexed = db.sqlite.query("SELECT MAX(updated_at) AS at FROM sessions").get() as { at: number | null }
+  const indexed = db.sqlite
+    .query(
+      `SELECT MAX(updated_at) AS at FROM (
+         SELECT updated_at FROM sessions
+         UNION ALL
+         SELECT updated_at FROM captures
+       )`,
+    )
+    .get() as { at: number | null }
   const assignments: Record<string, string> = {}
   const names: Record<string, string> = {}
   const preferences = db.sqlite
@@ -228,6 +321,55 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
       firstPrompt: row.first_prompt,
       activity: activity.get(row.id) ?? [],
     })),
+    captures: captureRows.map((row): BootstrapCaptureV1 => {
+      const payload = JSON.parse(row.provider_payload) as Record<string, unknown>
+      const common = {
+        id: String(row.id),
+        project: row.project,
+        projectHint: row.project_hint,
+        title: row.title,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+        summaryInput: row.summary_input,
+        attentionMinutes: captureAttention.get(row.id) ?? [],
+        updatedAt: new Date(row.updated_at).toISOString(),
+        images: (captureImages.get(row.id) ?? []).map((image) => ({
+          index: image.index,
+          mime: image.mime,
+          width: image.width,
+          height: image.height,
+          byteLength: image.byteLength,
+          url: `/api/capture-images/${row.id}/${image.index}?v=${image.hash}`,
+        })),
+      }
+      if (row.source === "midjourney") {
+        const parentSourceRecordId =
+          typeof payload.parentSourceRecordId === "string" ? payload.parentSourceRecordId : null
+        return {
+          ...common,
+          source: "midjourney",
+          payload: {
+            eventType: payload.eventType as string,
+            jobType: payload.jobType as string,
+            parentGrid: payload.parentGrid as number | null,
+            hasParent: parentSourceRecordId !== null,
+            parentCaptureId:
+              parentSourceRecordId === null
+                ? null
+                : String(captureIdBySourceRecord.get(parentSourceRecordId) ?? "") || null,
+          },
+        }
+      }
+      return {
+        ...common,
+        source: "granola",
+        payload: {
+          attendeeCount: payload.attendeeCount as number,
+          folders: payload.folders as string[],
+          webUrl: payload.webUrl as string | null,
+        },
+      }
+    }),
     summaries: { sessions: sessionSummaries, days: daySummaries },
     preferences: {
       boundary: settings.boundary,
@@ -401,6 +543,51 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     if (afterValue !== null && Number(afterValue) === revisionOf(db)) return new Response(null, { status: 204 })
     return jsonResponse(bootstrapOf(db, now))
   }
+  if (url.pathname === "/api/captures") {
+    if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
+    const input = await readJson(request, 5 * 1024 * 1024)
+    if (
+      typeof input === "object" &&
+      input !== null &&
+      "protocolVersion" in input &&
+      input.protocolVersion !== 1
+    ) {
+      throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
+    }
+    const body = decodeBody(IngestCapturesRequestV1Schema, input)
+    try {
+      return jsonResponse(await Effect.runPromise(ingestCaptures(db, body, now)))
+    } catch {
+      throw new ApiError("internal_error", "internal server error", 500)
+    }
+  }
+  if (url.pathname.startsWith("/api/capture-images/")) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      throw new ApiError("method_not_allowed", "method not allowed", 405)
+    }
+    const match = /^\/api\/capture-images\/([1-9]\d*)\/([0-3])$/.exec(url.pathname)
+    if (!match || !Number.isSafeInteger(Number(match[1]))) {
+      throw new ApiError("invalid_request", "invalid capture image path", 400)
+    }
+    const row = db.sqlite
+      .query(
+        `SELECT mime, bytes, content_hash, length(bytes) AS byte_length
+         FROM capture_images WHERE capture_id = ? AND image_index = ?`,
+      )
+      .get(Number(match[1]), Number(match[2])) as
+      | { mime: string; bytes: Uint8Array; content_hash: string; byte_length: number }
+      | null
+    if (!row) throw new ApiError("not_found", "capture image not found", 404)
+    const etag = `"${row.content_hash}"`
+    const headers = new Headers({
+      "Content-Type": row.mime,
+      "Content-Length": String(row.byte_length),
+      "Cache-Control": "private, max-age=31536000, immutable",
+      ETag: etag,
+    })
+    if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers })
+    return new Response(request.method === "HEAD" ? null : Buffer.from(row.bytes), { status: 200, headers })
+  }
   if (url.pathname === "/api/ingest") {
     if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
     const input = await readJson(request, 5 * 1024 * 1024)
@@ -484,7 +671,12 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     if (request.method !== "PUT") throw new ApiError("method_not_allowed", "method not allowed", 405)
     const body = decodeBody(ProjectPatchSchema, await readJson(request, 64 * 1024))
     const project = body.project.trim()
-    const present = db.sqlite.query("SELECT 1 AS present FROM sessions WHERE project = ? LIMIT 1").get(project)
+    const present = db.sqlite
+      .query(
+        `SELECT 1 AS present FROM sessions WHERE project = ?
+         UNION ALL SELECT 1 AS present FROM captures WHERE project = ? LIMIT 1`,
+      )
+      .get(project, project)
     if (!present) throw new ApiError("not_found", "project not found", 404)
     const existing = db.sqlite
       .query("SELECT engagement_id, display_name FROM project_preferences WHERE project = ?")
@@ -495,9 +687,14 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     if ("displayName" in body) displayName = body.displayName?.trim() || null
     if (engagementId !== null) {
       const validOrgIds = new Set(
-        (db.sqlite.query("SELECT DISTINCT project FROM sessions").all() as Array<{ project: string }>).map(
-          (row) => `org:${orgOf(row.project)}`,
-        ),
+        (
+          db.sqlite
+            .query(
+              `SELECT project FROM sessions
+               UNION SELECT project FROM captures WHERE project IS NOT NULL`,
+            )
+            .all() as Array<{ project: string }>
+        ).map((row) => `org:${orgOf(row.project)}`),
       )
       const validCustom = engagementId.startsWith("custom:")
         ? db.sqlite.query("SELECT 1 AS present FROM custom_engagements WHERE id = ?").get(engagementId)
