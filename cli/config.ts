@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import {
+  copyFileSync,
   chmodSync,
   mkdirSync,
   openSync,
@@ -13,6 +14,7 @@ import {
 import { homedir, hostname } from "node:os"
 import { dirname, join } from "node:path"
 import { decodeExact } from "../shared/protocol"
+import { PROVIDER_IDS, type ProviderId } from "../shared/providers"
 
 export interface CollectorConfig {
   readonly protocolVersion: 1
@@ -69,7 +71,7 @@ export function normalizeInferenceUrl(value: string): string {
   return url.toString()
 }
 
-function atomicWrite(path: string, value: unknown): void {
+export function atomicWriteJson(path: string, value: unknown): void {
   const previousUmask = process.umask(0o077)
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
@@ -113,7 +115,7 @@ export function configureCollector(options: {
     deviceId: !options.resetDeviceId && existing ? existing.deviceId : crypto.randomUUID(),
     deviceName,
   }
-  atomicWrite(path, config)
+  atomicWriteJson(path, config)
   return config
 }
 
@@ -129,7 +131,7 @@ export function configureServer(options: {
     aiUrl: normalizeInferenceUrl(options.aiUrl),
     aiToken: token,
   }
-  atomicWrite(options.path ?? SERVER_CONFIG_PATH, config)
+  atomicWriteJson(options.path ?? SERVER_CONFIG_PATH, config)
   return config
 }
 
@@ -149,4 +151,70 @@ export function loadServerConfig(path = SERVER_CONFIG_PATH): ServerConfig | null
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
     throw new Error("server configuration is invalid")
   }
+}
+
+export interface SummarizerConfig {
+  readonly provider: ProviderId
+  readonly model?: string
+}
+
+export interface HubAiConfig {
+  readonly summarizer: SummarizerConfig | null
+  /** True when the file still holds the retired V1 relay configuration. */
+  readonly legacyRelay: boolean
+}
+
+const SummarizerSchema = Schema.Struct({
+  provider: Schema.Literal(...PROVIDER_IDS),
+  model: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200))),
+})
+const ServerConfigV2Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(2),
+  summarizer: Schema.NullOr(SummarizerSchema),
+})
+
+export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
+  let raw: string
+  try {
+    const info = statSync(path)
+    const currentUid = process.getuid?.()
+    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
+      throw new Error("server configuration permissions are unsafe")
+    }
+    raw = readFileSync(path, "utf8")
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
+    throw new Error("server configuration is invalid")
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "protocolVersion" in parsed &&
+      parsed.protocolVersion === 1
+    ) {
+      decodeExact(ServerConfigSchema, parsed)
+      return { summarizer: null, legacyRelay: true }
+    }
+    const config = decodeExact(ServerConfigV2Schema, parsed)
+    return { summarizer: config.summarizer, legacyRelay: false }
+  } catch {
+    throw new Error("server configuration is invalid")
+  }
+}
+
+export function writeHubConfig(summarizer: SummarizerConfig | null, path = SERVER_CONFIG_PATH): void {
+  if (summarizer !== null) decodeExact(SummarizerSchema, summarizer)
+  let legacyRelay = false
+  try {
+    legacyRelay = loadHubConfig(path)?.legacyRelay ?? false
+  } catch {
+    // A corrupt or unsafe existing file is replaced outright with owner-only V2.
+  }
+  if (legacyRelay) {
+    copyFileSync(path, `${path}.v1.bak`)
+    chmodSync(`${path}.v1.bak`, 0o600)
+  }
+  atomicWriteJson(path, { protocolVersion: 2, summarizer })
 }
