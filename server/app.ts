@@ -1,10 +1,14 @@
 import { Effect, Schema } from "effect"
 import { basename, join, resolve, sep } from "node:path"
-import { orgOf, TIMEZONE, workdaysOf, type ActivityTuple } from "../shared/domain"
+import { localActivityOf, orgOf, type LocalActivityTuple, type UtcActivityTuple } from "../shared/domain"
 import {
   BootstrapV1Schema,
+  CollectorStatusV1Schema,
   EngagementCreateSchema,
-  IngestRequestV1Schema,
+  IngestRequestV2Schema,
+  MachinesV1Schema,
+  SummarizationMetadataV1Schema,
+  SummarizationStatusV1Schema,
   PocketCreateSchema,
   ProjectPatchSchema,
   SettingsPatchSchema,
@@ -12,9 +16,11 @@ import {
   encodeExact,
   type BootstrapV1,
   type BootstrapSessionV1,
+  type MachinesV1,
 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
 import { ingestSessions } from "./ingest"
+import { rebuildDaySummaryJobs } from "./day-jobs"
 
 export interface InferenceConfig {
   readonly url: string
@@ -26,6 +32,7 @@ export interface AppOptions {
   readonly staticRoot?: string
   readonly staticAssets?: ReadonlyArray<Blob & { readonly name: string }>
   readonly inference?: InferenceConfig
+  readonly fetch?: typeof globalThis.fetch
   readonly now?: () => number
 }
 
@@ -34,9 +41,10 @@ type ErrorCode =
   | "invalid_request"
   | "unsupported_protocol"
   | "payload_too_large"
+  | "upstream_unavailable"
   | "not_found"
-  | "method_not_allowed"
   | "internal_error"
+  | "method_not_allowed"
 
 class ApiError extends Error {
   constructor(
@@ -120,29 +128,35 @@ function decodeBody<S extends Schema.Schema.AnyNoContext>(schema: S, input: unkn
   }
 }
 
-function activitiesBySession(db: TrailsDb): Map<number, ActivityTuple[]> {
+function activitiesBySession(db: TrailsDb, timezone: string): Map<number, LocalActivityTuple[]> {
   const rows = db.sqlite
     .query(
-      "SELECT session_id, local_date, minute, event_count, user_event_count FROM session_activity ORDER BY session_id, local_date, minute",
+      "SELECT session_id, utc_minute, event_count, user_event_count FROM session_activity ORDER BY session_id, utc_minute",
     )
     .all() as Array<{
     session_id: number
-    local_date: string
-    minute: number
+    utc_minute: number
     event_count: number
     user_event_count: number
   }>
-  const output = new Map<number, ActivityTuple[]>()
+  const utcBySession = new Map<number, UtcActivityTuple[]>()
   for (const row of rows) {
-    let activity = output.get(row.session_id)
-    if (!activity) output.set(row.session_id, (activity = []))
-    activity.push([row.local_date, row.minute, row.event_count, row.user_event_count])
+    let activity = utcBySession.get(row.session_id)
+    if (!activity) utcBySession.set(row.session_id, (activity = []))
+    activity.push([row.utc_minute, row.event_count, row.user_event_count])
+  }
+  const output = new Map<number, LocalActivityTuple[]>()
+  for (const [sessionId, activity] of utcBySession) {
+    output.set(sessionId, localActivityOf(activity, timezone))
   }
   return output
 }
 
 export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
-  const activity = activitiesBySession(db)
+  const timezone = (
+    db.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get() as { timezone: string }
+  ).timezone
+  const activity = activitiesBySession(db, timezone)
   const sessionRows = db.sqlite
     .query(
       `SELECT s.id, m.id AS machine_id, m.name AS machine_name, s.source, s.cwd, s.branch,
@@ -163,12 +177,13 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     first_prompt: string | null
   }>
   const settings = db.sqlite
-    .query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1")
+    .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
     .get() as {
     boundary: 4 | 5 | 6 | 7
     halo: 0 | 5 | 10 | 15
     onboarding_version: number
     hub_url: string
+    timezone: string
   }
   const indexed = db.sqlite.query("SELECT MAX(updated_at) AS at FROM sessions").get() as { at: number | null }
   const assignments: Record<string, string> = {}
@@ -199,7 +214,7 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     generatedAt: new Date(now).toISOString(),
     indexedAt: indexed.at === null ? null : new Date(indexed.at).toISOString(),
     hubUrl: settings.hub_url,
-    timezone: TIMEZONE,
+    timezone: settings.timezone,
     sessions: sessionRows.map((row) => ({
       id: String(row.id),
       machine: { id: row.machine_id, name: row.machine_name },
@@ -231,22 +246,143 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
   return decodeExact(BootstrapV1Schema, encodeExact(BootstrapV1Schema, bootstrap))
 }
 
-function enqueueBoundaryDays(db: TrailsDb, boundary: number, now: number): void {
-  const activity = activitiesBySession(db)
-  const rows = db.sqlite.query("SELECT id, project FROM sessions").all() as Array<{ id: number; project: string }>
-  const keys = new Set<string>()
-  for (const row of rows) {
-    for (const day of workdaysOf(activity.get(row.id) ?? [], boundary)) keys.add(`${day}|${row.project}`)
+
+
+function machinesOf(db: TrailsDb, now: number): MachinesV1 {
+  const rows = db.sqlite
+    .query(
+      `SELECT id, name, first_seen_at, last_ingested_at, last_checked_at, last_processed_at,
+         last_error, last_discovered, last_changed, last_uploaded, last_ignored, last_unchanged
+       FROM machines ORDER BY name COLLATE NOCASE, id`,
+    )
+    .all() as Array<{
+    id: string
+    name: string
+    first_seen_at: number
+    last_ingested_at: number | null
+    last_checked_at: number | null
+    last_processed_at: number | null
+    last_error: MachinesV1["machines"][number]["lastError"]
+    last_discovered: number | null
+    last_changed: number | null
+    last_uploaded: number | null
+    last_ignored: number | null
+    last_unchanged: number | null
+  }>
+  return decodeExact(MachinesV1Schema, {
+    protocolVersion: 1,
+    generatedAt: new Date(now).toISOString(),
+    machines: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      firstSeenAt: new Date(row.first_seen_at).toISOString(),
+      lastIngestedAt:
+        row.last_ingested_at === null ? null : new Date(row.last_ingested_at).toISOString(),
+      lastCheckedAt:
+        row.last_checked_at === null ? null : new Date(row.last_checked_at).toISOString(),
+      lastProcessedAt:
+        row.last_processed_at === null ? null : new Date(row.last_processed_at).toISOString(),
+      lastError: row.last_error,
+      metrics:
+        row.last_discovered === null
+          ? null
+          : {
+              discovered: row.last_discovered,
+              changed: row.last_changed!,
+              uploaded: row.last_uploaded!,
+              ignored: row.last_ignored!,
+              unchanged: row.last_unchanged!,
+            },
+    })),
+  })
+}
+
+function recordCollectorStatus(
+  db: TrailsDb,
+  input: Schema.Schema.Type<typeof CollectorStatusV1Schema>,
+  now: number,
+): void {
+  db.sqlite.transaction(() => {
+    const existing = db.sqlite
+      .query(
+        `SELECT m.name, EXISTS(SELECT 1 FROM sessions s WHERE s.machine_id = m.id) AS owns_sessions
+         FROM machines m WHERE m.id = ?`,
+      )
+      .get(input.device.id) as { name: string; owns_sessions: number } | null
+    if (!existing) {
+      db.sqlite
+        .query(
+          `INSERT INTO machines(id, name, first_seen_at, last_seen_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(input.device.id, input.device.name, now, now)
+    } else {
+      db.sqlite
+        .query("UPDATE machines SET name = ?, last_seen_at = ? WHERE id = ?")
+        .run(input.device.name, now, input.device.id)
+      if (existing.name !== input.device.name && existing.owns_sessions === 1) incrementRevision(db)
+    }
+
+    if (input.outcome.status === "processed") {
+      const metrics = input.outcome.metrics
+      db.sqlite
+        .query(
+          `UPDATE machines SET last_checked_at = ?, last_processed_at = ?, last_error = NULL,
+             last_discovered = ?, last_changed = ?, last_uploaded = ?, last_ignored = ?, last_unchanged = ?
+           WHERE id = ?`,
+        )
+        .run(
+          now,
+          now,
+          metrics.discovered,
+          metrics.changed,
+          metrics.uploaded,
+          metrics.ignored,
+          metrics.unchanged,
+          input.device.id,
+        )
+    } else {
+      const metrics = input.outcome.metrics
+      db.sqlite
+        .query(
+          `UPDATE machines SET last_checked_at = ?, last_error = ?,
+             last_discovered = ?, last_changed = ?, last_uploaded = ?, last_ignored = ?, last_unchanged = ?
+           WHERE id = ?`,
+        )
+        .run(
+          now,
+          input.outcome.error,
+          metrics?.discovered ?? null,
+          metrics?.changed ?? null,
+          metrics?.uploaded ?? null,
+          metrics?.ignored ?? null,
+          metrics?.unchanged ?? null,
+          input.device.id,
+        )
+    }
+  })()
+}
+
+async function summarizationOf(options: AppOptions): Promise<unknown> {
+  if (!options.inference) {
+    return decodeExact(SummarizationStatusV1Schema, { enabled: false, metadata: null })
   }
-  const statement = db.sqlite.query(
-    `INSERT INTO day_summary_jobs(work_date, project, boundary, generation, attempts, available_at, last_error)
-     VALUES (?, ?, ?, 1, 0, ?, NULL)
-     ON CONFLICT(work_date, project, boundary) DO UPDATE SET generation = day_summary_jobs.generation + 1,
-       attempts = 0, available_at = excluded.available_at, last_error = NULL`,
-  )
-  for (const key of keys) {
-    const separator = key.indexOf("|")
-    statement.run(key.slice(0, separator), key.slice(separator + 1), boundary, now)
+  try {
+    const response = await (options.fetch ?? globalThis.fetch)(options.inference.url, {
+      method: "GET",
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
+      headers: { Authorization: `Bearer ${options.inference.token}` },
+    })
+    if (!response.ok) throw new Error("relay metadata request failed")
+    const metadata = decodeExact(SummarizationMetadataV1Schema, await response.json())
+    return decodeExact(SummarizationStatusV1Schema, { enabled: true, metadata })
+  } catch {
+    throw new ApiError(
+      "upstream_unavailable",
+      "summarization metadata unavailable",
+      502,
+    )
   }
 }
 
@@ -272,44 +408,73 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
       typeof input === "object" &&
       input !== null &&
       "protocolVersion" in input &&
-      input.protocolVersion !== 1
+      input.protocolVersion !== 2
     ) {
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
-    const body = decodeBody(IngestRequestV1Schema, input)
+    const body = decodeBody(IngestRequestV2Schema, input)
     try {
       return jsonResponse(await Effect.runPromise(ingestSessions(db, body, now)))
     } catch {
       throw new ApiError("internal_error", "internal server error", 500)
     }
   }
+  if (url.pathname === "/api/collector-status") {
+    if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
+    const input = await readJson(request, 64 * 1024)
+    if (
+      typeof input === "object" &&
+      input !== null &&
+      "protocolVersion" in input &&
+      input.protocolVersion !== 1
+    ) {
+      throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
+    }
+    recordCollectorStatus(db, decodeBody(CollectorStatusV1Schema, input), now)
+    return new Response(null, { status: 204 })
+  }
+  if (url.pathname === "/api/machines") {
+    if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
+    return jsonResponse(machinesOf(db, now))
+  }
+  if (url.pathname === "/api/summarization") {
+    if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
+    return jsonResponse(await summarizationOf(options))
+  }
   if (url.pathname === "/api/settings") {
     if (request.method !== "PATCH") throw new ApiError("method_not_allowed", "method not allowed", 405)
     const body = decodeBody(SettingsPatchSchema, await readJson(request, 64 * 1024))
     const current = db.sqlite
-      .query("SELECT boundary, halo, onboarding_version FROM settings WHERE id = 1")
+      .query("SELECT boundary, halo, onboarding_version, timezone FROM settings WHERE id = 1")
       .get() as {
       boundary: number
       halo: number
       onboarding_version: number
+      timezone: string
     }
     const boundary = body.boundary ?? current.boundary
     const halo = body.halo ?? current.halo
     const onboardingVersion = body.onboardingVersion ?? current.onboarding_version
+    const timezone = body.timezone ?? current.timezone
     if (
       boundary === current.boundary &&
       halo === current.halo &&
-      onboardingVersion === current.onboarding_version
+      onboardingVersion === current.onboarding_version &&
+      timezone === current.timezone
     ) {
       return jsonResponse({ revision: revisionOf(db) })
     }
     const revision = db.sqlite.transaction(() => {
       db.sqlite
-        .query("UPDATE settings SET boundary = ?, halo = ?, onboarding_version = ? WHERE id = 1")
-        .run(boundary, halo, onboardingVersion)
-      if (boundary !== current.boundary) {
-        db.sqlite.query("DELETE FROM day_summary_jobs WHERE boundary <> ?").run(boundary)
-        enqueueBoundaryDays(db, boundary, now)
+        .query("UPDATE settings SET boundary = ?, halo = ?, onboarding_version = ?, timezone = ? WHERE id = 1")
+        .run(boundary, halo, onboardingVersion, timezone)
+      if (timezone !== current.timezone || boundary !== current.boundary) {
+        rebuildDaySummaryJobs(db.sqlite, {
+          boundary,
+          timezone,
+          now,
+          clearSummaries: timezone !== current.timezone,
+        })
       }
       return incrementRevision(db)
     })()

@@ -270,7 +270,7 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
     creditValue === 1 ? "full" : creditValue === 0.5 ? "half" : creditValue === 0.25 ? "quarter" : null
 
   // where the index stops: shown only on the workday of the latest accepted session change
-  const indexedParts = t.indexedAt === null ? null : localParts(new Date(t.indexedAt).toISOString())
+  const indexedParts = t.indexedAt === null ? null : localParts(t.indexedAt, t.timezone)
   const indexedWorkday =
     indexedParts === null ? null : workdayOf(indexedParts.date, indexedParts.minute, t.boundary)
   const cutoff =

@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createApp } from "../server/app"
 import { openDatabase, type TrailsDb } from "../server/db"
-import { BootstrapV1Schema, decodeExact, type BootstrapV1, type IngestRequestV1 } from "../shared/protocol"
+import { BootstrapV1Schema, decodeExact, type BootstrapV1, type IngestRequestV2 } from "../shared/protocol"
 import { App } from "../src/App"
 
 const origin = "http://trails.test"
@@ -20,8 +20,8 @@ interface Harness {
   readonly promptCalls: () => number
 }
 
-const sessions: IngestRequestV1 = {
-  protocolVersion: 1,
+const sessions: IngestRequestV2 = {
+  protocolVersion: 2,
   device: { id: "source-mac", name: "Source Mac" },
   sessions: [
     {
@@ -35,10 +35,10 @@ const sessions: IngestRequestV1 = {
       userEvents: 4,
       firstPrompt: "Polish the beta journey",
       activity: [
-        ["2026-07-01", 480, 2, 1],
-        ["2026-07-01", 500, 2, 1],
-        ["2026-07-01", 520, 2, 1],
-        ["2026-07-01", 540, 2, 1],
+        [Math.floor(Date.parse("2026-07-01T15:00:00.000Z") / 60_000), 2, 1],
+        [Math.floor(Date.parse("2026-07-01T15:20:00.000Z") / 60_000), 2, 1],
+        [Math.floor(Date.parse("2026-07-01T15:40:00.000Z") / 60_000), 2, 1],
+        [Math.floor(Date.parse("2026-07-01T16:00:00.000Z") / 60_000), 2, 1],
       ],
       digest: null,
     },
@@ -52,7 +52,7 @@ const sessions: IngestRequestV1 = {
       events: 2,
       userEvents: 0,
       firstPrompt: null,
-      activity: [["2026-07-01", 600, 2, 0]],
+      activity: [[Math.floor(Date.parse("2026-07-01T17:00:00.000Z") / 60_000), 2, 0]],
       digest: null,
     },
   ],
@@ -70,13 +70,31 @@ function inputElement(element: HTMLElement): HTMLInputElement {
 }
 
 
-async function makeLoadedHarness({ withDaySummary = true }: { withDaySummary?: boolean } = {}): Promise<Harness> {
-  const db = openDatabase(":memory:")
+async function makeLoadedHarness({
+  withDaySummary = true,
+  summarization = "effective",
+}: {
+  withDaySummary?: boolean
+  summarization?: "effective" | "disabled"
+} = {}): Promise<Harness> {
+  const db = openDatabase(":memory:", { defaultTimezone: "America/Los_Angeles" })
   databases.add(db)
-  const app = createApp({ db, now: () => fixedNow })
+  const metadata = {
+    protocolVersion: 1 as const,
+    model: "@cf/moonshotai/kimi-k2.5",
+    prompts: { session: "Complete session system prompt.", day: "Complete day system prompt." },
+  }
+  const app = createApp({
+    db,
+    now: () => fixedNow,
+    inference:
+      summarization === "effective"
+        ? { url: "https://relay.test/api/summarize", token: "relay-token" }
+        : undefined,
+    fetch: (async () => Response.json(metadata)) as unknown as typeof globalThis.fetch,
+  })
   let failurePath: string | null = null
   let promptCount = 0
-
   const serverRequest = (path: string, init?: RequestInit) =>
     app(new Request(new URL(path, origin), init))
 
@@ -86,6 +104,20 @@ async function makeLoadedHarness({ withDaySummary = true }: { withDaySummary?: b
     body: JSON.stringify(sessions),
   })
   expect(response.status).toBe(200)
+  response = await serverRequest("/api/collector-status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      protocolVersion: 1,
+      device: sessions.device,
+      outcome: {
+        status: "processed",
+        metrics: { discovered: 2, changed: 1, uploaded: 1, ignored: 0, unchanged: 1 },
+        error: null,
+      },
+    }),
+  })
+  expect(response.status).toBe(204)
   if (withDaySummary) {
     db.sqlite
       .query(
@@ -146,7 +178,7 @@ afterEach(() => {
 })
 
 describe("beta interaction clarity", () => {
-  test("uses recoverable inline organization and project tools with accessible panels", async () => {
+  test("uses one recoverable settings screen for time, projects, machines, and summarization", async () => {
     const harness = await makeLoadedHarness()
     const user = userEvent.setup()
     render(<App />)
@@ -157,101 +189,117 @@ describe("beta interaction clarity", () => {
           element?.classList.contains("facts") === true && element.textContent?.includes("day credit: quarter") === true,
       ),
     ).toBeTruthy()
-    expect(
-      screen.getByRole("button", {
-        name: /very-long-project-name; activity from .*; jump to day summary\./,
-      }),
-    ).toBeTruthy()
-    expect(screen.queryByRole("button", { name: /inert-project; activity from/ })).toBeNull()
+    expect(screen.queryByRole("button", { name: "organize projects" })).toBeNull()
 
-    const organize = screen.getByRole("button", { name: "organize projects" })
-    await user.click(organize)
-    const panel = await screen.findByRole("dialog", { name: "Organize projects" })
-    if (!(panel instanceof HTMLDialogElement)) throw new Error("expected a dialog")
-    expect(organize.getAttribute("aria-expanded")).toBe("true")
-    expect(organize.getAttribute("aria-controls")).toBe("organize-projects-panel")
-    expect(within(panel).getByRole("button", { name: "close Organize projects" })).toBeTruthy()
+    const settingsAction = screen.getByRole("button", { name: "settings" })
+    await user.click(settingsAction)
+    const settingsHeading = await screen.findByRole("heading", { name: "settings", level: 1 })
+    expect(Object.is(document.activeElement, settingsHeading)).toBe(true)
+    expect(settingsAction.getAttribute("aria-current")).toBe("page")
+    expect(screen.queryByRole("dialog", { name: "settings" })).toBeNull()
+    const settingsPage = settingsHeading.closest(".settings-view")
+    if (!(settingsPage instanceof HTMLElement)) throw new Error("expected settings view")
     expect(
-      within(panel).getByText(
-        "Trails starts with one engagement per repository organization. An engagement can be a client, a practice, or a life area; changing one updates week totals.",
-      ),
+      within(settingsPage).getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
+    ).toEqual(["time & attention", "projects", "machines", "summarization"])
+
+    const boundary = within(settingsPage).getByRole("combobox", { name: "day starts" })
+    await user.selectOptions(userEventElement(boundary), "5")
+    await waitFor(async () => expect((await harness.bootstrap()).preferences.boundary).toBe(5))
+
+    const halo = within(settingsPage).getByRole("combobox", { name: "attention halo" })
+    harness.failNext("/api/settings")
+    await user.selectOptions(userEventElement(halo), "15")
+    const haloRow = halo.closest(".settings-control-row")
+    if (!(haloRow instanceof HTMLElement)) throw new Error("expected halo row")
+    expect(await within(haloRow).findByRole("alert")).toHaveTextContent("That setting didn’t save. Try again.")
+    expect(boundary).not.toBeDisabled()
+    await user.selectOptions(userEventElement(halo), "15")
+    await waitFor(async () => expect((await harness.bootstrap()).preferences.halo).toBe(15))
+
+    const timezone = within(settingsPage).getByRole("combobox", { name: "time zone" })
+    expect(within(timezone).getByRole("option", { name: "Rome" })).toHaveValue("Europe/Rome")
+    await user.selectOptions(userEventElement(timezone), "Europe/Rome")
+    await waitFor(async () => expect((await harness.bootstrap()).timezone).toBe("Europe/Rome"))
+
+    expect(await within(settingsPage).findByText("checked 0m ago")).toBeTruthy()
+    expect(within(settingsPage).getByText("processed 0m ago")).toBeTruthy()
+    expect(within(settingsPage).getByText("activity sent 0m ago")).toBeTruthy()
+    expect(within(settingsPage).getByText("2 found · 1 changed · 1 sent · 0 ignored · 1 unchanged")).toBeTruthy()
+    expect(within(settingsPage).queryByText(/online|offline/i)).toBeNull()
+    expect(await within(settingsPage).findByText("@cf/moonshotai/kimi-k2.5")).toBeTruthy()
+    expect(within(settingsPage).getByText("Complete session system prompt.")).toBeTruthy()
+    expect(within(settingsPage).getByText("Complete day system prompt.")).toBeTruthy()
+    expect(
+      within(settingsPage).getByText("A one-session day summary may be copied without a second model call."),
     ).toBeTruthy()
 
     const engagementName = "engagement for very-long-project-name"
     await user.selectOptions(
-      userEventElement(within(panel).getByRole("combobox", { name: engagementName })),
+      userEventElement(within(settingsPage).getByRole("combobox", { name: engagementName })),
       "__new__",
     )
-    const engagementInput = inputElement(within(panel).getByRole("textbox", { name: engagementName }))
-    await user.click(within(panel).getByRole("button", { name: "save" }))
-    expect((await within(panel).findByRole("alert")).textContent).toBe("Enter an engagement name.")
-
+    const engagementInput = inputElement(within(settingsPage).getByRole("textbox", { name: engagementName }))
+    await user.click(within(settingsPage).getByRole("button", { name: "save" }))
+    expect((await within(settingsPage).findByRole("alert")).textContent).toBe("Enter an engagement name.")
     await user.type(engagementInput, "Practice")
     harness.failNext("/api/engagements")
-    await user.click(within(panel).getByRole("button", { name: "save" }))
-    expect((await within(panel).findByRole("alert")).textContent).toBe(
+    await user.click(within(settingsPage).getByRole("button", { name: "save" }))
+    expect((await within(settingsPage).findByRole("alert")).textContent).toBe(
       "Couldn’t save that engagement. Try again.",
     )
-    expect(engagementInput.value).toBe("Practice")
-    expect(Object.is(document.activeElement, engagementInput)).toBe(true)
-
-    await user.click(within(panel).getByRole("button", { name: "save" }))
+    await user.click(within(settingsPage).getByRole("button", { name: "save" }))
     await waitFor(async () => {
       const bootstrap = await harness.bootstrap()
       const practice = bootstrap.preferences.customEngagements.find(({ name }) => name === "Practice")
-      if (!practice) throw new Error("expected the saved engagement")
-      expect(bootstrap.preferences.assignments[activeProject] === practice.id).toBe(true)
+      if (!practice) throw new Error("expected saved engagement")
+      expect(bootstrap.preferences.assignments[activeProject]).toBe(practice.id)
     })
-    expect(within(panel).getByRole("combobox", { name: engagementName })).toBeTruthy()
 
-    await user.keyboard("{Escape}")
-    await waitFor(() => expect(panel.open).toBe(false))
-    expect(Object.is(document.activeElement, organize)).toBe(true)
+    await user.click(within(settingsPage).getByRole("button", { name: "very-long-project-name" }))
+    expect(await screen.findByRole("button", { name: "← back to settings" })).toBeTruthy()
+    await user.click(screen.getByRole("button", { name: "← back to settings" }))
+    expect(await screen.findByRole("heading", { name: "settings", level: 1 })).toBeTruthy()
 
-    await user.click(organize)
-    const reopened = await screen.findByRole("dialog", { name: "Organize projects" })
-    await user.click(within(reopened).getByRole("button", { name: "very-long-project-name" }))
-    expect(await screen.findByRole("button", { name: "← back to days" })).toBeTruthy()
-
-    await user.click(screen.getByRole("button", { name: "rename" }))
-    const renameInput = inputElement(screen.getByRole("textbox", { name: "project name" }))
-    expect(renameInput.value).toBe("very-long-project-name")
-    expect(Object.is(document.activeElement, renameInput)).toBe(true)
-    await user.clear(renameInput)
-    await user.type(renameInput, "Trail Journal")
-    harness.failNext("/api/projects")
-    await user.click(screen.getByRole("button", { name: "save" }))
-    expect((await screen.findByRole("alert")).textContent).toBe("Couldn’t rename this project. Try again.")
-    expect(renameInput.value).toBe("Trail Journal")
-    expect(Object.is(document.activeElement, renameInput)).toBe(true)
-
-    await user.click(screen.getByRole("button", { name: "save" }))
-    await waitFor(async () => {
-      expect((await harness.bootstrap()).preferences.names[activeProject]).toBe("Trail Journal")
-    })
-    expect(await screen.findByRole("heading", { name: "Trail Journal" })).toBeTruthy()
-
-    await user.click(screen.getByRole("button", { name: "rename" }))
-    const resetInput = inputElement(screen.getByRole("textbox", { name: "project name" }))
-    await user.clear(resetInput)
-    await user.click(screen.getByRole("button", { name: "save" }))
-    await waitFor(async () => {
-      expect(activeProject in (await harness.bootstrap()).preferences.names).toBe(false)
-    })
-    expect(await screen.findByRole("heading", { name: "very-long-project-name" })).toBeTruthy()
-
-    await user.click(screen.getByRole("button", { name: "← back to days" }))
-    const settings = screen.getByRole("button", { name: "settings" })
-    await user.click(settings)
-    expect(await screen.findByRole("dialog", { name: "settings" })).toBeTruthy()
-    expect(Object.is(document.activeElement, screen.getByRole("combobox", { name: "day starts" }))).toBe(true)
-    await user.keyboard("{Escape}")
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "settings" })).toBeNull())
-    expect(Object.is(document.activeElement, settings)).toBe(true)
-
+    await user.click(screen.getByRole("button", { name: "← back" }))
+    expect(await screen.findByRole("heading", { name: "Wednesday, July 1" })).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "threads" }))
     expect(screen.getByRole("button", { name: "delete note" })).toBeTruthy()
     expect(harness.promptCalls()).toBe(0)
+  })
+
+  test("keeps machine and summarization failures isolated and retryable", async () => {
+    const harness = await makeLoadedHarness()
+    const user = userEvent.setup()
+    harness.failNext("/api/machines")
+    render(<App />)
+
+    await user.click(await screen.findByRole("button", { name: "settings" }))
+    const machineHeading = await screen.findByRole("heading", { name: "machines", level: 2 })
+    const machineSection = machineHeading.closest("section")
+    if (!(machineSection instanceof HTMLElement)) throw new Error("expected machines section")
+    expect(await within(machineSection).findByText(/Machine status couldn’t load/)).toBeTruthy()
+    expect(await screen.findByText("@cf/moonshotai/kimi-k2.5")).toBeTruthy()
+    await user.click(within(machineSection).getByRole("button", { name: "try again" }))
+    expect(await within(machineSection).findByText("Source Mac")).toBeTruthy()
+    await user.click(screen.getByRole("button", { name: "← back" }))
+    harness.failNext("/api/summarization")
+    await user.click(screen.getByRole("button", { name: "settings" }))
+    const summaryHeading = await screen.findByRole("heading", { name: "summarization", level: 2 })
+    const summarySection = summaryHeading.closest("section")
+    if (!(summarySection instanceof HTMLElement)) throw new Error("expected summarization section")
+    expect(await within(summarySection).findByText(/Summarization details couldn’t load/)).toBeTruthy()
+    expect(await screen.findByText("Source Mac")).toBeTruthy()
+    await user.click(within(summarySection).getByRole("button", { name: "try again" }))
+    expect(await within(summarySection).findByText("@cf/moonshotai/kimi-k2.5")).toBeTruthy()
+  })
+
+  test("renders the truthful disabled summarization state", async () => {
+    await makeLoadedHarness({ summarization: "disabled" })
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole("button", { name: "settings" }))
+    expect(await screen.findByText("Summarization is off on this hub.")).toBeTruthy()
   })
 
   test("shows a truthful hub failure without inventing a network diagnosis", async () => {

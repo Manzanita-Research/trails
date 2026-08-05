@@ -16,7 +16,7 @@ export interface FileFingerprint {
 }
 
 export interface CollectorState {
-  readonly protocolVersion: 1
+  readonly protocolVersion: 2
   readonly target: CollectorTarget
   readonly files: Record<string, FileFingerprint>
 }
@@ -31,6 +31,11 @@ const FingerprintSchema = Schema.Struct({
   mtimeMs: Schema.Number.pipe(Schema.nonNegative()),
 })
 const CollectorStateSchema = Schema.Struct({
+  protocolVersion: Schema.Literal(2),
+  target: TargetSchema,
+  files: Schema.Record({ key: Schema.String, value: FingerprintSchema }),
+})
+const LegacyCollectorStateSchema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   target: TargetSchema,
   files: Schema.Record({ key: Schema.String, value: FingerprintSchema }),
@@ -54,7 +59,17 @@ export function loadCollectorState(path: string): Effect.Effect<CollectorState |
   return Effect.tryPromise({
     try: async () => {
       try {
-        return decodeExact(CollectorStateSchema, JSON.parse(await readFile(path, "utf8"))) as CollectorState
+        const input: unknown = JSON.parse(await readFile(path, "utf8"))
+        try {
+          return decodeExact(CollectorStateSchema, input) as CollectorState
+        } catch (error) {
+          try {
+            decodeExact(LegacyCollectorStateSchema, input)
+            return null
+          } catch {
+            throw error
+          }
+        }
       } catch (error) {
         if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
         throw error

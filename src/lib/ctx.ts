@@ -10,6 +10,7 @@ export interface Trails {
   indexedAt: number | null
   boundary: number
   halo: number
+  timezone: string
   days: [string, DayMap][]
   engs: Engagement[]
   engOf: (project: string) => Engagement

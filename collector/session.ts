@@ -2,8 +2,8 @@ import { Effect } from "effect"
 import { createReadStream } from "node:fs"
 import { basename } from "node:path"
 import readline from "node:readline"
-import { localParts, type ActivityTuple, type Source } from "../shared/domain"
-import { decodeExact, IngestSessionV1Schema, type IngestSessionV1 } from "../shared/protocol"
+import type { Source, UtcActivityTuple } from "../shared/domain"
+import { decodeExact, IngestSessionV2Schema, type IngestSessionV2 } from "../shared/protocol"
 
 export const MAX_USER_MSGS = 20
 export const MAX_USER_LEN = 400
@@ -55,10 +55,10 @@ function isUsefulUserText(text: string): boolean {
   return !text.startsWith("Caveat:") && !text.includes("command-name")
 }
 
-export function parseSessionFile(path: string, source: Source): Effect.Effect<IngestSessionV1 | null, Error> {
+export function parseSessionFile(path: string, source: Source): Effect.Effect<IngestSessionV2 | null, Error> {
   return Effect.tryPromise({
     try: async () => {
-      const buckets = new Map<string, [string, number, number, number]>()
+      const buckets = new Map<number, [number, number, number]>()
       const userMessages: string[] = []
       const closingAgentMessages: string[] = []
       let cwd: string | null = null
@@ -137,25 +137,22 @@ export function parseSessionFile(path: string, source: Source): Effect.Effect<In
         }
 
         if (!timestamp || Number.isNaN(timestampMs) || beforeCutoff) continue
-        const canonical = new Date(timestampMs).toISOString()
-        const local = localParts(canonical)
-        if (!local) continue
+        const utcMinute = Math.floor(timestampMs / 60_000)
         events++
         if (isUser) userEvents++
         startMs = startMs === null ? timestampMs : Math.min(startMs, timestampMs)
         endMs = endMs === null ? timestampMs : Math.max(endMs, timestampMs)
-        const key = `${local.date}:${local.minute}`
-        const bucket = buckets.get(key)
+        const bucket = buckets.get(utcMinute)
         if (bucket) {
-          bucket[2]++
-          if (isUser) bucket[3]++
+          bucket[1]++
+          if (isUser) bucket[2]++
         } else {
-          buckets.set(key, [local.date, local.minute, 1, isUser ? 1 : 0])
+          buckets.set(utcMinute, [utcMinute, 1, isUser ? 1 : 0])
         }
       }
 
       if (excluded || startMs === null || endMs === null || events < 2) return null
-      const activity = [...buckets.values()].sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]) as ActivityTuple[]
+      const activity = [...buckets.values()].sort((left, right) => left[0] - right[0]) as UtcActivityTuple[]
       const durationMinutes = Math.round((endMs - startMs) / 60_000)
       const digestParts = [
         `Project: ${cwd ?? "unknown"}${branch ? ` (branch ${branch})` : ""}`,
@@ -168,7 +165,7 @@ export function parseSessionFile(path: string, source: Source): Effect.Effect<In
           : "",
       ]
       const digestText = digestParts.filter(Boolean).join("\n\n").slice(0, MAX_DIGEST) || null
-      return decodeExact(IngestSessionV1Schema, {
+      return decodeExact(IngestSessionV2Schema, {
         sourceSessionId: sourceSessionId(path, source),
         source,
         cwd,

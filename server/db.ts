@@ -12,18 +12,35 @@ export interface TrailsDb {
 
 export const DEFAULT_DB_PATH = join(homedir(), ".manzanita/trails/trails.sqlite")
 
-function applyMigrations(sqlite: Database): void {
+function applyMigrations(
+  sqlite: Database,
+  context: { readonly defaultTimezone: string; readonly now: number },
+): void {
   const current = sqlite.query("PRAGMA user_version").get() as { user_version: number }
   for (const migration of MIGRATIONS) {
     if (migration.version <= current.user_version) continue
     sqlite.transaction(() => {
       sqlite.exec(migration.sql)
+      migration.afterSql?.(sqlite, context)
       sqlite.exec(`PRAGMA user_version = ${migration.version}`)
     })()
   }
 }
 
-export function openDatabase(path = DEFAULT_DB_PATH): TrailsDb {
+function validTimezone(candidate: string | undefined): string {
+  if (candidate) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: candidate })
+      return candidate
+    } catch {}
+  }
+  return "UTC"
+}
+
+export function openDatabase(
+  path = DEFAULT_DB_PATH,
+  options: { readonly defaultTimezone?: string; readonly now?: number } = {},
+): TrailsDb {
   const resolvedPath = path === ":memory:" ? path : resolve(path)
   const previousUmask = process.umask(0o077)
   let sqlite: Database
@@ -38,7 +55,12 @@ export function openDatabase(path = DEFAULT_DB_PATH): TrailsDb {
     sqlite.exec("PRAGMA journal_mode=WAL")
     sqlite.exec("PRAGMA foreign_keys=ON")
     sqlite.exec("PRAGMA busy_timeout=5000")
-    applyMigrations(sqlite)
+    applyMigrations(sqlite, {
+      defaultTimezone: validTimezone(
+        options.defaultTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ),
+      now: options.now ?? Date.now(),
+    })
   } catch (error) {
     sqlite.close()
     throw error

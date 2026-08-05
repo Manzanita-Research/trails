@@ -1,6 +1,6 @@
 import { Effect, Schedule } from "effect"
 import { createHash } from "node:crypto"
-import { workdayOf } from "../shared/domain"
+import { localParts, workdayOf } from "../shared/domain"
 import type { InferenceConfig } from "./app"
 import type { TrailsDb } from "./db"
 
@@ -162,12 +162,12 @@ function dayMembers(db: TrailsDb, job: DayJob): DayMember[] {
   const rows = db.sqlite
     .query(
       `SELECT s.id, s.digest_hash, s.first_prompt, ss.summary, sj.session_id AS pending_id,
-         a.local_date, a.minute
+         a.utc_minute
        FROM sessions s
        JOIN session_activity a ON a.session_id = s.id
        LEFT JOIN session_summaries ss ON ss.session_id = s.id
        LEFT JOIN session_summary_jobs sj ON sj.session_id = s.id
-       WHERE s.project = ? ORDER BY s.started_at, s.id, a.local_date, a.minute`,
+       WHERE s.project = ? ORDER BY s.started_at, s.id, a.utc_minute`,
     )
     .all(job.project) as Array<{
     id: number
@@ -175,12 +175,15 @@ function dayMembers(db: TrailsDb, job: DayJob): DayMember[] {
     first_prompt: string | null
     summary: string | null
     pending_id: number | null
-    local_date: string
-    minute: number
+    utc_minute: number
   }>
+  const timezone = (
+    db.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get() as { timezone: string }
+  ).timezone
   const members = new Map<number, DayMember>()
   for (const row of rows) {
-    if (workdayOf(row.local_date, row.minute, job.boundary) !== job.workDate || members.has(row.id)) continue
+    const local = localParts(row.utc_minute * 60_000, timezone)
+    if (workdayOf(local.date, local.minute, job.boundary) !== job.workDate || members.has(row.id)) continue
     members.set(row.id, {
       id: row.id,
       digestHash: row.digest_hash,

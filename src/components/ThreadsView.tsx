@@ -140,7 +140,11 @@ export function ThreadsView() {
           {t.pocket.map((item) => (
             <div key={item.id} className="pocket-item">
               <span className="when">
-                {new Date(item.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                {new Date(item.at).toLocaleDateString("en-US", {
+                  timeZone: t.timezone,
+                  month: "short",
+                  day: "numeric",
+                })}
               </span>
               <span className="text">{item.text}</span>
               <button

@@ -48,7 +48,7 @@ async function json<T>(response: Response): Promise<T> {
 
 
 describe("authenticated inference Worker", () => {
-  test("serves only the exact POST route", async () => {
+  test("serves only the exact authenticated route and supported methods", async () => {
     const { env, calls } = fakeEnv()
 
     const wrongPath = await worker.fetch(
@@ -56,7 +56,7 @@ describe("authenticated inference Worker", () => {
       env,
     )
     const wrongMethod = await worker.fetch(
-      summarizeRequest("", { method: "GET" }),
+      summarizeRequest("", { method: "PUT" }),
       env,
     )
 
@@ -66,6 +66,25 @@ describe("authenticated inference Worker", () => {
     expect(await json(wrongMethod)).toEqual({ error: "method not allowed" })
     expect(calls).toHaveLength(0)
   })
+  test("returns effective metadata only after authentication without invoking AI", async () => {
+    const { env, calls } = fakeEnv()
+    const authorized = await worker.fetch(summarizeRequest("", { method: "GET" }), env)
+    const unauthorized = await worker.fetch(
+      summarizeRequest("", { method: "GET", token: null }),
+      env,
+    )
+
+    expect(authorized.status).toBe(200)
+    expect(await json(authorized)).toEqual({
+      protocolVersion: 1,
+      model: EXPECTED_MODEL,
+      prompts: { session: EXPECTED_SESSION_SYSTEM, day: EXPECTED_DAY_SYSTEM },
+    })
+    expect(unauthorized.status).toBe(401)
+    expect(await json(unauthorized)).toEqual({ error: "unauthorized" })
+    expect(calls).toHaveLength(0)
+  })
+
 
   test("checks the exact bearer token before parsing the body or invoking AI", async () => {
     const { env, calls } = fakeEnv()

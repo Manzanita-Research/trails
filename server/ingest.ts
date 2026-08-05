@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { createHash } from "node:crypto"
-import { normalizeCwd, workdaysOf, type ActivityTuple } from "../shared/domain"
-import type { IngestRequestV1, IngestSessionV1 } from "../shared/protocol"
+import { normalizeCwd, workdaysOfUtc, type UtcActivityTuple } from "../shared/domain"
+import type { IngestRequestV2, IngestSessionV2 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
 
 export interface IngestResult {
@@ -26,7 +26,7 @@ type ExistingSession = {
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex")
 
-export function canonicalSessionJson(session: IngestSessionV1): string {
+export function canonicalSessionJson(session: IngestSessionV2): string {
   return JSON.stringify({
     sourceSessionId: session.sourceSessionId,
     source: session.source,
@@ -42,22 +42,21 @@ export function canonicalSessionJson(session: IngestSessionV1): string {
   })
 }
 
-export function sessionContentHash(session: IngestSessionV1): string {
+export function sessionContentHash(session: IngestSessionV2): string {
   return sha256(canonicalSessionJson(session))
 }
 
-function activityForSession(sqlite: TrailsDb["sqlite"], sessionId: number): ActivityTuple[] {
+function activityForSession(sqlite: TrailsDb["sqlite"], sessionId: number): UtcActivityTuple[] {
   const rows = sqlite
     .query(
-      "SELECT local_date, minute, event_count, user_event_count FROM session_activity WHERE session_id = ? ORDER BY local_date, minute",
+      "SELECT utc_minute, event_count, user_event_count FROM session_activity WHERE session_id = ? ORDER BY utc_minute",
     )
     .all(sessionId) as Array<{
-    local_date: string
-    minute: number
+    utc_minute: number
     event_count: number
     user_event_count: number
   }>
-  return rows.map((row) => [row.local_date, row.minute, row.event_count, row.user_event_count])
+  return rows.map((row) => [row.utc_minute, row.event_count, row.user_event_count])
 }
 
 function enqueueDay(
@@ -82,7 +81,7 @@ function enqueueDay(
 
 export function ingestSessions(
   db: TrailsDb,
-  input: IngestRequestV1,
+  input: IngestRequestV2,
   now = Date.now(),
 ): Effect.Effect<IngestResult, IngestError> {
   return Effect.try({
@@ -97,17 +96,24 @@ export function ingestSessions(
           | null
         if (!machine) {
           sqlite
-            .query("INSERT INTO machines(id, name, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)")
-            .run(input.device.id, input.device.name, now, now)
+            .query(
+              `INSERT INTO machines(id, name, first_seen_at, last_seen_at, last_ingested_at)
+               VALUES (?, ?, ?, ?, ?)`,
+            )
+            .run(input.device.id, input.device.name, now, now, now)
           changed = true
         } else {
           if (machine.name !== input.device.name) {
             sqlite.query("UPDATE machines SET name = ? WHERE id = ?").run(input.device.name, input.device.id)
             changed = true
           }
-          sqlite.query("UPDATE machines SET last_seen_at = ? WHERE id = ?").run(now, input.device.id)
+          sqlite
+            .query("UPDATE machines SET last_seen_at = ?, last_ingested_at = ? WHERE id = ?")
+            .run(now, now, input.device.id)
         }
-        const settings = sqlite.query("SELECT boundary FROM settings WHERE id = 1").get() as { boundary: number }
+        const settings = sqlite
+          .query("SELECT boundary, timezone FROM settings WHERE id = 1")
+          .get() as { boundary: number; timezone: string }
 
         for (const session of input.sessions) {
           const contentHash = sessionContentHash(session)
@@ -124,7 +130,9 @@ export function ingestSessions(
           }
 
           const oldActivity = existing ? activityForSession(sqlite, existing.id) : []
-          const oldDays = existing ? workdaysOf(oldActivity, settings.boundary) : new Set<string>()
+          const oldDays = existing
+            ? workdaysOfUtc(oldActivity, settings.boundary, settings.timezone)
+            : new Set<string>()
           let sessionId: number
           if (existing) {
             sqlite
@@ -178,10 +186,10 @@ export function ingestSessions(
           }
 
           const insertActivity = sqlite.query(
-            "INSERT INTO session_activity(session_id, local_date, minute, event_count, user_event_count) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO session_activity(session_id, utc_minute, event_count, user_event_count) VALUES (?, ?, ?, ?)",
           )
-          for (const [date, minute, eventCount, userEventCount] of session.activity) {
-            insertActivity.run(sessionId, date, minute, eventCount, userEventCount)
+          for (const [utcMinute, eventCount, userEventCount] of session.activity) {
+            insertActivity.run(sessionId, utcMinute, eventCount, userEventCount)
           }
 
           const digestChanged = !existing || existing.digest_hash !== digestHash
@@ -204,7 +212,9 @@ export function ingestSessions(
 
           const affected = new Set<string>()
           for (const day of oldDays) affected.add(`${day}|${existing?.project ?? project}`)
-          for (const day of workdaysOf(session.activity, settings.boundary)) affected.add(`${day}|${project}`)
+          for (const day of workdaysOfUtc(session.activity, settings.boundary, settings.timezone)) {
+            affected.add(`${day}|${project}`)
+          }
           for (const key of affected) {
             const separator = key.indexOf("|")
             enqueueDay(sqlite, key.slice(0, separator), key.slice(separator + 1), settings.boundary, settleAt)

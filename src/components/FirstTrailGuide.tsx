@@ -8,12 +8,12 @@ export function FirstTrailGuide({
   boundary,
   halo,
   updateSettings,
-  onOrganize,
+  onOpenProjects,
 }: {
   readonly boundary: Boundary
   readonly halo: Halo
   readonly updateSettings: BootstrapMutations["updateSettings"]
-  readonly onOrganize: () => void
+  readonly onOpenProjects: () => void
 }) {
   const [boundaryPending, setBoundaryPending] = useState(false)
   const [haloPending, setHaloPending] = useState(false)
@@ -113,7 +113,7 @@ export function FirstTrailGuide({
         >
           {completionPending ? "opening your day…" : "read my day"}
         </button>
-        <button className="text-action" onClick={onOrganize}>
+        <button className="text-action" onClick={onOpenProjects}>
           organize projects first
         </button>
       </div>

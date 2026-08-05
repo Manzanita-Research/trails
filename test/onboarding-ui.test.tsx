@@ -8,7 +8,7 @@ import {
   SettingsPatchSchema,
   decodeExact,
   type BootstrapV1,
-  type IngestRequestV1,
+  type IngestRequestV2,
   type SettingsPatch,
 } from "../shared/protocol"
 import { App } from "../src/App"
@@ -22,8 +22,8 @@ const privateHubUrl = "https://trails.example.ts.net/"
 const clientSetupCommand =
   "curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- join https://trails.example.ts.net/"
 
-const firstTrail: IngestRequestV1 = {
-  protocolVersion: 1,
+const firstTrail: IngestRequestV2 = {
+  protocolVersion: 2,
   device: { id: "source-mac", name: "Source Mac" },
   sessions: [
     {
@@ -36,7 +36,7 @@ const firstTrail: IngestRequestV1 = {
       events: 2,
       userEvents: 1,
       firstPrompt: "Make the first trail legible",
-      activity: [["2026-07-01", 330, 2, 1]],
+      activity: [[Math.floor(Date.parse("2026-07-01T12:29:00.000Z") / 60_000), 2, 1]],
       digest: null,
     },
   ],
@@ -285,6 +285,13 @@ describe("first-run onboarding", () => {
     await expectCanonical(harness, { halo: 15 })
     expect(halo.value).toBe("15")
     await waitFor(() => expect(screen.queryByText("That setting didn’t save. Try again.")).toBeNull())
+    await user.click(screen.getByRole("button", { name: "organize projects first" }))
+    const projectsHeading = await screen.findByRole("heading", { name: "projects", level: 2 })
+    expect(Object.is(document.activeElement, projectsHeading)).toBe(true)
+    expect(screen.queryByRole("dialog", { name: /organize projects/i })).toBeNull()
+    expect(screen.getByRole("button", { name: "settings" }).getAttribute("aria-current")).toBe("page")
+    await user.click(screen.getByRole("button", { name: "← back" }))
+    expect(await screen.findByRole("button", { name: "read my day" })).toBeTruthy()
 
     harness.failNextSettingsPatch({ onboardingVersion: 1 })
     await user.click(screen.getByRole("button", { name: "read my day" }))

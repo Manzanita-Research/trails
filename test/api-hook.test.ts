@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { BootstrapV1 } from "../shared/protocol"
-import { createBootstrapRequester } from "../src/lib/api"
+import { createBootstrapRequester, fetchMachines, fetchSummarization } from "../src/lib/api"
 
 function bootstrap(revision: number): BootstrapV1 {
   return {
@@ -130,5 +130,55 @@ describe("bootstrap request ordering", () => {
 
     expect(data).toBe(loaded)
     expect(errors).toEqual(["Hub unavailable"])
+  })
+})
+
+describe("settings metadata queries", () => {
+  test("exact-decodes machines and summarization responses", async () => {
+    const paths: string[] = []
+    const request = async (input: RequestInfo | URL): Promise<Response> => {
+      paths.push(String(input))
+      if (String(input) === "/api/machines") {
+        return Response.json({
+          protocolVersion: 1,
+          generatedAt: "2026-08-04T12:00:00.000Z",
+          machines: [],
+        })
+      }
+      return Response.json({ enabled: false, metadata: null })
+    }
+    expect(await fetchMachines(request)).toEqual({
+      protocolVersion: 1,
+      generatedAt: "2026-08-04T12:00:00.000Z",
+      machines: [],
+    })
+    expect(await fetchSummarization(request)).toEqual({ enabled: false, metadata: null })
+    expect(paths).toEqual(["/api/machines", "/api/summarization"])
+  })
+
+  test("rejects non-exact and failed settings metadata responses", async () => {
+    await expect(
+      fetchMachines(async () =>
+        Response.json({
+          protocolVersion: 1,
+          generatedAt: "2026-08-04T12:00:00.000Z",
+          machines: [],
+          online: true,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(Error)
+    await expect(
+      fetchSummarization(async () =>
+        Response.json(
+          {
+            error: {
+              code: "upstream_unavailable",
+              message: "summarization metadata unavailable",
+            },
+          },
+          { status: 502 },
+        ),
+      ),
+    ).rejects.toThrow("summarization metadata unavailable")
   })
 })

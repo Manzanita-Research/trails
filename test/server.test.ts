@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -6,7 +7,7 @@ import { createApp, setAdvertisedHubUrl } from "../server/app"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
 import { MIGRATIONS } from "../server/migrations"
-import type { BootstrapV1, IngestRequestV1, IngestSessionV1 } from "../shared/protocol"
+import type { BootstrapV1, IngestRequestV2, IngestSessionV2 } from "../shared/protocol"
 
 const roots = new Set<string>()
 const databases = new Set<TrailsDb>()
@@ -17,10 +18,66 @@ async function temporaryRoot(): Promise<string> {
   return root
 }
 
-function trackedDatabase(path: string): TrailsDb {
-  const database = openDatabase(path)
+function trackedDatabase(path: string) {
+  const database = openDatabase(path, { defaultTimezone: "America/Los_Angeles" })
   databases.add(database)
   return database
+}
+const LEGACY_PROJECT = "code/acme/fallback"
+const LEGACY_START = "2026-11-01T09:30:30.000Z"
+const LEGACY_END = "2026-11-01T09:31:00.000Z"
+const LEGACY_UPDATED_AT = Date.parse("2026-11-01T09:32:00.000Z")
+
+function createMigration3Fixture(path: string): void {
+  const legacy = new Database(path, { create: true, strict: true })
+  for (const migration of MIGRATIONS.slice(0, 3)) legacy.exec(migration.sql)
+  legacy.exec("PRAGMA user_version = 3")
+  legacy
+    .query("INSERT INTO machines(id, name, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)")
+    .run("legacy-mac", "Legacy Mac", LEGACY_UPDATED_AT - 1_000, LEGACY_UPDATED_AT)
+  const inserted = legacy
+    .query(
+      `INSERT INTO sessions(machine_id, source, source_session_id, cwd, project, branch, started_at,
+         ended_at, event_count, user_event_count, first_prompt, digest, digest_hash, content_hash, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    )
+    .get(
+      "legacy-mac",
+      "omp",
+      "fallback",
+      `/Users/tester/${LEGACY_PROJECT}`,
+      LEGACY_PROJECT,
+      "feat/fallback",
+      LEGACY_START,
+      LEGACY_END,
+      2,
+      1,
+      "Repeated hour",
+      null,
+      null,
+      "legacy-content",
+      LEGACY_UPDATED_AT,
+    ) as { id: number }
+  legacy
+    .query(
+      `INSERT INTO session_activity(session_id, local_date, minute, event_count, user_event_count)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(inserted.id, "2026-11-01", 90, 2, 1)
+  legacy
+    .query(
+      `INSERT INTO day_summaries(work_date, project, boundary, model, summary, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run("2026-10-31", LEGACY_PROJECT, 6, "legacy", "Legacy day", LEGACY_UPDATED_AT)
+  legacy
+    .query(
+      `INSERT INTO day_summary_jobs(work_date, project, boundary, generation, attempts, available_at, last_error)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run("2026-10-31", LEGACY_PROJECT, 6, 7, 2, LEGACY_UPDATED_AT, "LegacyError")
+  legacy.query("UPDATE meta SET value = '11' WHERE key = 'state_revision'").run()
+  legacy.close()
 }
 
 function closeDatabase(database: TrailsDb): void {
@@ -43,8 +100,8 @@ afterEach(async () => {
 
 function session(
   sourceSessionId: string,
-  overrides: Partial<IngestSessionV1> = {},
-): IngestSessionV1 {
+  overrides: Partial<IngestSessionV2> = {},
+): IngestSessionV2 {
   return {
     sourceSessionId,
     source: "omp",
@@ -55,17 +112,17 @@ function session(
     events: 2,
     userEvents: 1,
     firstPrompt: "Build the hub",
-    activity: [["2026-08-03", 540, 2, 1]],
+    activity: [[Math.floor(Date.parse("2026-08-03T16:00:00.000Z") / 60_000), 2, 1]],
     digest: "A bounded private digest",
     ...overrides,
   }
 }
 
 function ingestBody(
-  sessions: ReadonlyArray<IngestSessionV1>,
+  sessions: ReadonlyArray<IngestSessionV2>,
   device = { id: "device-a", name: "Studio" },
-): IngestRequestV1 {
-  return { protocolVersion: 1, device, sessions }
+): IngestRequestV2 {
+  return { protocolVersion: 2, device, sessions }
 }
 
 type App = (request: Request) => Promise<Response>
@@ -92,7 +149,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -100,7 +157,7 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(3)
+    expect(userVersion.user_version).toBe(5)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
     expect(Object.values(busyTimeout)[0]).toBe(5000)
@@ -140,15 +197,140 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(3)
+    expect(reopenedVersion.user_version).toBe(5)
     expect(
-      reopened.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
+      reopened.sqlite
+        .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
+        .get(),
     ).toEqual({
       boundary: 6,
       halo: 15,
       onboarding_version: 0,
       hub_url: "http://127.0.0.1:7412/",
+      timezone: "America/Los_Angeles",
     })
+  })
+  test("migrates Pacific activity to UTC, adopts Rome, and makes collector replay idempotent", async () => {
+    const root = await temporaryRoot()
+    const path = join(root, "rome.sqlite")
+    createMigration3Fixture(path)
+    const migrationNow = Date.parse("2026-11-01T10:00:00.000Z")
+    const database = openDatabase(path, { defaultTimezone: "Europe/Rome", now: migrationNow })
+    databases.add(database)
+
+    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 5 })
+    expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
+      timezone: "Europe/Rome",
+    })
+    const repeatedMinute = Math.floor(Date.parse("2026-11-01T09:30:00.000Z") / 60_000)
+    expect(
+      database.sqlite
+        .query("SELECT utc_minute, event_count, user_event_count FROM session_activity")
+        .all(),
+    ).toEqual([{ utc_minute: repeatedMinute, event_count: 2, user_event_count: 1 }])
+    expect(database.sqlite.query("SELECT work_date FROM day_summaries").all()).toEqual([])
+    expect(
+      database.sqlite
+        .query("SELECT work_date, project, boundary, generation, available_at FROM day_summary_jobs")
+        .all(),
+    ).toEqual([
+      {
+        work_date: "2026-11-01",
+        project: LEGACY_PROJECT,
+        boundary: 6,
+        generation: 8,
+        available_at: migrationNow,
+      },
+    ])
+    expect(database.sqlite.query("SELECT updated_at FROM sessions").get()).toEqual({
+      updated_at: LEGACY_UPDATED_AT,
+    })
+    expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({
+      value: "11",
+    })
+
+    const migratedSession: IngestSessionV2 = {
+      sourceSessionId: "fallback",
+      source: "omp",
+      cwd: `/Users/tester/${LEGACY_PROJECT}`,
+      branch: "feat/fallback",
+      start: LEGACY_START,
+      end: LEGACY_END,
+      events: 2,
+      userEvents: 1,
+      firstPrompt: "Repeated hour",
+      activity: [[repeatedMinute, 2, 1]],
+      digest: null,
+    }
+    const app = createApp({ db: database, now: () => migrationNow + 1_000 })
+    let response = await request(
+      app,
+      "POST",
+      "/api/ingest",
+      ingestBody([migratedSession], { id: "legacy-mac", name: "Legacy Mac" }),
+    )
+    expect(await json(response)).toEqual({ accepted: 0, unchanged: 1, revision: 11 })
+    expect(database.sqlite.query("SELECT updated_at FROM sessions").get()).toEqual({
+      updated_at: LEGACY_UPDATED_AT,
+    })
+    expect(database.sqlite.query("SELECT COUNT(*) AS count FROM day_summary_jobs").get()).toEqual({
+      count: 1,
+    })
+
+    response = await request(
+      app,
+      "POST",
+      "/api/ingest",
+      ingestBody(
+        [
+          {
+            ...migratedSession,
+            activity: [
+              [Math.floor(Date.parse("2026-11-01T08:30:00.000Z") / 60_000), 1, 1],
+              [repeatedMinute, 1, 0],
+            ],
+          },
+        ],
+        { id: "legacy-mac", name: "Legacy Mac" },
+      ),
+    )
+    expect(await json(response)).toEqual({ accepted: 1, unchanged: 0, revision: 12 })
+    expect(
+      database.sqlite.query("SELECT utc_minute FROM session_activity ORDER BY utc_minute").all(),
+    ).toEqual([
+      { utc_minute: Math.floor(Date.parse("2026-11-01T08:30:00.000Z") / 60_000) },
+      { utc_minute: repeatedMinute },
+    ])
+
+    closeDatabase(database)
+    const reopened = openDatabase(path, { defaultTimezone: "UTC", now: migrationNow + 2_000 })
+    databases.add(reopened)
+    expect(reopened.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
+      timezone: "Europe/Rome",
+    })
+    expect(reopened.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({
+      value: "12",
+    })
+  })
+
+  test("retains valid Pacific day summaries and generations during migration", async () => {
+    const root = await temporaryRoot()
+    const path = join(root, "los-angeles.sqlite")
+    createMigration3Fixture(path)
+    const database = openDatabase(path, {
+      defaultTimezone: "America/Los_Angeles",
+      now: Date.parse("2026-11-01T10:00:00.000Z"),
+    })
+    databases.add(database)
+
+    expect(database.sqlite.query("SELECT work_date, summary FROM day_summaries").all()).toEqual([
+      { work_date: "2026-10-31", summary: "Legacy day" },
+    ])
+    expect(
+      database.sqlite.query("SELECT work_date, generation, attempts, last_error FROM day_summary_jobs").all(),
+    ).toEqual([
+      { work_date: "2026-10-31", generation: 7, attempts: 2, last_error: "LegacyError" },
+    ])
   })
 })
 
@@ -164,6 +346,205 @@ describe("advertised hub URL", () => {
     const response = await request(app, "GET", "/api/bootstrap")
     expect(response.status).toBe(200)
     expect(await json<BootstrapV1>(response)).toMatchObject({ revision: 1, hubUrl: url })
+  })
+})
+
+describe("collector status and machine topology", () => {
+  test("tracks receipt freshness, nullable metrics, errors, sorting, and visible name revisions", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "machines.sqlite"))
+    let now = Date.parse("2026-08-04T10:00:00.000Z")
+    const app = createApp({ db: database, now: () => now })
+    const metrics = { discovered: 2, changed: 1, uploaded: 1, ignored: 0, unchanged: 1 }
+    const status = (
+      device: { id: string; name: string },
+      outcome: Record<string, unknown>,
+    ) => request(app, "POST", "/api/collector-status", { protocolVersion: 1, device, outcome })
+
+    let response = await status(
+      { id: "spoke-b", name: "beta" },
+      { status: "processed", metrics, error: null },
+    )
+    expect(response.status).toBe(204)
+    expect(await response.text()).toBe("")
+    expect(
+      await json(await request(app, "GET", "/api/machines")),
+    ).toEqual({
+      protocolVersion: 1,
+      generatedAt: new Date(now).toISOString(),
+      machines: [
+        {
+          id: "spoke-b",
+          name: "beta",
+          firstSeenAt: new Date(now).toISOString(),
+          lastIngestedAt: null,
+          lastCheckedAt: new Date(now).toISOString(),
+          lastProcessedAt: new Date(now).toISOString(),
+          lastError: null,
+          metrics,
+        },
+      ],
+    })
+    expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({
+      value: "0",
+    })
+
+    now += 1_000
+    response = await request(
+      app,
+      "POST",
+      "/api/ingest",
+      ingestBody([session("machine-session")], { id: "spoke-b", name: "beta" }),
+    )
+    expect(await json(response)).toEqual({ accepted: 1, unchanged: 0, revision: 1 })
+
+    const processedAt = Date.parse("2026-08-04T10:00:00.000Z")
+    now += 1_000
+    await status(
+      { id: "spoke-b", name: "beta" },
+      {
+        status: "failed",
+        metrics: { discovered: 3, changed: 2, uploaded: 0, ignored: 1, unchanged: 1 },
+        error: "parse_error",
+      },
+    )
+    let machines = (await json<{ machines: Array<Record<string, unknown>> }>(
+      await request(app, "GET", "/api/machines"),
+    )).machines
+    expect(machines[0]).toMatchObject({
+      lastIngestedAt: new Date(now - 1_000).toISOString(),
+      lastCheckedAt: new Date(now).toISOString(),
+      lastProcessedAt: new Date(processedAt).toISOString(),
+      lastError: "parse_error",
+      metrics: { discovered: 3, changed: 2, uploaded: 0, ignored: 1, unchanged: 1 },
+    })
+
+    now += 1_000
+    await status(
+      { id: "spoke-b", name: "beta" },
+      { status: "failed", metrics: null, error: "collector_error" },
+    )
+    machines = (await json<{ machines: Array<Record<string, unknown>> }>(
+      await request(app, "GET", "/api/machines"),
+    )).machines
+    expect(machines[0]).toMatchObject({
+      lastProcessedAt: new Date(processedAt).toISOString(),
+      lastError: "collector_error",
+      metrics: null,
+    })
+
+    now += 1_000
+    await status(
+      { id: "spoke-b", name: "Alpha" },
+      { status: "processed", metrics: { ...metrics, changed: 0, uploaded: 0 }, error: null },
+    )
+    expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({
+      value: "2",
+    })
+    await status(
+      { id: "spoke-z", name: "alpha" },
+      { status: "failed", metrics: null, error: "upload_error" },
+    )
+    await status(
+      { id: "spoke-a", name: "alpha" },
+      { status: "failed", metrics: null, error: "upload_error" },
+    )
+    await status(
+      { id: "spoke-z", name: "Zulu" },
+      { status: "failed", metrics: null, error: "upload_error" },
+    )
+    expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({
+      value: "2",
+    })
+    machines = (await json<{ machines: Array<Record<string, unknown>> }>(
+      await request(app, "GET", "/api/machines"),
+    )).machines
+    expect(machines.map((machine) => [machine.name, machine.id])).toEqual([
+      ["alpha", "spoke-a"],
+      ["Alpha", "spoke-b"],
+      ["Zulu", "spoke-z"],
+    ])
+    expect(machines.every((machine) => !("online" in machine))).toBe(true)
+  })
+})
+
+describe("summarization metadata proxy", () => {
+  test("returns disabled, effective, and sanitized unavailable states", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "summarization.sqlite"))
+    const disabled = createApp({ db: database })
+    expect(await json(await request(disabled, "GET", "/api/summarization"))).toEqual({
+      enabled: false,
+      metadata: null,
+    })
+
+    const metadata = {
+      protocolVersion: 1,
+      model: "@cf/moonshotai/kimi-k2.5",
+      prompts: { session: "Session system prompt", day: "Day system prompt" },
+    }
+    const relayCalls: Array<{ url: string; authorization: string | null; method: string }> = []
+    const relayFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      relayCalls.push({
+        url: String(input),
+        authorization: new Headers(init?.headers).get("authorization"),
+        method: init?.method ?? "GET",
+      })
+      return Response.json(metadata)
+    }) as typeof globalThis.fetch
+    const enabled = createApp({
+      db: database,
+      inference: { url: "https://private-relay.example/api/summarize", token: "private-token" },
+      fetch: relayFetch,
+    })
+    expect(await json(await request(enabled, "GET", "/api/summarization"))).toEqual({
+      enabled: true,
+      metadata,
+    })
+    expect(relayCalls).toEqual([
+      {
+        url: "https://private-relay.example/api/summarize",
+        authorization: "Bearer private-token",
+        method: "GET",
+      },
+    ])
+
+    for (const relayResponse of [
+      Response.json({ private: "upstream secret body" }, { status: 503 }),
+      Response.json({ ...metadata, inferenceUrl: "https://private-relay.example" }),
+    ]) {
+      const broken = createApp({
+        db: database,
+        inference: { url: "https://private-relay.example/api/summarize", token: "private-token" },
+        fetch: (async () => relayResponse.clone()) as unknown as typeof globalThis.fetch,
+      })
+      const response = await request(broken, "GET", "/api/summarization")
+      expect(response.status).toBe(502)
+      const body = await json(response)
+      expect(body).toEqual({
+        error: {
+          code: "upstream_unavailable",
+          message: "summarization metadata unavailable",
+        },
+      })
+      expect(JSON.stringify(body)).not.toContain("private")
+    }
+
+    const unreachable = createApp({
+      db: database,
+      inference: { url: "https://private-relay.example/api/summarize", token: "private-token" },
+      fetch: (async () => {
+        throw new Error("network leaked details")
+      }) as unknown as typeof globalThis.fetch,
+    })
+    const unavailable = await request(unreachable, "GET", "/api/summarization")
+    expect(unavailable.status).toBe(502)
+    expect(await json(unavailable)).toEqual({
+      error: {
+        code: "upstream_unavailable",
+        message: "summarization metadata unavailable",
+      },
+    })
   })
 })
 
@@ -193,8 +574,8 @@ describe("ingest and bootstrap", () => {
       events: 4,
       userEvents: 2,
       activity: [
-        ["2026-08-03", 540, 1, 1],
-        ["2026-08-03", 542, 3, 1],
+        [Math.floor(Date.parse("2026-08-03T16:00:00.000Z") / 60_000), 1, 1],
+        [Math.floor(Date.parse("2026-08-03T16:02:00.000Z") / 60_000), 3, 1],
       ],
       digest: "NEW PRIVATE TRANSCRIPT DIGEST",
     })
@@ -207,10 +588,18 @@ describe("ingest and bootstrap", () => {
     expect(stored).toMatchObject({ machine_id: "device-a", source_session_id: "hidden-source-session", event_count: 4 })
     expect(stored.content_hash).toBe(sessionContentHash(changed))
     expect(database.sqlite
-      .query("SELECT local_date, minute, event_count, user_event_count FROM session_activity ORDER BY minute")
+      .query("SELECT utc_minute, event_count, user_event_count FROM session_activity ORDER BY utc_minute")
       .all()).toEqual([
-      { local_date: "2026-08-03", minute: 540, event_count: 1, user_event_count: 1 },
-      { local_date: "2026-08-03", minute: 542, event_count: 3, user_event_count: 1 },
+      {
+        utc_minute: Math.floor(Date.parse("2026-08-03T16:00:00.000Z") / 60_000),
+        event_count: 1,
+        user_event_count: 1,
+      },
+      {
+        utc_minute: Math.floor(Date.parse("2026-08-03T16:02:00.000Z") / 60_000),
+        event_count: 3,
+        user_event_count: 1,
+      },
     ])
 
     response = await request(app, "POST", "/api/ingest", ingestBody([changed], { id: "device-b", name: "Laptop" }))
@@ -263,9 +652,17 @@ describe("ingest and bootstrap", () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
     const app = createApp({ db: database })
+    const legacy = { ...ingestBody([session("legacy")]), protocolVersion: 1 }
+    let response = await request(app, "POST", "/api/ingest", legacy)
+    expect(response.status).toBe(400)
+    expect(await json(response)).toEqual({
+      error: { code: "unsupported_protocol", message: "unsupported protocol version" },
+    })
+    expect(database.sqlite.query("SELECT COUNT(*) AS count FROM sessions").get()).toEqual({ count: 0 })
+
     const fifty = Array.from({ length: 50 }, (_, index) => session(`session-${index}`))
 
-    let response = await request(app, "POST", "/api/ingest", ingestBody(fifty))
+    response = await request(app, "POST", "/api/ingest", ingestBody(fifty))
     expect(response.status).toBe(200)
     expect(await json(response)).toEqual({ accepted: 50, unchanged: 0, revision: 1 })
     const countAtLimit = database.sqlite.query("SELECT count(*) AS count FROM sessions").get() as { count: number }
@@ -425,6 +822,59 @@ describe("state mutation API", () => {
       pocket: [],
     })
     expect(bootstrap.preferences.customEngagements).toEqual([createdEngagement.engagement])
+  })
+  test("regroups workdays atomically when the persisted timezone changes", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "timezone.sqlite"))
+    const now = Date.parse("2026-08-04T12:00:00.000Z")
+    const app = createApp({ db: database, now: () => now })
+    const utcMinute = Math.floor(Date.parse("2026-08-04T08:00:00.000Z") / 60_000)
+    const timed = session("timezone", {
+      start: "2026-08-04T08:00:00.000Z",
+      end: "2026-08-04T08:01:00.000Z",
+      activity: [[utcMinute, 2, 1]],
+    })
+    let response = await request(app, "POST", "/api/ingest", ingestBody([timed]))
+    expect(await json(response)).toEqual({ accepted: 1, unchanged: 0, revision: 1 })
+    const sessionId = (
+      database.sqlite.query("SELECT id FROM sessions WHERE source_session_id = 'timezone'").get() as {
+        id: number
+      }
+    ).id
+    database.sqlite
+      .query(
+        `INSERT INTO session_summaries(session_id, digest_hash, model, summary, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(sessionId, "digest", "test", "Session stays", now)
+    database.sqlite
+      .query(
+        `INSERT INTO day_summaries(work_date, project, boundary, model, summary, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run("2026-08-03", "code/acme/trails", 6, "test", "Pacific day", now)
+
+    response = await request(app, "PATCH", "/api/settings", { timezone: "Europe/Rome" })
+    expect(await json(response)).toEqual({ revision: 2 })
+    const bootstrap = await json<BootstrapV1>(await request(app, "GET", "/api/bootstrap"))
+    expect(bootstrap.timezone).toBe("Europe/Rome")
+    expect(bootstrap.sessions[0].activity).toEqual([["2026-08-04", 600, 2, 1]])
+    expect(bootstrap.summaries.days).toEqual({})
+    expect(bootstrap.summaries.sessions[String(sessionId)]).toBe("Session stays")
+    expect(
+      database.sqlite.query("SELECT work_date, boundary FROM day_summary_jobs").all(),
+    ).toEqual([{ work_date: "2026-08-04", boundary: 6 }])
+
+    response = await request(app, "PATCH", "/api/settings", { timezone: "Europe/Rome" })
+    expect(await json(response)).toEqual({ revision: 2 })
+    response = await request(app, "PATCH", "/api/settings", { timezone: "Not/A_Zone" })
+    expect(response.status).toBe(400)
+    expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
+      timezone: "Europe/Rome",
+    })
+    expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({
+      value: "2",
+    })
   })
 })
 

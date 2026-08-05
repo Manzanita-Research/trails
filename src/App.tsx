@@ -14,23 +14,21 @@ import {
 } from "./lib/data"
 import { TrailsCtx, type Trails } from "./lib/ctx"
 import { useBootstrap, type BootstrapMutations } from "./lib/api"
-import { Topbar, type ListView } from "./components/Topbar"
+import { Topbar, type AppView, type ListView } from "./components/Topbar"
 import { DaysView } from "./components/DaysView"
 import { WeekView } from "./components/WeekView"
 import { ThreadsView } from "./components/ThreadsView"
 import { ProjectView } from "./components/ProjectView"
-import { SortPanel } from "./components/SortPanel"
+import { SettingsView } from "./components/SettingsView"
 import { WelcomeView } from "./components/WelcomeView"
 import { FirstTrailGuide } from "./components/FirstTrailGuide"
 import { FeedbackPanel } from "./components/FeedbackPanel"
 import { FEEDBACK_ENDPOINT, type FeedbackSafeContextInput } from "./lib/feedback"
 
 type ShellMode = "loading" | "hub-error" | "welcome" | "onboarding" | "loaded"
-type PanelName = "organize" | "feedback"
-type OpenPanel = PanelName | null
 
 interface FeedbackLocation {
-  readonly view: "days" | "week" | "threads" | "project"
+  readonly view: "days" | "week" | "threads" | "project" | "settings"
   readonly workDate: string | null
 }
 
@@ -42,7 +40,6 @@ interface TooltipState {
   readonly top: number
 }
 
-const ORGANIZE_PANEL_ID = "organize-projects-panel"
 const FEEDBACK_PANEL_ID = "feedback-panel"
 
 function shellModeOf(data: BootstrapV1 | null, loading: boolean): ShellMode {
@@ -59,9 +56,8 @@ function LoadedApp({
   syncError,
   retry,
   onboarding,
-  openPanel,
-  setOpenPanel,
-  organizeTriggerRef,
+  feedbackOpen,
+  setFeedbackOpen,
   feedbackTriggerRef,
   setFeedbackLocation,
 }: {
@@ -70,16 +66,17 @@ function LoadedApp({
   readonly syncError: string | null
   readonly retry: () => Promise<void>
   readonly onboarding: boolean
-  readonly openPanel: OpenPanel
-  readonly setOpenPanel: Dispatch<SetStateAction<OpenPanel>>
-  readonly organizeTriggerRef: RefObject<HTMLButtonElement | null>
+  readonly feedbackOpen: boolean
+  readonly setFeedbackOpen: Dispatch<SetStateAction<boolean>>
   readonly feedbackTriggerRef: RefObject<HTMLButtonElement | null>
   readonly setFeedbackLocation: Dispatch<SetStateAction<FeedbackLocation>>
 }
 ) {
   const { boundary, halo, assignments, customEngagements, names, pocket } = bootstrap.preferences
-  const [view, setView] = useState<ListView | "project">("days")
+  const [view, setView] = useState<AppView>("days")
   const [lastListView, setLastListView] = useState<ListView>("days")
+  const [projectBackView, setProjectBackView] = useState<ListView | "settings">("days")
+  const [settingsEntry, setSettingsEntry] = useState<"top" | "projects">("top")
   const [projectKey, setProjectKey] = useState<string | null>(null)
   const [dayIdx, setDayIdx] = useState(0)
 
@@ -129,15 +126,21 @@ function LoadedApp({
     indexedAt,
     boundary,
     halo,
+    timezone: bootstrap.timezone,
     days,
     engs,
     engOf: (project) => engagementOf(project, orgByProject.get(project) ?? "(unknown)", assignments, engs),
     dispName: (project) => names[project] ?? nameOf(project),
     openProject: (project) => {
-      if (view !== "project") setLastListView(view)
+      if (view === "settings") {
+        setProjectBackView("settings")
+      } else if (view !== "project") {
+        setLastListView(view)
+        setProjectBackView(view)
+      }
       setProjectKey(project)
       setView("project")
-      setOpenPanel(null)
+      setFeedbackOpen(false)
       scrollTo({ top: 0 })
     },
     openDay: (date) => {
@@ -193,42 +196,25 @@ function LoadedApp({
     setLastListView(nextView)
   }
 
+  const showSettings = (entry: "top" | "projects" = "top") => {
+    if (view !== "project" && view !== "settings") setLastListView(view)
+    setSettingsEntry(entry)
+    setView("settings")
+  }
+
   return (
     <TrailsCtx.Provider value={trails}>
       <div onMouseMove={onMove} onMouseLeave={() => setTooltip(null)}>
-        {onboarding ? (
-          <Topbar
-            mode="onboarding"
-            view={view}
-            onView={showView}
-            organizeExpanded={openPanel === "organize"}
-            organizeControls={ORGANIZE_PANEL_ID}
-            organizeTriggerRef={organizeTriggerRef}
-            onOrganize={() => setOpenPanel((current) => (current === "organize" ? null : "organize"))}
-            feedbackExpanded={openPanel === "feedback"}
-            feedbackControls={FEEDBACK_PANEL_ID}
-            feedbackTriggerRef={feedbackTriggerRef}
-            onFeedback={() => setOpenPanel((current) => (current === "feedback" ? null : "feedback"))}
-          />
-        ) : (
-          <Topbar
-            mode="loaded"
-            view={view}
-            onView={showView}
-            organizeExpanded={openPanel === "organize"}
-            organizeControls={ORGANIZE_PANEL_ID}
-            organizeTriggerRef={organizeTriggerRef}
-            onOrganize={() => setOpenPanel((current) => (current === "organize" ? null : "organize"))}
-            feedbackExpanded={openPanel === "feedback"}
-            feedbackControls={FEEDBACK_PANEL_ID}
-            feedbackTriggerRef={feedbackTriggerRef}
-            onFeedback={() => setOpenPanel((current) => (current === "feedback" ? null : "feedback"))}
-            boundary={boundary}
-            setBoundary={(value) => mutations.updateSettings({ boundary: value })}
-            halo={halo}
-            setHalo={(value) => mutations.updateSettings({ halo: value })}
-          />
-        )}
+        <Topbar
+          mode={onboarding ? "onboarding" : "loaded"}
+          view={view}
+          onView={showView}
+          onSettings={() => showSettings("top")}
+          feedbackExpanded={feedbackOpen}
+          feedbackControls={FEEDBACK_PANEL_ID}
+          feedbackTriggerRef={feedbackTriggerRef}
+          onFeedback={() => setFeedbackOpen((current) => !current)}
+        />
         {syncError && (
           <div className="sync-error" role="status">
             Sync paused — the last snapshot is still shown. <button onClick={() => void retry()}>retry</button> reconnects.
@@ -240,7 +226,7 @@ function LoadedApp({
               boundary={boundary}
               halo={halo}
               updateSettings={mutations.updateSettings}
-              onOrganize={() => setOpenPanel("organize")}
+              onOpenProjects={() => showSettings("projects")}
             />
           )}
           {view === "days" && <DaysView dayIdx={dayIdx} onDayIdx={setDayIdx} />}
@@ -249,17 +235,20 @@ function LoadedApp({
           {view === "project" && projectKey && (
             <ProjectView
               project={projectKey}
-              backLabel={backLabels[lastListView]}
+              backLabel={projectBackView === "settings" ? "settings" : backLabels[projectBackView]}
+              onBack={() => setView(projectBackView)}
+            />
+          )}
+          {view === "settings" && (
+            <SettingsView
+              bootstrap={bootstrap}
+              mutations={mutations}
+              entryTarget={settingsEntry}
               onBack={() => setView(lastListView)}
+              onTimezoneSaved={() => setDayIdx(0)}
             />
           )}
         </main>
-        <SortPanel
-          id={ORGANIZE_PANEL_ID}
-          open={openPanel === "organize"}
-          onClose={() => setOpenPanel(null)}
-          fallbackFocusRef={organizeTriggerRef}
-        />
         {tooltip && (
           <div className="tooltip" style={{ left: tooltip.left, top: tooltip.top }}>
             <span className="sq" aria-hidden="true" style={{ background: engColor(trails.engOf(tooltip.project)) }} />
@@ -281,10 +270,9 @@ function LoadedApp({
 
 export function App() {
   const { data, loading, error, retry, mutations } = useBootstrap()
-  const [openPanel, setOpenPanel] = useState<OpenPanel>(null)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackLocation, setFeedbackLocation] = useState<FeedbackLocation>({ view: "days", workDate: null })
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
-  const organizeTriggerRef = useRef<HTMLButtonElement>(null)
   const feedbackTriggerRef = useRef<HTMLButtonElement>(null)
   const mode = shellModeOf(data, loading)
 
@@ -294,9 +282,9 @@ export function App() {
     return () => window.removeEventListener("resize", onResize)
   }, [])
 
-  const toggleFeedback = () => setOpenPanel((current) => (current === "feedback" ? null : "feedback"))
+  const toggleFeedback = () => setFeedbackOpen((current) => !current)
   const feedbackTriggerProps = {
-    feedbackExpanded: openPanel === "feedback",
+    feedbackExpanded: feedbackOpen,
     feedbackControls: FEEDBACK_PANEL_ID,
     feedbackTriggerRef,
     onFeedback: toggleFeedback,
@@ -370,9 +358,8 @@ export function App() {
         syncError={error}
         retry={retry}
         onboarding={mode === "onboarding"}
-        openPanel={openPanel}
-        setOpenPanel={setOpenPanel}
-        organizeTriggerRef={organizeTriggerRef}
+        feedbackOpen={feedbackOpen}
+        setFeedbackOpen={setFeedbackOpen}
         feedbackTriggerRef={feedbackTriggerRef}
         setFeedbackLocation={setFeedbackLocation}
       />
@@ -384,8 +371,8 @@ export function App() {
       {shell}
       <FeedbackPanel
         id={FEEDBACK_PANEL_ID}
-        open={openPanel === "feedback"}
-        onClose={() => setOpenPanel(null)}
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
         fallbackFocusRef={feedbackTriggerRef}
         endpoint={FEEDBACK_ENDPOINT}
         contextInput={contextInput}

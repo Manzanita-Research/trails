@@ -75,6 +75,7 @@ curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
 - Trails stores its database at `~/.manzanita/trails/trails.sqlite` on the hub.
 - Trails creates a committed SQLite backup every day at 03:00 and keeps the latest 14 under `~/.manzanita/trails/backups/`.
 - Generated summaries may be unavailable during the alpha. Trails continues working and uses the first prompt as a fallback.
+- Open **settings** in the web app to choose the day boundary, attention halo, and IANA time zone used for displayed times and day grouping. The same screen shows collector freshness and the effective summarization model and prompts without exposing editable relay configuration.
 
 ## Update
 

@@ -31,9 +31,9 @@ async function parse(path: string, source: Source) {
   return Effect.runPromise(parseSessionFile(path, source))
 }
 
-function totals(activity: ReadonlyArray<readonly [string, number, number, number]>) {
+function totals(activity: ReadonlyArray<readonly [number, number, number]>) {
   return activity.reduce(
-    (sum, tuple) => ({ events: sum.events + tuple[2], users: sum.users + tuple[3] }),
+    (sum, tuple) => ({ events: sum.events + tuple[1], users: sum.users + tuple[2] }),
     { events: 0, users: 0 },
   )
 }
@@ -77,7 +77,7 @@ describe("session JSONL parsing", () => {
       events: 2,
       userEvents: 1,
       firstPrompt: "private tag Build the thing",
-      activity: [["2026-07-01", 600, 2, 1]],
+      activity: [[Math.floor(Date.parse("2026-07-01T17:00:00.000Z") / 60_000), 2, 1]],
     })
     expect(totals(result!.activity)).toEqual({ events: result!.events, users: result!.userEvents })
   })
@@ -270,6 +270,37 @@ describe("session JSONL parsing", () => {
     expect(result!.digest).toContain("agent-3:")
     expect(result!.digest).toContain("agent-4:")
     expect(result!.digest).not.toContain("TAIL-4")
+  })
+
+  test("emits identical UTC buckets regardless of the process timezone", async () => {
+    const path = await fixture("timezone-neutral.jsonl", [
+      {
+        type: "user",
+        timestamp: "2026-11-01T08:30:00.000Z",
+        cwd: "/tmp/work/timezone",
+        message: { content: "First repeated hour" },
+      },
+      {
+        type: "assistant",
+        timestamp: "2026-11-01T09:30:00.000Z",
+        message: { content: "Second repeated hour" },
+      },
+    ])
+    const previous = process.env.TZ
+    try {
+      process.env.TZ = "UTC"
+      const utc = await parse(path, "claude")
+      process.env.TZ = "Pacific/Honolulu"
+      const honolulu = await parse(path, "claude")
+      expect(honolulu!.activity).toEqual(utc!.activity)
+      expect(utc!.activity).toEqual([
+        [Math.floor(Date.parse("2026-11-01T08:30:00.000Z") / 60_000), 1, 1],
+        [Math.floor(Date.parse("2026-11-01T09:30:00.000Z") / 60_000), 1, 0],
+      ])
+    } finally {
+      if (previous === undefined) delete process.env.TZ
+      else process.env.TZ = previous
+    }
   })
 
   test("surfaces an unreadable file instead of checkpointing an empty session", async () => {

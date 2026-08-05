@@ -1,3 +1,5 @@
+import { SummarizationMetadataV1Schema, decodeExact } from "../shared/protocol"
+
 export interface Env {
   readonly AI: {
     run(model: string, input: { readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>; readonly max_tokens: number }): Promise<unknown>
@@ -29,10 +31,19 @@ export const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname !== "/api/summarize") return new Response("not found", { status: 404 })
-    if (request.method !== "POST") return Response.json({ error: "method not allowed" }, { status: 405 })
     if (!env.TRAILS_AI_TOKEN || request.headers.get("authorization") !== `Bearer ${env.TRAILS_AI_TOKEN}`) {
       return Response.json({ error: "unauthorized" }, { status: 401 })
     }
+    if (request.method === "GET") {
+      return Response.json(
+        decodeExact(SummarizationMetadataV1Schema, {
+          protocolVersion: 1,
+          model: MODEL,
+          prompts: { session: SESSION_SYSTEM, day: DAY_SYSTEM },
+        }),
+      )
+    }
+    if (request.method !== "POST") return Response.json({ error: "method not allowed" }, { status: 405 })
 
     let input: unknown
     try {

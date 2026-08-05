@@ -142,37 +142,8 @@ pre code, .welcome-command { overflow-wrap: anywhere; word-break: break-word; }
   cursor: pointer;
 }
 .quiet-btn:hover { color: var(--ink); }
+.quiet-btn[aria-current="page"] { color: var(--ink); }
 
-.settings-pop {
-  position: absolute;
-  top: calc(100% + 14px);
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  background: var(--ground);
-  border: 1px solid var(--hairline);
-  padding: 18px 20px;
-  z-index: 50;
-  min-width: 250px;
-  width: max-content;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-}
-.settings-pop[hidden] { display: none; }
-.control { display: flex; align-items: center; justify-content: space-between; gap: 18px; color: var(--quiet); font-size: 0.85rem; }
-.control select {
-  font: inherit;
-  color: var(--ink);
-  background: var(--ground);
-  border: 1px solid var(--hairline);
-  border-radius: 0;
-  padding: 3px 8px;
-}
-.control-with-help { align-items: start; }
-.control-copy { display: grid; gap: 3px; min-width: 0; }
-.control-help { max-width: 26ch; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
 
 /* ---------- layout ---------- */
 
@@ -564,7 +535,135 @@ pre code, .welcome-command { overflow-wrap: anywhere; word-break: break-word; }
   max-width: 68ch;
   margin: 0;
 }
-/* ---------- organization side panel ---------- */
+/* ---------- settings ---------- */
+
+.settings-view { padding-top: 40px; min-width: 0; }
+.settings-view > .display { margin-top: 14px; }
+.settings-section {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 36px;
+  align-items: start;
+  margin-top: 42px;
+  padding-top: 28px;
+  border-top: 1px solid var(--hairline);
+}
+.settings-section > h2 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 500;
+  text-transform: lowercase;
+}
+.settings-content { min-width: 0; }
+.settings-controls { display: grid; gap: 22px; }
+.settings-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 8px 24px;
+  align-items: start;
+  color: var(--quiet);
+  font-size: 0.88rem;
+}
+.settings-control-copy { display: grid; gap: 3px; min-width: 0; }
+.settings-help,
+.settings-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.settings-control-row select {
+  min-width: 0;
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: var(--ground);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 5px 8px;
+}
+.settings-field-error {
+  grid-column: 2;
+  margin: 0;
+  color: var(--prose);
+  font-size: 0.8rem;
+}
+.settings-hint { max-width: 68ch; margin: 0 0 22px; color: var(--quiet); font-size: 0.85rem; }
+.settings-projects { border-bottom: 1px solid var(--hairline); }
+.settings-project-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline);
+}
+.settings-project-names { min-width: 0; }
+.settings-project-row .proj-link {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: 0.92rem;
+  font-weight: 500;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.settings-project-row .proj-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.settings-project-row .proj-org { display: block; color: var(--quiet); font-size: 0.78rem; }
+.settings-project-row .engagement-select { margin-left: auto; justify-items: end; }
+.machine-topology { min-width: 0; }
+.machine-row { min-width: 0; padding: 12px 0; border-top: 1px solid var(--hairline); }
+.machine-hub-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 18px;
+  border-top: 0;
+  padding-top: 0;
+}
+.machine-hub-row code,
+.machine-name code { overflow-wrap: anywhere; }
+.machine-role,
+.machine-collectors > h3 {
+  color: var(--quiet);
+  font-size: 0.78rem;
+  font-weight: 400;
+  text-transform: lowercase;
+}
+.machine-collectors { margin-top: 18px; padding-left: 24px; border-left: 1px solid var(--hairline); }
+.machine-collectors > h3 { margin: 0 0 8px; }
+.machine-collectors > p { margin: 10px 0; color: var(--quiet); }
+.collector-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 170px) minmax(0, 1fr);
+  gap: 24px;
+}
+.machine-name { min-width: 0; display: grid; align-content: start; gap: 3px; }
+.machine-name strong { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
+.machine-name code { color: var(--quiet); font-size: 0.72rem; }
+.machine-details { min-width: 0; display: grid; gap: 4px; color: var(--quiet); font-size: 0.8rem; }
+.machine-details p { margin: 0; overflow-wrap: anywhere; }
+.machine-error { color: var(--prose); }
+.settings-load-error { margin: 0; color: var(--quiet); }
+.summarization-content > p { margin: 0; color: var(--quiet); }
+.summarization-values { display: grid; gap: 24px; margin: 0; min-width: 0; }
+.summarization-values > div { display: grid; gap: 7px; min-width: 0; }
+.summarization-values dt { color: var(--quiet); font-size: 0.8rem; }
+.summarization-values dd { min-width: 0; margin: 0; color: var(--prose); }
+.summarization-values pre {
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  font: 0.78rem/1.55 var(--mono);
+  color: var(--prose);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- feedback side panel ---------- */
+
 
 .side-panel {
   width: 100vw;
@@ -600,28 +699,7 @@ pre code, .welcome-command { overflow-wrap: anywhere; word-break: break-word; }
   color: var(--quiet);
   cursor: pointer;
 }
-.sort-hint { color: var(--quiet); font-size: 0.85rem; line-height: 1.45; }
-.sort-rows { margin-top: 20px; }
-.sort-row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--hairline); }
-.sort-row .names { min-width: 0; }
-.sort-row .proj-link {
-  border: 0;
-  background: none;
-  padding: 0;
-  text-align: left;
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.92rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-.sort-row .proj-link:hover { text-decoration: underline; text-underline-offset: 3px; }
-.sort-row .proj-org { display: block; font-size: 0.78rem; color: var(--quiet); }
 .engagement-select { min-width: 0; display: grid; gap: 6px; }
-.sort-row .engagement-select { margin-left: auto; justify-items: end; }
 .engagement-select select {
   max-width: 180px;
   min-width: 0;
@@ -787,7 +865,6 @@ pre code, .welcome-command { overflow-wrap: anywhere; word-break: break-word; }
     flex-wrap: wrap;
     gap: 16px;
   }
-  .settings-pop { right: 0; }
   .side-panel-sheet {
     width: 100vw;
     max-width: none;
@@ -797,7 +874,7 @@ pre code, .welcome-command { overflow-wrap: anywhere; word-break: break-word; }
       max(20px, env(safe-area-inset-bottom))
       max(20px, env(safe-area-inset-left));
   }
-  .sort-row,
+  .settings-project-row,
   .detail-tools,
   .rename-editor,
   .engagement-select,
@@ -805,11 +882,18 @@ pre code, .welcome-command { overflow-wrap: anywhere; word-break: break-word; }
     width: 100%;
     min-width: 0;
   }
-  .sort-row,
-  .detail-tools { align-items: stretch; flex-direction: column; }
-  .sort-row .engagement-select { margin-left: 0; justify-items: stretch; }
+  .settings-project-row,
+  .collector-row,
+  .settings-control-row,
+  .detail-tools { align-items: stretch; grid-template-columns: minmax(0, 1fr); flex-direction: column; }
+  .settings-project-row .engagement-select { margin-left: 0; justify-items: stretch; }
   .engagement-select select,
   .engagement-editor { width: 100%; max-width: none; }
+  .settings-section { grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 34px; padding-top: 22px; }
+  .settings-control-row select { width: 100%; max-width: none; }
+  .settings-field-error { grid-column: 1; }
+  .machine-hub-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .machine-collectors { padding-left: 14px; }
   .note { grid-template-columns: minmax(0, 1fr); row-gap: 5px; }
   .note > .proj-cap { padding-right: 0; }
   .first-trail-settings { grid-template-columns: 1fr; gap: 24px; }

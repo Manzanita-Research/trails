@@ -142,6 +142,13 @@ describe("safe feedback context", () => {
         bootstrap: { revision: 0, sessions: [] },
       }).sourceCounts,
     ).toEqual({ claude: 0, codex: 0, omp: 0, pi: 0 })
+    expect(
+      buildFeedbackSafeContext({
+        ...contextInput,
+        view: "settings",
+        workDate: "2026-07-31",
+      }),
+    ).toMatchObject({ view: "settings", workDate: null })
   })
 })
 

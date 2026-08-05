@@ -1,7 +1,15 @@
 import { Effect } from "effect"
 import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
-import { decodeExact, IngestSessionV1Schema, type IngestSessionV1 } from "../shared/protocol"
+import {
+  CollectorStatusV1Schema,
+  IngestSessionV2Schema,
+  decodeExact,
+  type CollectionMetricsV1,
+  type CollectorErrorCode,
+  type CollectorStatusV1,
+  type IngestSessionV2,
+} from "../shared/protocol"
 import { parseSessionFile } from "./session"
 import { DEFAULT_SOURCE_ROOTS, discoverSourceFiles, type SourceFile, type SourceRoot } from "./sources"
 import {
@@ -38,7 +46,7 @@ export interface CollectionResult {
 
 export class CollectorError extends Error {
   readonly _tag = "CollectorError"
-  constructor(readonly result: CollectionResult) {
+  constructor(readonly result: CollectionResult, readonly firstErrorCode: CollectorErrorCode) {
     super(result.errors[0] ?? "collection failed")
   }
 }
@@ -47,7 +55,7 @@ type ParsedFile = {
   readonly file: SourceFile
   readonly fingerprint: FileFingerprint
   readonly stable: boolean
-  readonly session: IngestSessionV1 | null
+  readonly session: IngestSessionV2 | null
   readonly error: string | null
 }
 
@@ -87,7 +95,7 @@ function inspectChangedFile(file: SourceFile): Effect.Effect<ParsedFile, never> 
 
 async function uploadBatch(
   target: CollectorTarget,
-  sessions: ReadonlyArray<IngestSessionV1>,
+  sessions: ReadonlyArray<IngestSessionV2>,
   fetcher: typeof globalThis.fetch,
   sleep: (milliseconds: number) => Promise<void>,
 ): Promise<number> {
@@ -99,7 +107,7 @@ async function uploadBatch(
         method: "POST",
         redirect: "error",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ protocolVersion: 1, device: { id: target.deviceId, name: target.deviceName }, sessions }),
+        body: JSON.stringify({ protocolVersion: 2, device: { id: target.deviceId, name: target.deviceName }, sessions }),
       })
       if (response.ok) {
         const body: unknown = await response.json()
@@ -125,15 +133,11 @@ async function uploadBatch(
   throw new Error(lastError)
 }
 
-function collectionProgram(options: CollectionOptions): Effect.Effect<CollectionResult, Error | CollectorError> {
+function collectionProgram(
+  options: CollectionOptions,
+  target: CollectorTarget,
+): Effect.Effect<CollectionResult, Error | CollectorError> {
   return Effect.gen(function* () {
-    const server = normalizeCollectorServer(options.server)
-    const deviceId = options.deviceId.trim()
-    const deviceName = options.deviceName.trim()
-    if (!deviceId || deviceId.length > 128 || !deviceName || deviceName.length > 128) {
-      return yield* Effect.fail(new Error("device id and name must be 1..128 characters"))
-    }
-    const target: CollectorTarget = { server, deviceId, deviceName }
     const statePath = resolve(options.statePath ?? DEFAULT_STATE_PATH)
     const previous = yield* loadCollectorState(statePath)
     const previousFiles = previous && collectorTargetsMatch(previous.target, target) ? previous.files : {}
@@ -154,26 +158,29 @@ function collectionProgram(options: CollectionOptions): Effect.Effect<Collection
 
     const parsed = yield* Effect.forEach(changedFiles, inspectChangedFile, { concurrency: 8 })
     const errors: string[] = []
+    let firstErrorCode: CollectorErrorCode | null = null
     let ignored = 0
     for (const item of parsed) {
       if (item.error) {
         errors.push(item.error)
+        firstErrorCode ??= "parse_error"
       } else if (!item.stable) {
         errors.push("file_changed_during_read")
+        firstErrorCode ??= "file_changed_during_read"
       } else if (item.session === null) {
         nextFiles[item.file.path] = item.fingerprint
         ignored++
       }
     }
 
-    const uploadable = parsed.filter((item): item is ParsedFile & { readonly session: IngestSessionV1 } => item.session !== null)
+    const uploadable = parsed.filter((item): item is ParsedFile & { readonly session: IngestSessionV2 } => item.session !== null)
     const fetcher = options.fetch ?? globalThis.fetch
     const sleep = options.sleep ?? ((milliseconds) => Bun.sleep(milliseconds))
     let uploaded = 0
     let revision: number | null = null
     for (let index = 0; index < uploadable.length; index += 50) {
       const batch = uploadable.slice(index, index + 50)
-      const sessions = batch.map((item) => decodeExact(IngestSessionV1Schema, item.session))
+      const sessions = batch.map((item) => decodeExact(IngestSessionV2Schema, item.session))
       const outcome = yield* Effect.either(
         Effect.tryPromise({
           try: () => uploadBatch(target, sessions, fetcher, sleep),
@@ -182,6 +189,7 @@ function collectionProgram(options: CollectionOptions): Effect.Effect<Collection
       )
       if (outcome._tag === "Left") {
         errors.push(outcome.left instanceof Error ? outcome.left.message : "upload_error")
+        firstErrorCode ??= "upload_error"
         continue
       }
       revision = outcome.right
@@ -191,7 +199,7 @@ function collectionProgram(options: CollectionOptions): Effect.Effect<Collection
       }
     }
 
-    const state: CollectorState = { protocolVersion: 1, target, files: nextFiles }
+    const state: CollectorState = { protocolVersion: 2, target, files: nextFiles }
     yield* saveCollectorState(statePath, state)
     const result: CollectionResult = {
       discovered: files.length,
@@ -202,12 +210,96 @@ function collectionProgram(options: CollectionOptions): Effect.Effect<Collection
       revision,
       errors,
     }
-    if (errors.length) return yield* Effect.fail(new CollectorError(result))
+    if (errors.length) return yield* Effect.fail(new CollectorError(result, firstErrorCode ?? "collector_error"))
     return result
   })
 }
 
+function collectorTarget(options: CollectionOptions): CollectorTarget {
+  const server = normalizeCollectorServer(options.server)
+  const deviceId = options.deviceId.trim()
+  const deviceName = options.deviceName.trim()
+  if (!deviceId || deviceId.length > 128 || !deviceName || deviceName.length > 128) {
+    throw new Error("device id and name must be 1..128 characters")
+  }
+  return { server, deviceId, deviceName }
+}
+
+function metricsOf(result: CollectionResult): CollectionMetricsV1 {
+  return {
+    discovered: result.discovered,
+    changed: result.changed,
+    uploaded: result.uploaded,
+    ignored: result.ignored,
+    unchanged: result.unchanged,
+  }
+}
+
+function collectorErrorCode(error: Error | CollectorError): CollectorErrorCode {
+  return error instanceof CollectorError ? error.firstErrorCode : "collector_error"
+}
+
+function reportCollectorStatus(
+  target: CollectorTarget,
+  outcome: CollectorStatusV1["outcome"],
+  fetcher: typeof globalThis.fetch,
+): Effect.Effect<void, Error> {
+  return Effect.tryPromise({
+    try: async () => {
+      const body = decodeExact(CollectorStatusV1Schema, {
+        protocolVersion: 1,
+        device: { id: target.deviceId, name: target.deviceName },
+        outcome,
+      })
+      const response = await fetcher(new URL("api/collector-status", target.server), {
+        method: "POST",
+        redirect: "error",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      if (!response.ok) throw new Error(`collector status http_${response.status}`)
+    },
+    catch: (cause) => (cause instanceof Error ? cause : new Error("collector status failed")),
+  })
+}
+
+function ownedCollectionProgram(
+  options: CollectionOptions,
+  target: CollectorTarget,
+): Effect.Effect<CollectionResult, Error | CollectorError> {
+  return Effect.gen(function* () {
+    const outcome = yield* Effect.either(collectionProgram(options, target))
+    const fetcher = options.fetch ?? globalThis.fetch
+    if (outcome._tag === "Right") {
+      yield* reportCollectorStatus(
+        target,
+        { status: "processed", metrics: metricsOf(outcome.right), error: null },
+        fetcher,
+      )
+      return outcome.right
+    }
+    const failure = outcome.left
+    yield* reportCollectorStatus(
+      target,
+      {
+        status: "failed",
+        metrics: failure instanceof CollectorError ? metricsOf(failure.result) : null,
+        error: collectorErrorCode(failure),
+      },
+      fetcher,
+    ).pipe(Effect.ignore)
+    return yield* Effect.fail(failure)
+  })
+}
+
 export function runCollection(options: CollectionOptions): Effect.Effect<CollectionResult, Error | CollectorError> {
-  const statePath = resolve(options.statePath ?? DEFAULT_STATE_PATH)
-  return withCollectorLock(statePath, collectionProgram(options))
+  return Effect.try({
+    try: () => collectorTarget(options),
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  }).pipe(
+    Effect.flatMap((target) => {
+      const statePath = resolve(options.statePath ?? DEFAULT_STATE_PATH)
+      return withCollectorLock(statePath, ownedCollectionProgram(options, target))
+    }),
+  )
 }

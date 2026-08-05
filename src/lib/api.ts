@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { BootstrapV1 } from "../../shared/protocol"
+import {
+  MachinesV1Schema,
+  SummarizationStatusV1Schema,
+  decodeExact,
+  type BootstrapV1,
+  type MachinesV1,
+  type SummarizationStatusV1,
+} from "../../shared/protocol"
 
 export interface BootstrapMutations {
   updateSettings(patch: {
     readonly boundary?: 4 | 5 | 6 | 7
     readonly halo?: 0 | 5 | 10 | 15
     readonly onboardingVersion?: 1
+    readonly timezone?: string
   }): Promise<void>
   updateProject(patch: {
     readonly project: string
@@ -48,6 +56,22 @@ export interface BootstrapRequester {
 }
 
 export type BootstrapRequest = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+export async function fetchMachines(
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<MachinesV1> {
+  const response = await request("/api/machines", { cache: "no-store" })
+  if (!response.ok) throw new Error(await errorMessage(response))
+  return decodeExact(MachinesV1Schema, await response.json())
+}
+
+export async function fetchSummarization(
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<SummarizationStatusV1> {
+  const response = await request("/api/summarization", { cache: "no-store" })
+  if (!response.ok) throw new Error(await errorMessage(response))
+  return decodeExact(SummarizationStatusV1Schema, await response.json())
+}
+
 
 export function createBootstrapRequester(options: {
   readonly request: BootstrapRequest

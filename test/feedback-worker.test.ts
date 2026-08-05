@@ -362,7 +362,6 @@ describe("hosted feedback Worker boundary", () => {
       { ...BASE_SUBMISSION, context: { ...context, unexpected: true } },
       { ...BASE_SUBMISSION, context: { ...context, appVersion: " beta" } },
       { ...BASE_SUBMISSION, context: { ...context, appVersion: "x".repeat(41) } },
-      { ...BASE_SUBMISSION, context: { ...context, view: "settings" } },
       { ...BASE_SUBMISSION, context: { ...context, revision: -1 } },
       { ...BASE_SUBMISSION, context: { ...context, revision: 1.5 } },
       { ...BASE_SUBMISSION, context: { ...context, workDate: "2026-02-30" } },
@@ -408,7 +407,7 @@ describe("hosted feedback Worker boundary", () => {
 
   test("accepts all kinds, views, nullable fields, and exact inclusive numeric bounds", async () => {
     const kinds = ["confusing", "broken", "idea", "delight"] as const
-    const views = ["loading", "hub-error", "welcome", "days", "week", "threads", "project"] as const
+    const views = ["loading", "hub-error", "welcome", "days", "week", "threads", "project", "settings"] as const
 
     for (const [index, view] of views.entries()) {
       const submission = cloneSubmission()

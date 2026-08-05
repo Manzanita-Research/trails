@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { Effect } from "effect"
-import type { IngestSessionV1 } from "../shared/protocol"
+import type { IngestSessionV2 } from "../shared/protocol"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { ingestSessions } from "../server/ingest"
 import {
@@ -18,7 +18,7 @@ function session(
   sourceSessionId: string,
   digest: string,
   options: { readonly cwd?: string; readonly date?: string; readonly minute?: number } = {},
-): IngestSessionV1 {
+): IngestSessionV2 {
   return {
     sourceSessionId,
     source: "omp",
@@ -29,17 +29,22 @@ function session(
     events: 2,
     userEvents: 1,
     firstPrompt: `Prompt for ${sourceSessionId}`,
-    activity: [[options.date ?? "2026-08-01", options.minute ?? 600, 2, 1]],
+    activity: [[
+      Math.floor(Date.parse(`${options.date ?? "2026-08-01"}T00:00:00-07:00`) / 60_000) +
+        (options.minute ?? 600),
+      2,
+      1,
+    ]],
     digest,
   }
 }
 
-async function ingest(db: TrailsDb, now: number, ...sessions: IngestSessionV1[]): Promise<void> {
+async function ingest(db: TrailsDb, now: number, ...sessions: IngestSessionV2[]): Promise<void> {
   await Effect.runPromise(
     ingestSessions(
       db,
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         device: { id: "test-machine", name: "Test Machine" },
         sessions,
       },

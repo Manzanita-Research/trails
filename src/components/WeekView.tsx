@@ -72,7 +72,7 @@ function WeekStrip({ projMap, widthPx }: { projMap: DayMap; widthPx: number }) {
 export function WeekView() {
   const t = useTrails()
   const [ref, width] = useWidth<HTMLElement>()
-  const today = workdayToday(t.boundary)
+  const today = workdayToday(t.boundary, t.timezone, t.nowTime)
   const dayLookup = new Map(t.days)
 
   const weeks = new Map<string, string[]>()

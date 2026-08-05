@@ -7,7 +7,7 @@ import { createApp } from "../server/app"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { MIGRATIONS } from "../server/migrations"
 import { localParts, workdayOf } from "../shared/domain"
-import type { BootstrapV1, IngestRequestV1 } from "../shared/protocol"
+import type { BootstrapV1, IngestRequestV2 } from "../shared/protocol"
 import { createBootstrapRequester } from "../src/lib/api"
 
 type App = (request: Request) => Promise<Response>
@@ -34,7 +34,7 @@ async function temporaryRoot(): Promise<string> {
 }
 
 function trackedDatabase(path: string): TrailsDb {
-  const database = openDatabase(path)
+  const database = openDatabase(path, { defaultTimezone: "America/Los_Angeles" })
   databases.add(database)
   return database
 }
@@ -49,8 +49,8 @@ function requireSnapshot(snapshot: BootstrapV1 | null): BootstrapV1 {
   return snapshot
 }
 
-const ingest: IngestRequestV1 = {
-  protocolVersion: 1,
+const ingest: IngestRequestV2 = {
+  protocolVersion: 2,
   device: { id: "source-mac", name: "Source Mac" },
   sessions: [
     {
@@ -63,7 +63,7 @@ const ingest: IngestRequestV1 = {
       events: 2,
       userEvents: 1,
       firstPrompt: "Make the first trail legible",
-      activity: [["2026-07-01", 330, 2, 1]],
+      activity: [[Math.floor(Date.parse("2026-07-01T12:29:00.000Z") / 60_000), 2, 1]],
       digest: null,
     },
   ],
@@ -208,14 +208,17 @@ describe("onboarding bootstrap contract", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 3 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 5 })
     expect(
-      migrated.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
+      migrated.sqlite
+        .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
+        .get(),
     ).toEqual({
       boundary: 7,
       halo: 15,
       onboarding_version: 0,
       hub_url: "http://127.0.0.1:7412/",
+      timezone: "America/Los_Angeles",
     })
     expect(migrated.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "7" })
     expect(migrated.sqlite.query("SELECT source_session_id, first_prompt FROM sessions").get()).toEqual({
@@ -225,8 +228,8 @@ describe("onboarding bootstrap contract", () => {
   })
 
   test("derives cutoff workdays in the protocol timezone", () => {
-    const parts = localParts("2026-07-01T12:30:00.000Z")
+    const parts = localParts(Date.parse("2026-07-01T12:30:00.000Z"), "America/Los_Angeles")
     expect(parts).toEqual({ date: "2026-07-01", minute: 330 })
-    expect(workdayOf(parts!.date, parts!.minute, 6)).toBe("2026-06-30")
+    expect(workdayOf(parts.date, parts.minute, 6)).toBe("2026-06-30")
   })
 })

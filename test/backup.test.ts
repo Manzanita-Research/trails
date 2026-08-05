@@ -6,7 +6,7 @@ import { basename, join } from "node:path"
 import { createBackup, isTrailsBackupName } from "../server/backup"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { ingestSessions } from "../server/ingest"
-import type { IngestRequestV1 } from "../shared/protocol"
+import type { IngestRequestV2 } from "../shared/protocol"
 
 const roots = new Set<string>()
 const databases = new Set<TrailsDb>()
@@ -18,7 +18,7 @@ async function temporaryRoot() {
 }
 
 function trackedDatabase(path: string) {
-  const database = openDatabase(path)
+  const database = openDatabase(path, { defaultTimezone: "America/Los_Angeles" })
   databases.add(database)
   return database
 }
@@ -36,8 +36,8 @@ afterEach(async () => {
   roots.clear()
 })
 
-const committedInput: IngestRequestV1 = {
-  protocolVersion: 1,
+const committedInput: IngestRequestV2 = {
+  protocolVersion: 2,
   device: { id: "backup-device", name: "Backup Mac" },
   sessions: [
     {
@@ -50,7 +50,7 @@ const committedInput: IngestRequestV1 = {
       events: 3,
       userEvents: 1,
       firstPrompt: "Preserve this committed session",
-      activity: [["2026-08-03", 600, 3, 1]],
+      activity: [[Math.floor(Date.parse("2026-08-03T17:00:00.000Z") / 60_000), 3, 1]],
       digest: "Committed bounded digest",
     },
   ],
@@ -99,9 +99,13 @@ describe("SQLite backups", () => {
         },
       ])
       expect(snapshot.sqlite
-        .query("SELECT local_date, minute, event_count, user_event_count FROM session_activity")
+        .query("SELECT utc_minute, event_count, user_event_count FROM session_activity")
         .all()).toEqual([
-        { local_date: "2026-08-03", minute: 600, event_count: 3, user_event_count: 1 },
+        {
+          utc_minute: Math.floor(Date.parse("2026-08-03T17:00:00.000Z") / 60_000),
+          event_count: 3,
+          user_event_count: 1,
+        },
       ])
       expect(snapshot.sqlite
         .query("SELECT id, text FROM pocket_items ORDER BY id")

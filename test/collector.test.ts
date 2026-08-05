@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { CollectorError, runCollection } from "../collector/sync"
@@ -12,14 +12,16 @@ import {
   type CollectorState,
 } from "../collector/state"
 import { discoverSourceFiles, parseSourceRoot, type SourceRoot } from "../collector/sources"
-import { IngestRequestV1Schema, decodeExact } from "../shared/protocol"
+import { CollectorStatusV1Schema, IngestRequestV2Schema, decodeExact } from "../shared/protocol"
 
 const temporaryDirectories: string[] = []
 const servers: Bun.Server<undefined>[] = []
+const collectorStatuses: unknown[] = []
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.stop(true)))
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  collectorStatuses.splice(0)
 })
 
 async function temporaryDirectory(prefix = "trails-collector-test-"): Promise<string> {
@@ -55,8 +57,22 @@ function liveClaudeRoot(path: string): SourceRoot {
   return { source: "claude", path, layout: "project", restored: false }
 }
 
-function startIngestServer(handler: (request: Request) => Response | Promise<Response>): Bun.Server<undefined> {
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: handler })
+function startIngestServer(
+  handler: (request: Request) => Response | Promise<Response>,
+  statusHandler?: (request: Request) => Response | Promise<Response>,
+): Bun.Server<undefined> {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      if (new URL(request.url).pathname === "/api/collector-status") {
+        if (statusHandler) return statusHandler(request)
+        collectorStatuses.push(await request.json())
+        return new Response(null, { status: 204 })
+      }
+      return handler(request)
+    },
+  })
   servers.push(server)
   return server
 }
@@ -112,7 +128,7 @@ describe("collector state and locking", () => {
     const directory = await temporaryDirectory()
     const statePath = join(directory, "nested", "collector.json")
     const state: CollectorState = {
-      protocolVersion: 1,
+      protocolVersion: 2,
       target: { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" },
       files: { "/tmp/fixture.jsonl": { size: 20, mtimeMs: 1234 } },
     }
@@ -122,6 +138,22 @@ describe("collector state and locking", () => {
     expect((await stat(statePath)).mode & 0o777).toBe(0o600)
     expect(await readdir(join(directory, "nested"))).toEqual(["collector.json"])
     expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual(state)
+  })
+
+  test("rejects unknown or corrupt checkpoints instead of silently resetting them", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector.json")
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        protocolVersion: 3,
+        target: { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" },
+        files: {},
+      }),
+    )
+    await expect(Effect.runPromise(loadCollectorState(statePath))).rejects.toBeInstanceOf(Error)
+    await writeFile(statePath, "{broken")
+    await expect(Effect.runPromise(loadCollectorState(statePath))).rejects.toBeInstanceOf(Error)
   })
 
   test("rejects an overlapping live lock and recovers a dead-pid lock", async () => {
@@ -150,6 +182,21 @@ describe("collector state and locking", () => {
     const overlap = await Effect.runPromise(Effect.either(withCollectorLock(statePath, Effect.succeed("second"))))
     expect(overlap._tag).toBe("Left")
     if (overlap._tag === "Left") expect(overlap.left).toBeInstanceOf(CollectorBusyError)
+    const server = startIngestServer(() => Response.json({ revision: 1 }))
+    const ownedElsewhere = await Effect.runPromise(
+      Effect.either(
+        runCollection({
+          server: serverBase(server),
+          deviceId: "device-1",
+          deviceName: "Laptop",
+          statePath,
+          roots: [liveClaudeRoot(join(directory, "source"))],
+        }),
+      ),
+    )
+    expect(ownedElsewhere._tag).toBe("Left")
+    if (ownedElsewhere._tag === "Left") expect(ownedElsewhere.left).toBeInstanceOf(CollectorBusyError)
+    expect(collectorStatuses).toEqual([])
     releaseGate()
     await holder
     expect(await Bun.file(lockPath).exists()).toBe(false)
@@ -172,7 +219,7 @@ describe("collection synchronization", () => {
     const server = startIngestServer(async (request) => {
       requests++
       const input: unknown = await request.json()
-      const decoded = decodeExact(IngestRequestV1Schema, input)
+      const decoded = decodeExact(IngestRequestV2Schema, input)
       requestSizes.push(decoded.sessions.length)
       if (requests === 1) return Response.json({ error: "settling" }, { status: 503 })
       return Response.json({ accepted: decoded.sessions.length, unchanged: 0, revision: requests })
@@ -195,6 +242,13 @@ describe("collection synchronization", () => {
     expect(requestSizes).toEqual([50, 50, 1])
     expect(sleeps).toEqual([2000])
     expect(Object.keys((await Effect.runPromise(loadCollectorState(statePath)))!.files)).toHaveLength(51)
+    expect(decodeExact(CollectorStatusV1Schema, collectorStatuses[0])).toMatchObject({
+      outcome: {
+        status: "processed",
+        metrics: { discovered: 51, changed: 51, uploaded: 51, ignored: 0, unchanged: 0 },
+        error: null,
+      },
+    })
   })
 
   test("replays every file when server or device identity changes and skips exact fingerprints", async () => {
@@ -204,7 +258,7 @@ describe("collection synchronization", () => {
     await writeClaudeSession(root, "identity")
     const seen: Array<{ id: string; name: string }> = []
     const receive = async (request: Request): Promise<Response> => {
-      const decoded = decodeExact(IngestRequestV1Schema, await request.json())
+      const decoded = decodeExact(IngestRequestV2Schema, await request.json())
       seen.push(decoded.device)
       return Response.json({ accepted: decoded.sessions.length, unchanged: 0, revision: seen.length })
     }
@@ -223,6 +277,12 @@ describe("collection synchronization", () => {
 
     expect((await Effect.runPromise(runCollection({ ...options, deviceName: "Renamed Laptop" }))).uploaded).toBe(1)
     expect((await Effect.runPromise(runCollection({ ...options, deviceId: "device-b", deviceName: "Renamed Laptop" }))).uploaded).toBe(1)
+    expect(decodeExact(CollectorStatusV1Schema, collectorStatuses[1])).toMatchObject({
+      outcome: {
+        status: "processed",
+        metrics: { discovered: 1, changed: 0, uploaded: 0, ignored: 0, unchanged: 1 },
+      },
+    })
     const secondServer = startIngestServer(receive)
     expect(
       (
@@ -239,6 +299,43 @@ describe("collection synchronization", () => {
     ])
   })
 
+  test("treats a valid version-one checkpoint as stale and persists version two after replay", async () => {
+    const directory = await temporaryDirectory()
+    const root = join(directory, "source")
+    const statePath = join(directory, "collector-state.json")
+    const filePath = await writeClaudeSession(root, "stale-state")
+    const fingerprint = await stat(filePath)
+    const server = startIngestServer(async (request) => {
+      const decoded = decodeExact(IngestRequestV2Schema, await request.json())
+      return Response.json({ accepted: decoded.sessions.length, unchanged: 0, revision: 1 })
+    })
+    const target = {
+      server: serverBase(server),
+      deviceId: "device-1",
+      deviceName: "Laptop",
+    }
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        protocolVersion: 1,
+        target,
+        files: { [filePath]: { size: fingerprint.size, mtimeMs: fingerprint.mtimeMs } },
+      }),
+    )
+
+    expect(await Effect.runPromise(loadCollectorState(statePath))).toBeNull()
+    expect(
+      await Effect.runPromise(
+        runCollection({
+          ...target,
+          statePath,
+          roots: [liveClaudeRoot(root)],
+        }),
+      ),
+    ).toMatchObject({ changed: 1, uploaded: 1, unchanged: 0 })
+    expect(JSON.parse(await readFile(statePath, "utf8")).protocolVersion).toBe(2)
+  })
+
   test("checkpoints accepted batches while leaving a terminally failed batch for the next run", async () => {
     const directory = await temporaryDirectory()
     const root = join(directory, "source")
@@ -252,7 +349,7 @@ describe("collection synchronization", () => {
     let requests = 0
     const server = startIngestServer(async (request) => {
       requests++
-      const decoded = decodeExact(IngestRequestV1Schema, await request.json())
+      const decoded = decodeExact(IngestRequestV2Schema, await request.json())
       if (rejectFinalBatch && decoded.sessions.length === 1) {
         return Response.json({ error: "bad request" }, { status: 400 })
       }
@@ -284,6 +381,13 @@ describe("collection synchronization", () => {
     expect(partialState.files[failedPath]).toBeUndefined()
     expect(requests).toBe(2)
     expect(sleeps).toEqual([])
+    expect(decodeExact(CollectorStatusV1Schema, collectorStatuses.at(-1))).toMatchObject({
+      outcome: {
+        status: "failed",
+        metrics: { discovered: 51, changed: 51, uploaded: 50, ignored: 0, unchanged: 0 },
+        error: "upload_error",
+      },
+    })
 
     rejectFinalBatch = false
     expect(await Effect.runPromise(runCollection(options))).toMatchObject({ changed: 1, uploaded: 1, unchanged: 50, errors: [] })
@@ -298,6 +402,7 @@ describe("collection synchronization", () => {
     const project = join(root, "project")
     await mkdir(project, { recursive: true })
     const filePath = join(project, "ignored.jsonl")
+
     await writeFile(filePath, '{"type":"user","timestamp":"2026-07-01T17:00:00.000Z"}\nmalformed\n')
     let requests = 0
     const server = startIngestServer(() => {
@@ -316,5 +421,100 @@ describe("collection synchronization", () => {
     expect((await Effect.runPromise(loadCollectorState(statePath)))!.files[filePath]).toBeDefined()
     expect(await Effect.runPromise(runCollection(options))).toMatchObject({ changed: 0, uploaded: 0, ignored: 0, unchanged: 1 })
     expect(requests).toBe(0)
+  })
+  test("reports parse and collector failures with privacy-safe codes and nullable metrics", async () => {
+    const directory = await temporaryDirectory()
+    const root = join(directory, "source")
+    const statePath = join(directory, "collector-state.json")
+    const unreadable = await writeClaudeSession(root, "unreadable")
+    await chmod(unreadable, 0o000)
+    const server = startIngestServer(() => Response.json({ revision: 1 }))
+    const options = {
+      server: serverBase(server),
+      deviceId: "device-1",
+      deviceName: "Laptop",
+      statePath,
+      roots: [liveClaudeRoot(root)],
+    }
+    const parseFailure = await Effect.runPromise(Effect.either(runCollection(options)))
+    await chmod(unreadable, 0o600)
+    expect(parseFailure._tag).toBe("Left")
+    expect(decodeExact(CollectorStatusV1Schema, collectorStatuses.at(-1))).toMatchObject({
+      outcome: {
+        status: "failed",
+        metrics: { discovered: 1, changed: 1, uploaded: 0, ignored: 0, unchanged: 0 },
+        error: "parse_error",
+      },
+    })
+
+    const uploadServer = startIngestServer(() => Response.json({ error: "bad request" }, { status: 400 }))
+    const uploadFailure = await Effect.runPromise(
+      Effect.either(
+        runCollection({
+          ...options,
+          server: serverBase(uploadServer),
+          statePath: join(directory, "upload-state.json"),
+        }),
+      ),
+    )
+    expect(uploadFailure._tag).toBe("Left")
+    expect(decodeExact(CollectorStatusV1Schema, collectorStatuses.at(-1))).toMatchObject({
+      outcome: {
+        status: "failed",
+        metrics: { discovered: 1, changed: 1, uploaded: 0, ignored: 0, unchanged: 0 },
+        error: "upload_error",
+      },
+    })
+
+    await writeFile(statePath, "{broken")
+    const collectorFailure = await Effect.runPromise(Effect.either(runCollection(options)))
+    expect(collectorFailure._tag).toBe("Left")
+    expect(decodeExact(CollectorStatusV1Schema, collectorStatuses.at(-1))).toMatchObject({
+      outcome: { status: "failed", metrics: null, error: "collector_error" },
+    })
+  })
+
+  test("surfaces status failure after success but preserves an existing collection failure", async () => {
+    const directory = await temporaryDirectory()
+    const root = join(directory, "source")
+    const statePath = join(directory, "collector-state.json")
+    const statusFailure = () => Response.json({ error: "unavailable" }, { status: 503 })
+    const emptyServer = startIngestServer(() => Response.json({ revision: 1 }), statusFailure)
+    const successfulCollection = await Effect.runPromise(
+      Effect.either(
+        runCollection({
+          server: serverBase(emptyServer),
+          deviceId: "device-1",
+          deviceName: "Laptop",
+          statePath,
+          roots: [liveClaudeRoot(root)],
+        }),
+      ),
+    )
+    expect(successfulCollection._tag).toBe("Left")
+    if (successfulCollection._tag === "Left") {
+      expect(successfulCollection.left).not.toBeInstanceOf(CollectorError)
+    }
+
+    await writeClaudeSession(root, "upload-fails")
+    const failingServer = startIngestServer(
+      () => Response.json({ error: "bad request" }, { status: 400 }),
+      statusFailure,
+    )
+    const collectionFailure = await Effect.runPromise(
+      Effect.either(
+        runCollection({
+          server: serverBase(failingServer),
+          deviceId: "device-1",
+          deviceName: "Laptop",
+          statePath: join(directory, "failing-state.json"),
+          roots: [liveClaudeRoot(root)],
+        }),
+      ),
+    )
+    expect(collectionFailure._tag).toBe("Left")
+    if (collectionFailure._tag === "Left") {
+      expect(collectionFailure.left).toBeInstanceOf(CollectorError)
+    }
   })
 })

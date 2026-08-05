@@ -1,5 +1,5 @@
 // pure data helpers — everything derived from the scan lives here, ui-free
-import { computeTopOrgs, nameOf, normalizeCwd, orgOf, shiftDate } from "../../shared/domain"
+import { computeTopOrgs, localParts, nameOf, normalizeCwd, orgOf, shiftDate, workdayOf } from "../../shared/domain"
 import type { BootstrapSessionV1, BootstrapV1 } from "../../shared/protocol"
 
 export { computeTopOrgs, nameOf, normalizeCwd, orgOf, shiftDate }
@@ -109,11 +109,10 @@ export function dowName(dateStr: string): string {
   return DOW_FULL[(d.getUTCDay() + 6) % 7].toLowerCase()
 }
 
-// the local workday that "now" belongs to, honoring the morning boundary
-export function workdayToday(boundary: number): string {
-  const now = new Date()
-  const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
-  return now.getHours() < boundary ? shiftDate(iso, -1) : iso
+// the configured-zone workday that "now" belongs to, honoring the morning boundary
+export function workdayToday(boundary: number, timeZone: string, now = Date.now()): string {
+  const local = localParts(now, timeZone)
+  return workdayOf(local.date, local.minute, boundary)
 }
 
 // ---------- day credits ----------
