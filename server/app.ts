@@ -1,6 +1,8 @@
 import { Effect, Schema } from "effect"
 import { basename, join, resolve, sep } from "node:path"
 import { localActivityOf, orgOf, type LocalActivityTuple, type UtcActivityTuple } from "../shared/domain"
+import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
+import type { ProviderId } from "../shared/providers"
 import {
   BootstrapV1Schema,
   CollectorStatusV1Schema,
@@ -26,17 +28,15 @@ import { ingestCaptures } from "./captures"
 import { ingestSessions } from "./ingest"
 import { rebuildDaySummaryJobs } from "./day-jobs"
 
-export interface InferenceConfig {
-  readonly url: string
-  readonly token: string
+export interface SummarizationDescriber {
+  describe(): { readonly provider: ProviderId; readonly model: string } | null
 }
 
 export interface AppOptions {
   readonly db: TrailsDb
   readonly staticRoot?: string
   readonly staticAssets?: ReadonlyArray<Blob & { readonly name: string }>
-  readonly inference?: InferenceConfig
-  readonly fetch?: typeof globalThis.fetch
+  readonly summarization?: SummarizationDescriber
   readonly now?: () => number
 }
 
@@ -505,27 +505,19 @@ function recordCollectorStatus(
   })()
 }
 
-async function summarizationOf(options: AppOptions): Promise<unknown> {
-  if (!options.inference) {
+function summarizationOf(options: AppOptions): unknown {
+  const active = options.summarization?.describe() ?? null
+  if (!active) {
     return decodeExact(SummarizationStatusV1Schema, { enabled: false, metadata: null })
   }
-  try {
-    const response = await (options.fetch ?? globalThis.fetch)(options.inference.url, {
-      method: "GET",
-      redirect: "error",
-      signal: AbortSignal.timeout(30_000),
-      headers: { Authorization: `Bearer ${options.inference.token}` },
-    })
-    if (!response.ok) throw new Error("relay metadata request failed")
-    const metadata = decodeExact(SummarizationMetadataV1Schema, await response.json())
-    return decodeExact(SummarizationStatusV1Schema, { enabled: true, metadata })
-  } catch {
-    throw new ApiError(
-      "upstream_unavailable",
-      "summarization metadata unavailable",
-      502,
-    )
-  }
+  return decodeExact(SummarizationStatusV1Schema, {
+    enabled: true,
+    metadata: {
+      protocolVersion: 1,
+      model: active.model,
+      prompts: { session: SESSION_SYSTEM, day: DAY_SYSTEM },
+    },
+  })
 }
 
 async function apiResponse(options: AppOptions, request: Request, url: URL, now: number): Promise<Response> {
@@ -626,7 +618,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
   }
   if (url.pathname === "/api/summarization") {
     if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    return jsonResponse(await summarizationOf(options))
+    return jsonResponse(summarizationOf(options))
   }
   if (url.pathname === "/api/settings") {
     if (request.method !== "PATCH") throw new ApiError("method_not_allowed", "method not allowed", 405)

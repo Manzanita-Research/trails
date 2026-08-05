@@ -3,7 +3,9 @@
   "version": "0.1.0-alpha.5",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "build:web": "vite build",
@@ -14,15 +16,13 @@
     "collect": "bun cli/main.ts collect --once",
     "test": "bun test",
     "check": "tsc --noEmit",
-    "worker:dev": "wrangler dev --config wrangler.jsonc",
-    "worker:deploy": "wrangler deploy --config wrangler.jsonc",
+    "docs:deploy": "bun run --cwd apps/docs deploy",
+    "docs:check": "bun run --cwd apps/docs typecheck",
     "feedback:dev": "wrangler dev --config wrangler.feedback.jsonc",
     "feedback:deploy": "wrangler deploy --config wrangler.feedback.jsonc",
     "feedback:list": "wrangler d1 execute trails-beta-feedback --remote --config wrangler.feedback.jsonc --json --command \"SELECT id, kind, message, follow_up, context_json, client_created_at, received_at FROM feedback WHERE expires_at > CAST(strftime('%s','now') AS INTEGER) * 1000 ORDER BY received_at DESC LIMIT 50\"",
     "docs:dev": "bun run --cwd apps/docs dev",
-    "docs:build": "bun run --cwd apps/docs build",
-    "docs:check": "bun run --cwd apps/docs typecheck",
-    "docs:deploy": "bun run --cwd apps/docs deploy"
+    "docs:build": "bun run --cwd apps/docs build"
   },
   "dependencies": {
     "effect": "^3.22.0",

@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createApp } from "../server/app"
 import { openDatabase, type TrailsDb } from "../server/db"
+import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
 import { BootstrapV1Schema, decodeExact, type BootstrapV1, type IngestRequestV2 } from "../shared/protocol"
 import { App } from "../src/App"
 
@@ -79,19 +80,13 @@ async function makeLoadedHarness({
 } = {}): Promise<Harness> {
   const db = openDatabase(":memory:", { defaultTimezone: "America/Los_Angeles" })
   databases.add(db)
-  const metadata = {
-    protocolVersion: 1 as const,
-    model: "@cf/moonshotai/kimi-k2.5",
-    prompts: { session: "Complete session system prompt.", day: "Complete day system prompt." },
-  }
   const app = createApp({
     db,
     now: () => fixedNow,
-    inference:
-      summarization === "effective"
-        ? { url: "https://relay.test/api/summarize", token: "relay-token" }
-        : undefined,
-    fetch: (async () => Response.json(metadata)) as unknown as typeof globalThis.fetch,
+    summarization: {
+      describe: () =>
+        summarization === "effective" ? { provider: "chatgpt" as const, model: "gpt-5.2-codex" } : null,
+    },
   })
   let failurePath: string | null = null
   let promptCount = 0
@@ -227,9 +222,9 @@ describe("beta interaction clarity", () => {
     expect(within(settingsPage).getByText("activity sent 0m ago")).toBeTruthy()
     expect(within(settingsPage).getByText("2 found · 1 changed · 1 sent · 0 ignored · 1 unchanged")).toBeTruthy()
     expect(within(settingsPage).queryByText(/online|offline/i)).toBeNull()
-    expect(await within(settingsPage).findByText("@cf/moonshotai/kimi-k2.5")).toBeTruthy()
-    expect(within(settingsPage).getByText("Complete session system prompt.")).toBeTruthy()
-    expect(within(settingsPage).getByText("Complete day system prompt.")).toBeTruthy()
+    expect(await within(settingsPage).findByText("gpt-5.2-codex")).toBeTruthy()
+    expect(within(settingsPage).getByText(SESSION_SYSTEM)).toBeTruthy()
+    expect(within(settingsPage).getByText(DAY_SYSTEM)).toBeTruthy()
     expect(
       within(settingsPage).getByText("A one-session day summary may be copied without a second model call."),
     ).toBeTruthy()
@@ -279,7 +274,7 @@ describe("beta interaction clarity", () => {
     const machineSection = machineHeading.closest("section")
     if (!(machineSection instanceof HTMLElement)) throw new Error("expected machines section")
     expect(await within(machineSection).findByText(/Machine status couldn’t load/)).toBeTruthy()
-    expect(await screen.findByText("@cf/moonshotai/kimi-k2.5")).toBeTruthy()
+    expect(await screen.findByText("gpt-5.2-codex")).toBeTruthy()
     await user.click(within(machineSection).getByRole("button", { name: "try again" }))
     expect(await within(machineSection).findByText("Source Mac")).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "← back" }))
@@ -291,7 +286,7 @@ describe("beta interaction clarity", () => {
     expect(await within(summarySection).findByText(/Summarization details couldn’t load/)).toBeTruthy()
     expect(await screen.findByText("Source Mac")).toBeTruthy()
     await user.click(within(summarySection).getByRole("button", { name: "try again" }))
-    expect(await within(summarySection).findByText("@cf/moonshotai/kimi-k2.5")).toBeTruthy()
+    expect(await within(summarySection).findByText("gpt-5.2-codex")).toBeTruthy()
   })
 
   test("renders the truthful disabled summarization state", async () => {

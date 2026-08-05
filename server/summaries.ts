@@ -1,21 +1,15 @@
 import { Effect, Schedule } from "effect"
 import { createHash } from "node:crypto"
 import { localParts, workdayOf } from "../shared/domain"
-import type { InferenceConfig } from "./app"
+import type { SummaryRuntimeStatus } from "./connectors/manager"
+import type { InferenceResult, Summarizer } from "./connectors/types"
 import type { TrailsDb } from "./db"
-
-export interface InferenceResult {
-  readonly text: string
-  readonly model: string
-}
-
-export interface InferenceClient {
-  summarize(kind: "session" | "day", input: string): Effect.Effect<InferenceResult, Error>
-}
 
 export interface SummaryPollOptions {
   readonly db: TrailsDb
-  readonly inference: InferenceClient
+  /** Re-evaluated every poll so config changes apply without a restart. */
+  readonly summarizer: () => Summarizer | null
+  readonly status?: SummaryRuntimeStatus
   readonly now?: number
   readonly inFlight?: Set<string>
 }
@@ -65,43 +59,6 @@ function retryAt(attempts: number, now: number): number {
   return now + Math.min(2 ** attempts * 60_000, 60 * 60_000)
 }
 
-export function createInferenceClient(
-  config: InferenceConfig,
-  fetcher: typeof globalThis.fetch = globalThis.fetch,
-): InferenceClient {
-  return {
-    summarize: (kind, input) =>
-      Effect.tryPromise({
-        try: async () => {
-          const response = await fetcher(config.url, {
-            method: "POST",
-            redirect: "error",
-            signal: AbortSignal.timeout(120_000),
-            headers: {
-              Authorization: `Bearer ${config.token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ kind, input }),
-          })
-          if (!response.ok) throw new Error(`InferenceHttp${response.status}`)
-          const body: unknown = await response.json()
-          if (
-            typeof body !== "object" ||
-            body === null ||
-            !("text" in body) ||
-            !("model" in body) ||
-            typeof body.text !== "string" ||
-            typeof body.model !== "string" ||
-            !body.text.trim()
-          ) {
-            throw new Error("InferenceProtocolError")
-          }
-          return { text: body.text.trim(), model: body.model }
-        },
-        catch: (cause) => (cause instanceof Error ? cause : new Error("InferenceError")),
-      }).pipe(Effect.timeout("120 seconds")),
-  }
-}
 
 function selectJobs(db: TrailsDb, now: number, inFlight: Set<string>): SummaryJob[] {
   const sessionJobs = db.sqlite
@@ -294,12 +251,34 @@ function failDay(db: TrailsDb, job: DayJob, error: unknown, now: number): void {
 
 function processJob(
   db: TrailsDb,
-  inference: InferenceClient,
+  client: Summarizer | null,
   job: SummaryJob,
   now: number,
+  status?: SummaryRuntimeStatus,
 ): Effect.Effect<void, never> {
+  const summarize = (kind: "session" | "day", input: string) => {
+    if (!client) return null
+    if (status) status.lastAttemptAt = now
+    return client.summarize(kind, input).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          if (status) {
+            status.lastSuccessAt = now
+            status.lastErrorClass = null
+          }
+        }),
+      ),
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          if (status) status.lastErrorClass = error.errorClass
+        }),
+      ),
+    )
+  }
   if (job.kind === "session") {
-    return inference.summarize("session", job.digest.slice(0, 9_000)).pipe(
+    const run = summarize("session", job.digest.slice(0, 9_000))
+    if (!run) return Effect.void
+    return run.pipe(
       Effect.tap((result) => Effect.sync(() => completeSession(db, job, result, now))),
       Effect.catchAll((error) => Effect.sync(() => failSession(db, job, error, now))),
       Effect.asVoid,
@@ -314,7 +293,9 @@ function processJob(
   }
   const memberText = members.map((member) => `- ${member.summary.slice(0, 600)}`).join("\n")
   const input = `Project: ${job.project}\nDay: ${job.workDate}\nSession summaries:\n${memberText}`.slice(0, 12_000)
-  return inference.summarize("day", input).pipe(
+  const run = summarize("day", input)
+  if (!run) return Effect.void
+  return run.pipe(
     Effect.tap((result) => Effect.sync(() => completeDay(db, job, capturedHash, result, now))),
     Effect.catchAll((error) => Effect.sync(() => failDay(db, job, error, now))),
     Effect.asVoid,
@@ -324,11 +305,15 @@ function processJob(
 export function runSummaryPoll(options: SummaryPollOptions): Effect.Effect<number, never> {
   const now = options.now ?? Date.now()
   const inFlight = options.inFlight ?? new Set<string>()
+  const client = options.summarizer()
   const jobs = selectJobs(options.db, now, inFlight)
   for (const job of jobs) inFlight.add(job.key)
   return Effect.forEach(
     jobs,
-    (job) => processJob(options.db, options.inference, job, now).pipe(Effect.ensuring(Effect.sync(() => inFlight.delete(job.key)))),
+    (job) =>
+      processJob(options.db, client, job, now, options.status).pipe(
+        Effect.ensuring(Effect.sync(() => inFlight.delete(job.key))),
+      ),
     { concurrency: 2 },
   ).pipe(Effect.map(() => jobs.length))
 }

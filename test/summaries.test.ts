@@ -4,11 +4,12 @@ import { Effect } from "effect"
 import type { IngestSessionV2 } from "../shared/protocol"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { ingestSessions } from "../server/ingest"
+import { runSummaryPoll } from "../server/summaries"
 import {
-  runSummaryPoll,
-  type InferenceClient,
+  SummarizeError,
   type InferenceResult,
-} from "../server/summaries"
+  type Summarizer,
+} from "../server/connectors/types"
 
 const START = Date.parse("2026-08-01T12:00:00.000Z")
 const SETTLED = START + 5 * 60_000
@@ -61,17 +62,19 @@ interface DeferredCall {
   readonly kind: "session" | "day"
   readonly input: string
   resolve(result?: InferenceResult): void
-  reject(error?: Error): void
+  reject(error?: SummarizeError): void
 }
 
 function deferredInference(): {
-  readonly inference: InferenceClient
+  readonly inference: Summarizer
   readonly calls: DeferredCall[]
   waitForCalls(count: number): Promise<void>
 } {
   const calls: DeferredCall[] = []
   const waiters: Array<{ readonly count: number; readonly resolve: () => void }> = []
-  const inference: InferenceClient = {
+  const inference: Summarizer = {
+    provider: "openrouter",
+    model: "fake-model",
     summarize: (kind, input) =>
       Effect.tryPromise({
         try: () =>
@@ -80,7 +83,7 @@ function deferredInference(): {
               kind,
               input,
               resolve: (result = { text: `summary for ${input}`, model: "fake-model" }) => resolve(result),
-              reject: (error = new Error("inference failed")) => reject(error),
+              reject: (error = new SummarizeError("network")) => reject(error),
             })
             for (let index = waiters.length - 1; index >= 0; index--) {
               if (calls.length < waiters[index].count) continue
@@ -88,7 +91,7 @@ function deferredInference(): {
               waiters.splice(index, 1)
             }
           }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error("inference failed")),
+        catch: (cause) => (cause instanceof SummarizeError ? cause : new SummarizeError("network")),
       }),
   }
   return {
@@ -143,14 +146,16 @@ describe("summary work", () => {
     )
     db.sqlite.query("UPDATE day_summary_jobs SET available_at = ?").run(START)
     const kinds: Array<"session" | "day"> = []
-    const inference: InferenceClient = {
+    const inference: Summarizer = {
+      provider: "openrouter",
+      model: "fake-model",
       summarize: (kind) => {
         kinds.push(kind)
         return Effect.succeed({ text: `${kind} summary`, model: "fake-model" })
       },
     }
 
-    expect(await Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED }))).toBe(2)
+    expect(await Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED }))).toBe(2)
     expect(kinds).toEqual(["session", "session"])
     expect(db.sqlite.query("SELECT count(*) AS count FROM session_summaries").get()).toEqual({ count: 2 })
   })
@@ -166,38 +171,40 @@ describe("summary work", () => {
     expect(jobAtIngest).toEqual({ attempts: 0, available_at: SETTLED, last_error: null })
 
     let calls = 0
-    const inference: InferenceClient = {
+    const inference: Summarizer = {
+      provider: "openrouter",
+      model: "fake-model",
       summarize: () => {
         calls++
         return calls === 1
-          ? Effect.fail(Object.assign(new Error("relay unavailable"), { name: "RelayUnavailable" }))
+          ? Effect.fail(new SummarizeError("network"))
           : Effect.succeed({ text: "The work was summarized.", model: "fake-model" })
       },
     }
 
-    expect(await Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED - 1 }))).toBe(0)
+    expect(await Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED - 1 }))).toBe(0)
     expect(calls).toBe(0)
 
-    expect(await Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED }))).toBe(1)
+    expect(await Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED }))).toBe(1)
     expect(calls).toBe(1)
     expect(
       scalar<{ attempts: number; available_at: number; last_error: string }>(
         db,
         "SELECT attempts, available_at, last_error FROM session_summary_jobs",
       ),
-    ).toEqual({ attempts: 1, available_at: SETTLED + 60_000, last_error: "RelayUnavailable" })
+    ).toEqual({ attempts: 1, available_at: SETTLED + 60_000, last_error: "network" })
 
     // A fresh in-flight set models the next supervisor poll (including one after a restart).
     expect(
       await Effect.runPromise(
-        runSummaryPoll({ db, inference, now: SETTLED + 60_000 - 1, inFlight: new Set<string>() }),
+        runSummaryPoll({ db, summarizer: () => inference, now: SETTLED + 60_000 - 1, inFlight: new Set<string>() }),
       ),
     ).toBe(0)
     expect(calls).toBe(1)
 
     expect(
       await Effect.runPromise(
-        runSummaryPoll({ db, inference, now: SETTLED + 60_000, inFlight: new Set<string>() }),
+        runSummaryPoll({ db, summarizer: () => inference, now: SETTLED + 60_000, inFlight: new Set<string>() }),
       ),
     ).toBe(1)
     expect(calls).toBe(2)
@@ -219,9 +226,9 @@ describe("summary work", () => {
     const { inference, calls, waitForCalls } = deferredInference()
     const inFlight = new Set<string>()
 
-    const firstPoll = Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED, inFlight }))
+    const firstPoll = Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED, inFlight }))
     await waitForCalls(2)
-    const overlappingPoll = Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED, inFlight }))
+    const overlappingPoll = Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED, inFlight }))
     await Promise.resolve()
     const requestsWhileFirstPollWasBlocked = calls.length
     const uniqueInputs = new Set(calls.map((call) => call.input)).size
@@ -239,7 +246,7 @@ describe("summary work", () => {
     db.sqlite.exec("DELETE FROM day_summary_jobs")
     const { inference, calls, waitForCalls } = deferredInference()
 
-    const poll = Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED }))
+    const poll = Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED }))
     await waitForCalls(2)
 
     await ingest(
@@ -253,7 +260,7 @@ describe("summary work", () => {
     expect(successCall).toBeDefined()
     expect(failureCall).toBeDefined()
     successCall!.resolve({ text: "obsolete summary", model: "fake-model" })
-    failureCall!.reject(Object.assign(new Error("obsolete failure"), { name: "ObsoleteFailure" }))
+    failureCall!.reject(new SummarizeError("provider_rejected"))
     await poll
 
     expect(db.sqlite.query("SELECT * FROM session_summaries").all()).toEqual([])
@@ -291,7 +298,7 @@ describe("summary work", () => {
     const original = scalar<{ generation: number }>(db, "SELECT generation FROM day_summary_jobs")!
     const { inference, calls, waitForCalls } = deferredInference()
 
-    const poll = Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED }))
+    const poll = Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED }))
     await waitForCalls(1)
     expect(calls[0].kind).toBe("day")
     db.sqlite.query("UPDATE day_summary_jobs SET generation = generation + 1 WHERE work_date = ? AND project = ?").run(
@@ -313,7 +320,7 @@ describe("summary work", () => {
     makeSessionSummariesReady(db, ["first session", "second session"])
     const { inference, calls, waitForCalls } = deferredInference()
 
-    const poll = Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED }))
+    const poll = Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED }))
     await waitForCalls(1)
     const firstId = sessionIds(db)[0].id
     db.sqlite.query("UPDATE session_summaries SET summary = ? WHERE session_id = ?").run("newer member summary", firstId)
@@ -328,14 +335,16 @@ describe("summary work", () => {
     await ingest(db, START, session("one-member", "digest"))
     makeSessionSummariesReady(db, ["The only session summary."])
     let calls = 0
-    const inference: InferenceClient = {
+    const inference: Summarizer = {
+      provider: "openrouter",
+      model: "fake-model",
       summarize: () => {
         calls++
         return Effect.succeed({ text: "should not be used", model: "fake-model" })
       },
     }
 
-    expect(await Effect.runPromise(runSummaryPoll({ db, inference, now: SETTLED }))).toBe(1)
+    expect(await Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: SETTLED }))).toBe(1)
     expect(calls).toBe(0)
     expect(
       scalar<{ summary: string; model: string }>(db, "SELECT summary, model FROM day_summaries"),
@@ -356,14 +365,16 @@ describe("summary work", () => {
       )
       .run("2026-08-01", PROJECT, START)
     let calls = 0
-    const inference: InferenceClient = {
+    const inference: Summarizer = {
+      provider: "openrouter",
+      model: "fake-model",
       summarize: () => {
         calls++
         return Effect.succeed({ text: "should not be used", model: "fake-model" })
       },
     }
 
-    expect(await Effect.runPromise(runSummaryPoll({ db, inference, now: START }))).toBe(1)
+    expect(await Effect.runPromise(runSummaryPoll({ db, summarizer: () => inference, now: START }))).toBe(1)
     expect(calls).toBe(0)
     expect(db.sqlite.query("SELECT * FROM day_summaries").all()).toEqual([])
     expect(db.sqlite.query("SELECT * FROM day_summary_jobs").all()).toEqual([])

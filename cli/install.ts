@@ -12,7 +12,7 @@ import {
 import { constants } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { COLLECTOR_CONFIG_PATH, loadCollectorConfig, loadServerConfig } from "./config"
+import { COLLECTOR_CONFIG_PATH, loadCollectorConfig, loadHubConfig } from "./config"
 
 export type InstallKind = "server" | "collector"
 
@@ -228,7 +228,14 @@ export async function install(options: InstallOptions): Promise<void> {
   if (options.kind === "collector" && !loadCollectorConfig(COLLECTOR_CONFIG_PATH)) {
     throw new Error("collector configuration is required before installation")
   }
-  const aiConfig = options.kind === "server" ? loadServerConfig() : null
+  let aiConfig: unknown = null
+  if (options.kind === "server") {
+    try {
+      aiConfig = loadHubConfig()?.summarizer ?? null
+    } catch {
+      aiConfig = null
+    }
+  }
   const service = options.kind === "server" ? normalizeTailscaleService(options.service) : undefined
   const exposeThroughTailscale = options.kind === "server" && (options.tailscale === true || service !== undefined)
   const tailscale = exposeThroughTailscale ? tailscalePath() : null
@@ -262,7 +269,7 @@ export async function install(options: InstallOptions): Promise<void> {
     } else {
       console.log("Access: local only at http://127.0.0.1:7412/")
     }
-    if (!aiConfig) console.warn("AI is disabled; summary jobs will remain pending")
+    if (!aiConfig) console.warn("Summaries are off; run `trails connect` on the hub to enable them")
   }
   if (options.dryRun) return
 

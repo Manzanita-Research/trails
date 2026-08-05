@@ -23,19 +23,13 @@ export interface CollectorConfig {
   readonly deviceName: string
 }
 
-export interface ServerConfig {
-  readonly protocolVersion: 1
-  readonly aiUrl: string
-  readonly aiToken: string
-}
-
 const CollectorConfigSchema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   server: Schema.String,
   deviceId: Schema.String,
   deviceName: Schema.String,
 })
-const ServerConfigSchema = Schema.Struct({
+const LegacyServerConfigSchema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   aiUrl: Schema.String,
   aiToken: Schema.String,
@@ -60,16 +54,6 @@ export function normalizeCollectorServer(value: string): string {
   return url.toString()
 }
 
-export function normalizeInferenceUrl(value: string): string {
-  const url = new URL(value)
-  if (url.username || url.password || url.search || url.hash || url.pathname !== "/api/summarize") {
-    throw new Error("AI URL must be the credential-free /api/summarize endpoint")
-  }
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url.hostname))) {
-    throw new Error("AI URL requires HTTPS except on loopback")
-  }
-  return url.toString()
-}
 
 export function atomicWriteJson(path: string, value: unknown): void {
   const previousUmask = process.umask(0o077)
@@ -119,40 +103,6 @@ export function configureCollector(options: {
   return config
 }
 
-export function configureServer(options: {
-  readonly aiUrl: string
-  readonly aiToken: string
-  readonly path?: string
-}): ServerConfig {
-  const token = options.aiToken.replace(/\r?\n$/, "")
-  if (!token) throw new Error("AI token must not be empty")
-  const config: ServerConfig = {
-    protocolVersion: 1,
-    aiUrl: normalizeInferenceUrl(options.aiUrl),
-    aiToken: token,
-  }
-  atomicWriteJson(options.path ?? SERVER_CONFIG_PATH, config)
-  return config
-}
-
-export function loadServerConfig(path = SERVER_CONFIG_PATH): ServerConfig | null {
-  try {
-    const info = statSync(path)
-    const currentUid = process.getuid?.()
-    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
-      throw new Error("server configuration permissions are unsafe")
-    }
-    const config = decodeExact(ServerConfigSchema, JSON.parse(readFileSync(path, "utf8"))) as ServerConfig
-    if (normalizeInferenceUrl(config.aiUrl) !== config.aiUrl || !config.aiToken) {
-      throw new Error("server configuration is invalid")
-    }
-    return config
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
-    throw new Error("server configuration is invalid")
-  }
-}
-
 export interface SummarizerConfig {
   readonly provider: ProviderId
   readonly model?: string
@@ -194,7 +144,7 @@ export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
       "protocolVersion" in parsed &&
       parsed.protocolVersion === 1
     ) {
-      decodeExact(ServerConfigSchema, parsed)
+      decodeExact(LegacyServerConfigSchema, parsed)
       return { summarizer: null, legacyRelay: true }
     }
     const config = decodeExact(ServerConfigV2Schema, parsed)
