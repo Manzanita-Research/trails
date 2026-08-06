@@ -1,10 +1,11 @@
 import { createContext, useContext } from "react"
-import type { DayMap, Engagement, Session, Summaries } from "./data"
+import type { Capture, DayMap, Engagement, Session, Summaries } from "./data"
 import type { BootstrapV1 } from "../../shared/protocol"
 
 // everything the views need, provided once by App
 export interface Trails {
   sessions: Session[]
+  captures: ReadonlyArray<Capture>
   summaries: Summaries
   nowTime: number
   indexedAt: number | null
@@ -14,6 +15,7 @@ export interface Trails {
   days: [string, DayMap][]
   engs: Engagement[]
   engOf: (project: string) => Engagement
+  hasCodingProject: (project: string) => boolean
   dispName: (project: string) => string
   openProject: (project: string) => void
   openDay: (date: string) => void

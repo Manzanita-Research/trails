@@ -76,6 +76,9 @@ curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
 - Trails creates a committed SQLite backup every day at 03:00 and keeps the latest 14 under `~/.manzanita/trails/backups/`.
 - Generated summaries may be unavailable during the alpha. Trails continues working and uses the first prompt as a fallback.
 - Open **settings** in the web app to choose the day boundary, attention halo, and IANA time zone used for displayed times and day grouping. The same screen shows collector freshness and the effective summarization model and prompts without exposing editable relay configuration.
+- Captured image generations and meetings appear in the same day timeline and project story as coding. Captures without an explicit project appear under `creative elsewhere`; they do not create a project page.
+- Attention applies the configured halo only to coding prompts. Meeting intervals and image-generation points count at their exact captured minutes, with overlaps counted once.
+- Capture cards render only bounded stored fields and same-origin image bytes. Captures do not enter summary inference.
 
 ## Experimental Midjourney capture
 
@@ -151,7 +154,7 @@ Only the hub has server and backup logs.
 
 ## Privacy
 
-Transcript parsing happens on the Mac where each session was created. Trails sends the hub only normalized observations: source, session identifier, working directory, branch, timestamps, event counts, first prompt, minute activity, and a bounded digest.
+Transcript parsing happens on the Mac where each coding session was created. Trails sends the hub normalized session observations: source, session identifier, working directory, branch, timestamps, event counts, first prompt, minute activity, and a bounded digest. It does **not** send transcript paths or transcript bodies.
 
 When capture is enabled, the collecting Mac additionally sends bounded capture source IDs, explicit project attribution or hints, titles, prompt or meeting-summary text, timestamps and minute attention, source-specific lineage/count fields, and four decoded Midjourney images. The hub retains these records and image bytes in canonical SQLite and daily backups. It never receives browser credentials, remote image URLs, raw provider responses, Granola credentials, transcripts, or attendee identities.
 

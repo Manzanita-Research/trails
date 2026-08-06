@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { engColor, fmtDur, focusMinutes, fullDate } from "../lib/data"
+import { attentionMinutes, engColor, fmtDur, fullDate } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { LaneMarks, makeX, TicksRow, useWidth } from "./timeline"
 import { DayNote } from "./SessLine"
@@ -19,7 +19,10 @@ export function ProjectView({ project, onBack, backLabel }: { project: string; o
   const eng = t.engOf(project)
 
   const projDays = t.days.filter(([, projMap]) => projMap.has(project))
-  const totalFocus = focusMinutes(projDays.map(([, m]) => m.get(project)!.user), t.halo)
+  const totalFocus = projDays.reduce((sum, [, projects]) => {
+    const data = projects.get(project)!
+    return sum + attentionMinutes([data.user], [data.granola, data.midjourney], t.halo)
+  }, 0)
   const totalAgent = projDays.reduce((sum, [, m]) => sum + m.get(project)!.all.size, 0)
   const sessCount = new Set(projDays.flatMap(([, m]) => [...m.get(project)!.sessions.keys()])).size
 
@@ -134,7 +137,7 @@ export function ProjectView({ project, onBack, backLabel }: { project: string; o
       <div className="detail-days">
         {projDays.map(([date, projMap]) => {
           const data = projMap.get(project)!
-          const f = focusMinutes([data.user], t.halo)
+          const f = attentionMinutes([data.user], [data.granola, data.midjourney], t.halo)
           return (
             <div key={date} className="detail-row">
               <div>

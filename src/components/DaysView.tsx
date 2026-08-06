@@ -2,14 +2,18 @@ import { useEffect, useRef, useState } from "react"
 import { localParts, workdayOf } from "../../shared/domain"
 import { Ticks } from "./SessLine"
 import {
+  attentionMinutes,
   credit,
   dowName,
   engColor,
+  firstMinuteOf,
   fmtClock24,
   fmtDur,
-  focusMinutes,
   fullDate,
+  lastMinuteOf,
+  type CaptureSpan,
   type DayMap,
+  type DayProject,
 } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { HourGrid, LaneMarks, makeX, useWidth } from "./timeline"
@@ -23,20 +27,20 @@ function DayTimeline({
   widthPx,
   cutoff,
   active,
-  noteProjects,
+  storyProjects,
   onPick,
 }: {
   dayProjects: DayMap
   widthPx: number
   cutoff?: number
   active?: string | null
-  noteProjects: ReadonlySet<string>
+  storyProjects: ReadonlySet<string>
   onPick?: (project: string) => void
 }) {
   const t = useTrails()
   const labelW = widthPx >= 500 ? 150 : 108
   const plotW = widthPx - labelW
-  const projects = [...dayProjects.entries()].sort((a, b) => Math.min(...a[1].all) - Math.min(...b[1].all))
+  const projects = [...dayProjects.entries()].sort((a, b) => firstMinuteOf(a[1]) - firstMinuteOf(b[1]))
   const H = projects.length * (LANE_H + LANE_GAP) - LANE_GAP + 34
   const X = makeX(labelW, plotW, t.boundary)
   const cutX = cutoff !== undefined ? X(cutoff) : null
@@ -77,12 +81,12 @@ function DayTimeline({
         const y = i * (LANE_H + LANE_GAP)
         const name = t.dispName(project)
         const isActive = project === active
-        const pickProject = noteProjects.has(project) ? onPick : undefined
+        const pickProject = storyProjects.has(project) ? onPick : undefined
         const labelLimit = widthPx < 500 ? 14 : 20
         const visibleName = name.length > labelLimit ? `${name.slice(0, labelLimit - 1)}…` : name
-        const firstMinute = Math.min(...data.all)
-        const lastMinute = Math.max(...data.all)
-        const accessibleLabel = `${name}; activity from ${fmtClock24(firstMinute)} to ${fmtClock24(lastMinute)}; jump to day summary.`
+        const firstMinute = firstMinuteOf(data)
+        const lastMinute = lastMinuteOf(data)
+        const accessibleLabel = `${name}; activity from ${fmtClock24(firstMinute)} to ${fmtClock24(lastMinute)}; jump to day story.`
 
         return (
           <g
@@ -168,6 +172,103 @@ function Pager({
     </nav>
   )
 }
+function captureTime({ min, max }: CaptureSpan): string {
+  return min === max ? fmtClock24(min) : `${fmtClock24(min)}–${fmtClock24(max + 1)}`
+}
+
+function MidjourneyCard({
+  span,
+  capturesOnDay,
+}: {
+  span: CaptureSpan
+  capturesOnDay: ReadonlySet<string>
+}) {
+  const { capture } = span
+  if (capture.source !== "midjourney") return null
+  const parentId = capture.payload.parentCaptureId
+  const parentOnDay = parentId !== null && capturesOnDay.has(parentId)
+  const lineage =
+    capture.payload.hasParent && capture.payload.parentGrid !== null
+      ? `variation ${capture.payload.parentGrid + 1}`
+      : `${capture.payload.eventType} · ${capture.payload.jobType}`
+  return (
+    <article className="capture-card capture-card-midjourney" id={`capture-${capture.id}`}>
+      <div className="capture-meta">
+        {captureTime(span)} · {lineage}
+      </div>
+      <h3>{capture.title}</h3>
+      <p>{capture.summaryInput}</p>
+      {capture.payload.hasParent &&
+        (parentOnDay ? (
+          <button
+            className="capture-lineage"
+            onClick={() =>
+              document.getElementById(`capture-${parentId}`)?.scrollIntoView({
+                behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+                block: "center",
+              })
+            }
+          >
+            view parent generation
+          </button>
+        ) : (
+          <span className="capture-lineage capture-lineage-muted">variation from earlier work</span>
+        ))}
+      {capture.images.length > 0 && (
+        <div className="capture-images" aria-label={`${capture.title} images`}>
+          {capture.images.map((image) => (
+            <img
+              key={image.index}
+              src={image.url}
+              width={image.width}
+              height={image.height}
+              loading="lazy"
+              alt={`${capture.title}, image ${image.index + 1}`}
+            />
+          ))}
+        </div>
+      )}
+    </article>
+  )
+}
+
+function GranolaCard({ span }: { span: CaptureSpan }) {
+  const { capture } = span
+  if (capture.source !== "granola") return null
+  const attendance = `${capture.payload.attendeeCount} attendee${capture.payload.attendeeCount === 1 ? "" : "s"}`
+  return (
+    <article className="capture-card capture-card-granola" id={`capture-${capture.id}`}>
+      <div className="capture-meta">
+        {captureTime(span)} · {attendance}
+      </div>
+      <h3>{capture.title}</h3>
+      <p>{capture.summaryInput}</p>
+    </article>
+  )
+}
+
+function CaptureCards({
+  project,
+  capturesOnDay,
+}: {
+  project: DayProject
+  capturesOnDay: ReadonlySet<string>
+}) {
+  const captures = [...project.captures.values()].sort((left, right) => left.min - right.min)
+  if (captures.length === 0) return null
+  return (
+    <div className="capture-cards">
+      {captures.map((span) =>
+        span.capture.source === "midjourney" ? (
+          <MidjourneyCard key={span.capture.id} span={span} capturesOnDay={capturesOnDay} />
+        ) : (
+          <GranolaCard key={span.capture.id} span={span} />
+        ),
+      )}
+    </div>
+  )
+}
+
 
 export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: number) => void }) {
   const t = useTrails()
@@ -263,8 +364,12 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
   }
   const dir = pageDirRef.current.dir
 
-  const focus = focusMinutes([...projMap.values()].map((p) => p.user), t.halo)
-  const agentMin = new Set([...projMap.values()].flatMap((p) => [...p.all])).size
+  const focus = attentionMinutes(
+    [...projMap.values()].map((project) => project.user),
+    [...projMap.values()].flatMap((project) => [project.granola, project.midjourney]),
+    t.halo,
+  )
+  const agentMin = new Set([...projMap.values()].flatMap((project) => [...project.all])).size
   const creditValue = credit(focus)
   const dayCredit =
     creditValue === 1 ? "full" : creditValue === 0.5 ? "half" : creditValue === 0.25 ? "quarter" : null
@@ -282,9 +387,11 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
 
   // story order = timeline order: first activity of the day first
   const notes = [...projMap.entries()]
-    .sort((a, b) => Math.min(...a[1].all) - Math.min(...b[1].all))
-    .map(([project]) => ({ project, note: t.daySummary(date, project) }))
-    .filter((n): n is { project: string; note: string } => !!n.note)
+    .sort((left, right) => firstMinuteOf(left[1]) - firstMinuteOf(right[1]))
+    .map(([project, data]) => ({ project, data, note: t.daySummary(date, project) }))
+  const capturesOnDay = new Set(
+    [...projMap.values()].flatMap((project) => [...project.captures.values()].map(({ capture }) => capture.id)),
+  )
 
   return (
     <section ref={ref} className="view">
@@ -308,7 +415,7 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
             widthPx={widthPx}
             cutoff={cutoff}
             active={activeProj}
-            noteProjects={new Set(notes.map(({ project }) => project))}
+            storyProjects={new Set(notes.map(({ project }) => project))}
             onPick={jumpTo}
           />
         </div>
@@ -316,26 +423,39 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
 
 
         <h2 className="sect">the day, by project</h2>
-        {notes.length > 0 ? (
-          <div className="notes" ref={notesRef}>
-            {notes.map(({ project, note }) => (
+        <div className="notes" ref={notesRef}>
+          {notes.map(({ project, data, note }) => {
+            const hasCoding = t.hasCodingProject(project)
+            return (
               <div key={project} data-project={project} className="note">
-                <button className="proj-cap" onClick={() => t.openProject(project)}>
-                  <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
-                  {t.dispName(project)}
-                </button>
-                <span className="sum">
-                  <Ticks text={note} />
-                </span>
+                {hasCoding ? (
+                  <button className="proj-cap" onClick={() => t.openProject(project)}>
+                    <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
+                    {t.dispName(project)}
+                  </button>
+                ) : (
+                  <div className="proj-cap proj-cap-static">
+                    <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
+                    {t.dispName(project)}
+                  </div>
+                )}
+                <div className="story-entry">
+                  {hasCoding &&
+                    (note ? (
+                      <div className="sum">
+                        <Ticks text={note} />
+                      </div>
+                    ) : (
+                      <div className="summary-pending">
+                        Coding activity is visible above. Its project summary hasn’t arrived yet.
+                      </div>
+                    ))}
+                  <CaptureCards project={data} capturesOnDay={capturesOnDay} />
+                </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="summary-empty">
-            <strong>Project summaries haven’t arrived yet.</strong>
-            <span>Your indexed activity is already visible above. Summaries will appear here when they’re ready.</span>
-          </div>
-        )}
+            )
+          })}
+        </div>
 
         <Pager older={older} newer={newer} idx={idx} onDayIdx={onDayIdx} foot />
       </div>
