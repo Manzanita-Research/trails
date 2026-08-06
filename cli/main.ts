@@ -17,6 +17,7 @@ import { createInferenceClient, summarySupervisor } from "../server/summaries"
 import { createBackup } from "../server/backup"
 import { currentTailnetUrl, install, normalizeTailscaleService } from "./install"
 import { runSetup, type SetupActions } from "./setup"
+import { runMidjourneyCommand } from "./midjourney"
 
 const VERSION = packageJson.version
 
@@ -47,6 +48,7 @@ Commands:
   setup join URL [--name NAME]
   serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
+  capture midjourney [--job JOB_ID ...] [--project ABSOLUTE_PATH] [--since ISO] [--limit 1..50] [--dry-run]
   configure collector --server URL [--name NAME] [--reset-device-id]
   configure server --ai-url URL --ai-token-stdin
   backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
@@ -246,6 +248,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (command === "setup") return setupCommand(args.slice(1))
   if (command === "serve") return serve(args.slice(1))
   if (command === "collect") return collect(args.slice(1))
+  if (command === "capture") {
+    if (args[1] !== "midjourney") throw new Error("capture requires midjourney")
+    return runMidjourneyCommand(args.slice(2))
+  }
   if (command === "configure") return configure(args.slice(1))
   if (command === "backup") return backup(args.slice(1))
   if (command === "install") return installCommand(args.slice(1))

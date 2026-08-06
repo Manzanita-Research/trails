@@ -77,6 +77,24 @@ curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
 - Generated summaries may be unavailable during the alpha. Trails continues working and uses the first prompt as a fallback.
 - Open **settings** in the web app to choose the day boundary, attention halo, and IANA time zone used for displayed times and day grouping. The same screen shows collector freshness and the effective summarization model and prompts without exposing editable relay configuration.
 
+## Experimental Midjourney capture
+
+Midjourney capture is explicit and experimental because Midjourney does not provide a supported public history API. It uses an isolated, logged-in `ego-browser` task only for the duration of the command. Trails does not copy browser credentials, cookies, account data, authorization headers, remote image URLs, or raw API responses into its configuration, state, database, or logs.
+
+Immediately after an agent completes a known generation, capture it into the current project with its Midjourney job ID:
+
+```sh
+trails capture midjourney --job JOB_ID --project /absolute/path/to/project
+```
+
+For bounded repair, start from an explicit timestamp. Later runs use the saved `(enqueue_time, id)` cursor:
+
+```sh
+trails capture midjourney --since 2026-08-03T17:00:00.000Z --limit 50
+```
+
+Add `--dry-run` to validate the logged-in response and image boundary without uploading or changing collector state. Dry-run output contains counts and cursor facts only. Midjourney capture is never invoked by the one-minute LaunchAgent; it remains an operator or agent command.
+
 ## Update
 
 Rerun the same installer command you originally used. The binary is replaced atomically; your device identity, configuration, database, and backups are preserved. Keep `--tailscale` or `--service svc:trails` in the hub command if you use that mode.

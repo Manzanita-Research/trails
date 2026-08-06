@@ -91,6 +91,8 @@ There is no scan-blob or localStorage compatibility path. Transcript history is 
 
 `com.manzanita.trails.collector` runs `trails collect --once` at load and every 60 seconds. It is not a resident daemon and has no KeepAlive loop.
 
+Experimental Midjourney browser capture is not part of this schedule. `trails capture midjourney` is an explicit, short-lived command; it shares the collector lock and target but checkpoints only its own provider cursor after a complete accepted run.
+
 Each run:
 
 1. Acquires the state-specific PID lock for the entire cycle.
