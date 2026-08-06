@@ -3,15 +3,15 @@ import type {
   BootstrapV1,
   CollectorErrorCode,
   MachinesV1,
-  SummarizationStatusV1,
 } from "../../shared/protocol"
-import { fetchMachines, fetchSummarization, type BootstrapMutations } from "../lib/api"
+import { fetchMachines, type BootstrapMutations } from "../lib/api"
 import { fmtAgo } from "../lib/data"
 import { useTrails } from "../lib/ctx"
 import { EngagementSelect } from "./EngagementSelect"
+import { SummarizationSettings } from "./SummarizationSettings"
 
 type SettingField = "boundary" | "halo" | "timezone"
-type EntryTarget = "top" | "projects"
+type EntryTarget = "top" | "projects" | "summarization"
 
 const settingError = "That setting didn’t save. Try again."
 const collectorErrors: Record<CollectorErrorCode, string> = {
@@ -91,20 +91,23 @@ export function SettingsView({
   const t = useTrails()
   const headingRef = useRef<HTMLHeadingElement>(null)
   const projectsRef = useRef<HTMLHeadingElement>(null)
+  const summarizationRef = useRef<HTMLHeadingElement>(null)
   const [pending, setPending] = useState<Partial<Record<SettingField, boolean>>>({})
   const [errors, setErrors] = useState<Partial<Record<SettingField, boolean>>>({})
   const [machines, setMachines] = useState<MachinesV1 | null>(null)
   const [machinesLoading, setMachinesLoading] = useState(true)
   const [machinesError, setMachinesError] = useState(false)
-  const [summarization, setSummarization] = useState<SummarizationStatusV1 | null>(null)
-  const [summarizationLoading, setSummarizationLoading] = useState(true)
-  const [summarizationError, setSummarizationError] = useState(false)
 
   useEffect(() => {
-    const target = entryTarget === "projects" ? projectsRef.current : headingRef.current
+    const target =
+      entryTarget === "projects"
+        ? projectsRef.current
+        : entryTarget === "summarization"
+          ? summarizationRef.current
+          : headingRef.current
     target?.focus()
-    if (entryTarget === "projects") target?.scrollIntoView({ block: "start" })
-    else scrollTo({ top: 0 })
+    if (entryTarget === "top") scrollTo({ top: 0 })
+    else target?.scrollIntoView({ block: "start" })
   }, [entryTarget])
 
   const loadMachines = useCallback(async (showLoading = true) => {
@@ -119,24 +122,12 @@ export function SettingsView({
     }
   }, [])
 
-  const loadSummarization = useCallback(async () => {
-    setSummarizationLoading(true)
-    setSummarizationError(false)
-    try {
-      setSummarization(await fetchSummarization())
-    } catch {
-      setSummarizationError(true)
-    } finally {
-      setSummarizationLoading(false)
-    }
-  }, [])
 
   useEffect(() => {
     void loadMachines()
-    void loadSummarization()
     const timer = window.setInterval(() => void loadMachines(false), 30_000)
     return () => window.clearInterval(timer)
-  }, [loadMachines, loadSummarization])
+  }, [loadMachines])
 
   const save = async (
     field: SettingField,
@@ -293,37 +284,8 @@ export function SettingsView({
       </section>
 
       <section className="settings-section" aria-labelledby="summarization-heading">
-        <h2 id="summarization-heading">summarization</h2>
-        <div className="settings-content summarization-content">
-          {summarizationLoading ? (
-            <p>Reading summarization configuration…</p>
-          ) : summarizationError ? (
-            <p className="settings-load-error">
-              Summarization details couldn’t load. <button className="text-action" onClick={() => void loadSummarization()}>try again</button>
-            </p>
-          ) : summarization?.enabled === false ? (
-            <p>Summarization is off on this hub.</p>
-          ) : summarization?.enabled === true ? (
-            <dl className="summarization-values">
-              <div>
-                <dt>model for new summaries</dt>
-                <dd><code>{summarization.metadata.model}</code></dd>
-              </div>
-              <div>
-                <dt>session prompt</dt>
-                <dd><pre>{summarization.metadata.prompts.session}</pre></dd>
-              </div>
-              <div>
-                <dt>day prompt</dt>
-                <dd><pre>{summarization.metadata.prompts.day}</pre></dd>
-              </div>
-              <div>
-                <dt className="sr-only">one-session behavior</dt>
-                <dd>A one-session day summary may be copied without a second model call.</dd>
-              </div>
-            </dl>
-          ) : null}
-        </div>
+        <h2 ref={summarizationRef} id="summarization-heading" tabIndex={-1}>summarization</h2>
+        <SummarizationSettings />
       </section>
     </section>
   )

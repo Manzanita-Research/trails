@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import type { LocalActivityTuple, Source, UtcActivityTuple } from "./domain"
+import { PROVIDER_IDS } from "./providers"
 
 const boundedString = (minimum: number, maximum: number) =>
   Schema.String.pipe(Schema.minLength(minimum), Schema.maxLength(maximum))
@@ -310,6 +311,56 @@ export const SummarizationStatusV1Schema = Schema.Union(
   }),
 )
 
+export const ProviderIdSchema = Schema.Literal(...PROVIDER_IDS)
+export const SummarizeErrorClassSchema = Schema.Literal(
+  "auth_required",
+  "quota",
+  "provider_rejected",
+  "timeout",
+  "protocol",
+  "network",
+)
+export const ProviderConnectionStatusV1Schema = Schema.Struct({
+  id: ProviderIdSchema,
+  label: trimmedString(1, 80),
+  company: trimmedString(1, 80),
+  login: Schema.Literal("pkce", "device-code", "api-key"),
+  apiKeyFallback: Schema.Boolean,
+  unofficial: Schema.Boolean,
+  defaultModel: trimmedString(1, 200),
+  loggedIn: Schema.Boolean,
+})
+export const ConnectorStatusV1Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(1),
+  providers: Schema.Array(ProviderConnectionStatusV1Schema),
+  active: Schema.NullOr(Schema.Struct({
+    provider: ProviderIdSchema,
+    model: trimmedString(1, 200),
+    state: Schema.Literal("never_ran", "ok", "failing"),
+    lastAttemptAt: Schema.NullOr(Schema.Number.pipe(Schema.nonNegative())),
+    lastSuccessAt: Schema.NullOr(Schema.Number.pipe(Schema.nonNegative())),
+    lastErrorClass: Schema.NullOr(SummarizeErrorClassSchema),
+  })),
+  legacyRelay: Schema.Boolean,
+})
+export const ChatgptLoginStartV1Schema = Schema.Struct({
+  userCode: trimmedString(1, 200),
+  verificationUrl: trimmedString(1, 2_000),
+  expiresAt: Schema.Number.pipe(Schema.nonNegative()),
+  intervalSeconds: Schema.Number.pipe(Schema.positive()),
+})
+export const ChatgptLoginPollV1Schema = Schema.Union(
+  Schema.Struct({ state: Schema.Literal("pending") }),
+  Schema.Struct({ state: Schema.Literal("logged_in") }),
+  Schema.Struct({
+    state: Schema.Literal("failed"),
+    errorClass: SummarizeErrorClassSchema,
+  }),
+)
+export const OpenrouterLoginStartV1Schema = Schema.Struct({
+  authorizeUrl: trimmedString(1, 4_000),
+})
+
 export const BootstrapSessionV1Schema = Schema.Struct({
   id: boundedString(1, 64),
   machine: DeviceV1Schema,
@@ -497,6 +548,11 @@ export type MachineStatusV1 = Schema.Schema.Type<typeof MachineStatusV1Schema>
 export type MachinesV1 = Schema.Schema.Type<typeof MachinesV1Schema>
 export type SummarizationMetadataV1 = Schema.Schema.Type<typeof SummarizationMetadataV1Schema>
 export type SummarizationStatusV1 = Schema.Schema.Type<typeof SummarizationStatusV1Schema>
+export type ProviderConnectionStatusV1 = Schema.Schema.Type<typeof ProviderConnectionStatusV1Schema>
+export type ConnectorStatusV1 = Schema.Schema.Type<typeof ConnectorStatusV1Schema>
+export type ChatgptLoginStartV1 = Schema.Schema.Type<typeof ChatgptLoginStartV1Schema>
+export type ChatgptLoginPollV1 = Schema.Schema.Type<typeof ChatgptLoginPollV1Schema>
+export type OpenrouterLoginStartV1 = Schema.Schema.Type<typeof OpenrouterLoginStartV1Schema>
 export type PocketCreate = Schema.Schema.Type<typeof PocketCreateSchema>
 export type FeedbackSubmissionV1 = Schema.Schema.Type<typeof FeedbackSubmissionV1Schema>
 export type FeedbackReceiptV1 = Schema.Schema.Type<typeof FeedbackReceiptV1Schema>

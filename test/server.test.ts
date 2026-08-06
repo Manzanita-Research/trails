@@ -9,6 +9,7 @@ import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
 import { MIGRATIONS } from "../server/migrations"
+import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
 import type {
   BootstrapV1,
   IngestCaptureV1,
@@ -537,8 +538,8 @@ describe("collector status and machine topology", () => {
   })
 })
 
-describe("summarization metadata proxy", () => {
-  test("returns disabled, effective, and sanitized unavailable states", async () => {
+describe("summarization status", () => {
+  test("returns disabled and locally described states without network calls", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "summarization.sqlite"))
     const disabled = createApp({ db: database })
@@ -547,72 +548,23 @@ describe("summarization metadata proxy", () => {
       metadata: null,
     })
 
-    const metadata = {
-      protocolVersion: 1,
-      model: "@cf/moonshotai/kimi-k2.5",
-      prompts: { session: "Session system prompt", day: "Day system prompt" },
-    }
-    const relayCalls: Array<{ url: string; authorization: string | null; method: string }> = []
-    const relayFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      relayCalls.push({
-        url: String(input),
-        authorization: new Headers(init?.headers).get("authorization"),
-        method: init?.method ?? "GET",
-      })
-      return Response.json(metadata)
-    }) as typeof globalThis.fetch
     const enabled = createApp({
       db: database,
-      inference: { url: "https://private-relay.example/api/summarize", token: "private-token" },
-      fetch: relayFetch,
+      summarization: { describe: () => ({ provider: "chatgpt", model: "gpt-5.2-codex" }) },
     })
     expect(await json(await request(enabled, "GET", "/api/summarization"))).toEqual({
       enabled: true,
-      metadata,
-    })
-    expect(relayCalls).toEqual([
-      {
-        url: "https://private-relay.example/api/summarize",
-        authorization: "Bearer private-token",
-        method: "GET",
+      metadata: {
+        protocolVersion: 1,
+        model: "gpt-5.2-codex",
+        prompts: { session: SESSION_SYSTEM, day: DAY_SYSTEM },
       },
-    ])
-
-    for (const relayResponse of [
-      Response.json({ private: "upstream secret body" }, { status: 503 }),
-      Response.json({ ...metadata, inferenceUrl: "https://private-relay.example" }),
-    ]) {
-      const broken = createApp({
-        db: database,
-        inference: { url: "https://private-relay.example/api/summarize", token: "private-token" },
-        fetch: (async () => relayResponse.clone()) as unknown as typeof globalThis.fetch,
-      })
-      const response = await request(broken, "GET", "/api/summarization")
-      expect(response.status).toBe(502)
-      const body = await json(response)
-      expect(body).toEqual({
-        error: {
-          code: "upstream_unavailable",
-          message: "summarization metadata unavailable",
-        },
-      })
-      expect(JSON.stringify(body)).not.toContain("private")
-    }
-
-    const unreachable = createApp({
-      db: database,
-      inference: { url: "https://private-relay.example/api/summarize", token: "private-token" },
-      fetch: (async () => {
-        throw new Error("network leaked details")
-      }) as unknown as typeof globalThis.fetch,
     })
-    const unavailable = await request(unreachable, "GET", "/api/summarization")
-    expect(unavailable.status).toBe(502)
-    expect(await json(unavailable)).toEqual({
-      error: {
-        code: "upstream_unavailable",
-        message: "summarization metadata unavailable",
-      },
+
+    const off = createApp({ db: database, summarization: { describe: () => null } })
+    expect(await json(await request(off, "GET", "/api/summarization"))).toEqual({
+      enabled: false,
+      metadata: null,
     })
   })
 })

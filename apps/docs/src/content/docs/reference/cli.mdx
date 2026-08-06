@@ -37,16 +37,28 @@ trails serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
 
 Starts the canonical HTTP service. Installed hubs use port `7412` and always bind to `127.0.0.1`. Optional Tailscale Serve exposure proxies that loopback service; trails does not listen on the LAN.
 
-## Configure
+## Configure a collector
 
 ```text
 trails configure collector --server URL [--name NAME] [--reset-device-id]
-trails configure server --ai-url URL --ai-token-stdin
 ```
 
 Collector configuration sets the canonical hub endpoint and local display name. `--reset-device-id` intentionally creates a new collector identity on the next run.
 
-Server configuration enables the optional authenticated inference relay. The token is read from standard input so it does not appear in shell history or process arguments.
+## Connect a summary provider
+
+Run these commands only on the hub:
+
+```text
+trails connect [openrouter|chatgpt|openai-api|status] [--api-key-stdin]
+trails use PROVIDER [--model MODEL] [--yes]
+trails logout PROVIDER
+trails disconnect
+```
+
+`trails connect` opens a provider picker. OpenRouter uses its PKCE login by default; ChatGPT uses OpenAI's Codex device-code flow and is labeled unofficial; OpenAI API requires `--api-key-stdin`. OpenRouter also accepts `--api-key-stdin` as a fallback. Keys are never accepted as command arguments.
+
+Connecting stores a credential but does not activate it. `trails use` prints the destination and model, then requires confirmation before queued jobs resume. `--yes` is the explicit non-interactive consent form. `trails disconnect` turns summaries off while keeping logins; `trails logout` removes one Trails-owned provider credential and disconnects it if active.
 
 ## Back up
 

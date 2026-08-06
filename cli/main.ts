@@ -3,20 +3,17 @@ import { Effect, Fiber } from "effect"
 import { runCollection } from "../collector/sync"
 import { DEFAULT_STATE_PATH } from "../collector/state"
 import { parseSourceRoot } from "../collector/sources"
-import {
-  configureCollector,
-  configureServer,
-  loadCollectorConfig,
-  loadServerConfig,
-  normalizeCollectorServer,
-} from "./config"
+import { configureCollector, loadCollectorConfig, normalizeCollectorServer } from "./config"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "../server/app"
+import { createSummarizerManager } from "../server/connectors/manager"
+import { createConnectorControl } from "../server/connectors/control"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
-import { createInferenceClient, summarySupervisor } from "../server/summaries"
+import { summarySupervisor } from "../server/summaries"
 import { createBackup } from "../server/backup"
 import { currentTailnetUrl, install, normalizeTailscaleService } from "./install"
 import { runSetup, type SetupActions } from "./setup"
+import { runConnectorCommand } from "./connect"
 
 const VERSION = packageJson.version
 
@@ -47,8 +44,11 @@ Commands:
   setup join URL [--name NAME]
   serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
+  connect [openrouter|chatgpt|openai-api|status] [--api-key-stdin]
+  use PROVIDER [--model MODEL] [--yes]
+  logout PROVIDER
+  disconnect
   configure collector --server URL [--name NAME] [--reset-device-id]
-  configure server --ai-url URL --ai-token-stdin
   backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
   install server|collector [--dry-run] [--tailscale] [--service svc:NAME]
   version`)
@@ -80,19 +80,17 @@ async function serve(args: string[]): Promise<void> {
           "name" in asset && typeof asset.name === "string",
       )
     : undefined
-  const serverConfig = loadServerConfig()
-  const inference = serverConfig
-    ? { url: serverConfig.aiUrl, token: serverConfig.aiToken }
-    : undefined
+  const summarization = createSummarizerManager()
+  const connectors = createConnectorControl({ manager: summarization })
   const db = openDatabase(dbPath)
-  const app = createApp({ db, staticRoot, staticAssets, inference })
+  const app = createApp({ db, staticRoot, staticAssets, summarization, connectors })
   const server = Bun.serve({ hostname: host, port, fetch: app })
-  const summaryFiber = inference
-    ? Effect.runFork(summarySupervisor({ db, inference: createInferenceClient(inference) }))
-    : null
+  const summaryFiber = Effect.runFork(
+    summarySupervisor({ db, summarizer: () => summarization.current(), status: summarization.status }),
+  )
   const shutdown = () => {
     server.stop(true)
-    if (summaryFiber) Effect.runFork(Fiber.interrupt(summaryFiber))
+    Effect.runFork(Fiber.interrupt(summaryFiber))
     db.close()
   }
   process.once("SIGINT", shutdown)
@@ -136,16 +134,7 @@ async function configure(args: string[]): Promise<void> {
     console.log(`configured collector ${config.deviceName} (${config.deviceId}) for ${config.server}`)
     return
   }
-  if (args[0] === "server") {
-    const aiUrl = valueAfter(args, "--ai-url")
-    if (!aiUrl || !args.includes("--ai-token-stdin")) {
-      throw new Error("configure server requires --ai-url and --ai-token-stdin")
-    }
-    const config = configureServer({ aiUrl, aiToken: await Bun.stdin.text() })
-    console.log(`configured AI relay ${config.aiUrl}`)
-    return
-  }
-  throw new Error("configure requires collector or server")
+  throw new Error("configure requires collector")
 }
 
 async function backup(args: string[]): Promise<void> {
@@ -249,6 +238,9 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (command === "configure") return configure(args.slice(1))
   if (command === "backup") return backup(args.slice(1))
   if (command === "install") return installCommand(args.slice(1))
+  if (command === "connect" || command === "use" || command === "logout" || command === "disconnect") {
+    return runConnectorCommand(command, args.slice(1))
+  }
   if (command === "version") {
     console.log(VERSION)
     return
