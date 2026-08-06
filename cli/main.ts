@@ -7,11 +7,13 @@ import { configureCollector, loadCollectorConfig, normalizeCollectorServer } fro
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "../server/app"
 import { createSummarizerManager } from "../server/connectors/manager"
+import { createConnectorControl } from "../server/connectors/control"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { summarySupervisor } from "../server/summaries"
 import { createBackup } from "../server/backup"
 import { currentTailnetUrl, install, normalizeTailscaleService } from "./install"
 import { runSetup, type SetupActions } from "./setup"
+import { runConnectorCommand } from "./connect"
 
 const VERSION = packageJson.version
 
@@ -42,6 +44,10 @@ Commands:
   setup join URL [--name NAME]
   serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
+  connect [openrouter|chatgpt|openai-api|status] [--api-key-stdin]
+  use PROVIDER [--model MODEL] [--yes]
+  logout PROVIDER
+  disconnect
   configure collector --server URL [--name NAME] [--reset-device-id]
   backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
   install server|collector [--dry-run] [--tailscale] [--service svc:NAME]
@@ -75,8 +81,9 @@ async function serve(args: string[]): Promise<void> {
       )
     : undefined
   const summarization = createSummarizerManager()
+  const connectors = createConnectorControl({ manager: summarization })
   const db = openDatabase(dbPath)
-  const app = createApp({ db, staticRoot, staticAssets, summarization })
+  const app = createApp({ db, staticRoot, staticAssets, summarization, connectors })
   const server = Bun.serve({ hostname: host, port, fetch: app })
   const summaryFiber = Effect.runFork(
     summarySupervisor({ db, summarizer: () => summarization.current(), status: summarization.status }),
@@ -231,6 +238,9 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (command === "configure") return configure(args.slice(1))
   if (command === "backup") return backup(args.slice(1))
   if (command === "install") return installCommand(args.slice(1))
+  if (command === "connect" || command === "use" || command === "logout" || command === "disconnect") {
+    return runConnectorCommand(command, args.slice(1))
+  }
   if (command === "version") {
     console.log(VERSION)
     return

@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { getCredential, setCredential } from "../cli/auth"
+import { getCredential, removeCredential, setCredential } from "../cli/auth"
 import { writeHubConfig } from "../cli/config"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
 import { chatCompletionsSummarizer } from "../server/connectors/chat-completions"
@@ -238,6 +238,39 @@ describe("chatgpt connector", () => {
       expect(stored.accountId).toBe("acct-9")
       expect(stored.expires).toBeGreaterThan(Date.now())
     }
+  })
+
+  test("logout during refresh cannot resurrect the removed credential", async () => {
+    setCredential(
+      "chatgpt",
+      { type: "oauth", access: "at-old", refresh: "rt-old", expires: Date.now() - 1_000, accountId: "acct-9" },
+      authPath,
+    )
+    const release: { current: ((response: Response) => void) | null } = { current: null }
+    const started: { current: (() => void) | null } = { current: null }
+    const tokenStarted = new Promise<void>((resolve) => {
+      started.current = resolve
+    })
+    const tokenResponse = new Promise<Response>((resolve) => {
+      release.current = resolve
+    })
+    const { fetcher, calls } = fetcherOf((url) => {
+      if (url === CHATGPT_TOKEN_URL) {
+        started.current?.()
+        return tokenResponse
+      }
+      return new Response(sseBody("must not run"), { status: 200 })
+    })
+    const client = createChatgptSummarizer({ model: "gpt-5.2-codex", authPath, fetcher })
+    const run = errorClassOf(client)
+    await tokenStarted
+
+    removeCredential("chatgpt", authPath)
+    release.current?.(Response.json({ access_token: "at-new", refresh_token: "rt-new", expires_in: 3_600 }))
+
+    expect(await run).toBe("auth_required")
+    expect(getCredential("chatgpt", authPath)).toBeNull()
+    expect(calls.map((call) => call.url)).toEqual([CHATGPT_TOKEN_URL])
   })
 
   test("permanent refresh failure maps to auth_required and keeps the credential", async () => {

@@ -56,15 +56,20 @@ async function refreshAndStore(
     throw error
   }
   const refreshed: OauthCredential = { type: "oauth", ...grant }
-  let stored = refreshed
+  let stored: OauthCredential | null = refreshed
   modifyCredentials((providers) => {
     const existing = providers["chatgpt"]
-    if (existing?.type === "oauth" && existing.refresh !== current.refresh && existing.expires > refreshed.expires) {
+    if (existing?.type !== "oauth") {
+      stored = null
+      return
+    }
+    if (existing.refresh !== current.refresh) {
       stored = existing
       return
     }
     providers["chatgpt"] = refreshed
   }, authPath)
+  if (!stored) throw new SummarizeError("auth_required")
   return stored
 }
 
