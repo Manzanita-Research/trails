@@ -156,27 +156,9 @@ const MidjourneyCapturePayloadV1Schema = Schema.Struct({
   parentGrid: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(0, 3))),
 })
 
-const GranolaNoteUrlSchema = boundedString(1, 2048).pipe(
-  Schema.filter((value) => {
-    try {
-      const url = new URL(value)
-      const granolaHost = url.hostname === "granola.ai" || url.hostname.endsWith(".granola.ai")
-      return (url.protocol === "https:" && granolaHost) || "must be an HTTPS Granola URL"
-    } catch {
-      return "must be an HTTPS Granola URL"
-    }
-  }),
-)
-
-const GranolaFoldersV1Schema = Schema.Array(trimmedString(1, 200)).pipe(
-  Schema.maxItems(50),
-  Schema.filter((folders) => new Set(folders).size === folders.length || "folder names must be unique"),
-)
 
 const GranolaCapturePayloadV1Schema = Schema.Struct({
   attendeeCount: Schema.Number.pipe(Schema.int(), Schema.between(0, 10_000)),
-  folders: GranolaFoldersV1Schema,
-  webUrl: Schema.NullOr(GranolaNoteUrlSchema),
 })
 
 const validCaptureInterval = <A extends { readonly startedAt: string; readonly endedAt: string | null }>(

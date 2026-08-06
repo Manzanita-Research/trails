@@ -93,6 +93,8 @@ There is no scan-blob or localStorage compatibility path. Transcript history is 
 
 Experimental Midjourney browser capture is not part of this schedule. `trails capture midjourney` is an explicit, short-lived command; it shares the collector lock and target but checkpoints only its own provider cursor after a complete accepted run.
 
+Opt-in Granola capture runs after coding-session collection inside the same 60-second one-shot process. It invokes Granola Desktop's bundled local Companion CLI on the collecting Mac, so no paid API plan or API key is required. The two paths checkpoint independently. Granola scopes its collection-start cursor to the configured initial boundary and rescans the previous 24 hours; changing that boundary resets only the Granola scope. A failed or incomplete local pull leaves its cursor unchanged without rolling back the session fingerprint checkpoint. Trails invokes note list/detail only, never transcripts, and stores no Granola credential or raw command response.
+
 Each run:
 
 1. Acquires the state-specific PID lock for the entire cycle.

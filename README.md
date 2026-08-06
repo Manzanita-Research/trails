@@ -95,6 +95,26 @@ trails capture midjourney --since 2026-08-03T17:00:00.000Z --limit 50
 
 Add `--dry-run` to validate the logged-in response and image boundary without uploading or changing collector state. Dry-run output contains counts and cursor facts only. Midjourney capture is never invoked by the one-minute LaunchAgent; it remains an operator or agent command.
 
+## Optional Granola meeting capture
+
+Granola capture is opt-in and reads the free desktop app through Granola's local Companion CLI. It does not require a Business/Enterprise plan or API key. Keep Granola Desktop running, then choose the earliest meeting creation time to import:
+
+```sh
+trails configure granola --created-after 2026-08-03T17:00:00.000Z
+```
+
+The default CLI is `/Applications/Granola.app/Contents/Resources/bin/granola`; pass `--binary /absolute/path/to/granola` only for a nonstandard installation. Granola Desktop must expose its local Companion CLI. Trails fails closed when the app is unavailable instead of reading Granola's encrypted database or credential files.
+
+When configured, each existing 60-second `trails collect --once` run collects coding sessions first and Granola second. The checkpoints are independent: a Granola failure does not erase an accepted session checkpoint. Trails rescans the previous 24 hours on each pass so a meeting is picked up after Granola finishes its summary. Changing `--created-after` starts a new Granola cursor scope, so moving the boundary earlier performs the requested backfill.
+
+Trails invokes only `notes list` and `notes get`; it never requests `notes transcript get`. It retains the note ID, bounded title, generated summary or local note fallback, scheduled timestamps, and attendee count. The local CLI does not expose folder membership or a canonical note URL, so local captures remain unassigned and render under `creative elsewhere`. Owner and invitee identities, calendar metadata, transcripts, raw command responses, and Granola credentials never enter the hub.
+
+Disable future pulls with:
+
+```sh
+trails configure granola --disable
+```
+
 ## Update
 
 Rerun the same installer command you originally used. The binary is replaced atomically; your device identity, configuration, database, and backups are preserved. Keep `--tailscale` or `--service svc:trails` in the hub command if you use that mode.
@@ -133,11 +153,15 @@ Only the hub has server and backup logs.
 
 Transcript parsing happens on the Mac where each session was created. Trails sends the hub only normalized observations: source, session identifier, working directory, branch, timestamps, event counts, first prompt, minute activity, and a bounded digest.
 
-Trails does **not** send transcript paths or transcript bodies to the hub. The web app receives neither source session identifiers nor digests. The hub service listens only on loopback; optional Tailscale Serve access exposes it privately to the tailnet rather than the LAN or public internet.
+When capture is enabled, the collecting Mac additionally sends bounded capture source IDs, explicit project attribution or hints, titles, prompt or meeting-summary text, timestamps and minute attention, source-specific lineage/count fields, and four decoded Midjourney images. The hub retains these records and image bytes in canonical SQLite and daily backups. It never receives browser credentials, remote image URLs, raw provider responses, Granola credentials, transcripts, or attendee identities.
+
+The web app receives neither source session identifiers nor digests. It receives bounded capture display fields and same-origin hub image URLs. The hub service listens only on loopback; optional Tailscale Serve access exposes it privately to the tailnet rather than the LAN or public internet.
 
 If the optional summary relay is enabled, it receives only bounded summary input—not complete transcripts. Session input is capped at 9,000 characters and day input at 12,000 characters.
 
 Sending beta feedback is explicit. The browser sends only the feedback kind, message, optional follow-up, and creation time unless you opt in to safe context. Safe context is limited to the trails version, current view, canonical revision, selected work date on Days or Project, counts by Claude Code/Codex/omp/pi source, viewport dimensions, and whether synchronization is in an error state. It never includes URLs or tailnet details, device or project names, paths, branches, prompts, summaries, identifiers, digests, transcript content, or user-agent.
+
+Local Granola collection uses the running desktop app's Companion CLI and stores no Granola credential. Trails invokes note list/detail only, never the transcript command. The collector reduces calendar invitees to a count and sends the hub only the note ID, bounded title, generated summary or local note fallback, timestamps, and attendee count; owner identity, invitee names/emails, calendar metadata, transcripts, raw command responses, folder membership, and note URLs never enter the hub.
 
 Feedback goes directly from the browser to a separate public-write Cloudflare Worker and D1 database with no public read route. It expires after 90 days and is deleted by the next daily cleanup. This feedback store is separate from the optional inference relay; canonical session and organization state remains in SQLite on the hub Mac.
 
