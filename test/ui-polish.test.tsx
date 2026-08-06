@@ -2,8 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createApp } from "../server/app"
+import type { ConnectorControl } from "../server/connectors/control"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
+import { PROVIDER_IDS, PROVIDERS, type ProviderId } from "../shared/providers"
 import { BootstrapV1Schema, decodeExact, type BootstrapV1, type IngestRequestV2 } from "../shared/protocol"
 import { App } from "../src/App"
 
@@ -71,6 +73,58 @@ function inputElement(element: HTMLElement): HTMLInputElement {
 }
 
 
+function connectorHarness(enabled: boolean): ConnectorControl {
+  const loggedIn = new Set<ProviderId>(["chatgpt"])
+  let active: { provider: ProviderId; model: string } | null = enabled
+    ? { provider: "chatgpt", model: "gpt-5.2-codex" }
+    : null
+  return {
+    status: () => ({
+      protocolVersion: 1,
+      providers: PROVIDER_IDS.map((id) => ({
+        id,
+        label: PROVIDERS[id].label,
+        company: PROVIDERS[id].company,
+        login: PROVIDERS[id].login,
+        apiKeyFallback: PROVIDERS[id].apiKeyFallback,
+        unofficial: PROVIDERS[id].unofficial,
+        defaultModel: PROVIDERS[id].defaultModel,
+        loggedIn: loggedIn.has(id),
+      })),
+      active: active && {
+        ...active,
+        state: "never_ran",
+        lastAttemptAt: null,
+        lastSuccessAt: null,
+        lastErrorClass: null,
+      },
+      legacyRelay: false,
+    }),
+    startChatgpt: async () => ({
+      userCode: "TEST-CODE",
+      verificationUrl: "https://auth.openai.com/device",
+      expiresAt: fixedNow + 600_000,
+      intervalSeconds: 5,
+    }),
+    pollChatgpt: async () => ({ state: "pending" }),
+    startOpenrouter: () => ({ authorizeUrl: "https://openrouter.ai/auth?test=1" }),
+    finishOpenrouter: async () => {},
+    setApiKey: (provider) => {
+      loggedIn.add(provider)
+    },
+    activate: (selection) => {
+      active = { provider: selection.provider, model: selection.model ?? PROVIDERS[selection.provider].defaultModel }
+    },
+    disconnect: () => {
+      active = null
+    },
+    logout: (provider) => {
+      loggedIn.delete(provider)
+      if (active?.provider === provider) active = null
+    },
+  }
+}
+
 async function makeLoadedHarness({
   withDaySummary = true,
   summarization = "effective",
@@ -83,6 +137,7 @@ async function makeLoadedHarness({
   const app = createApp({
     db,
     now: () => fixedNow,
+    connectors: connectorHarness(summarization === "effective"),
     summarization: {
       describe: () =>
         summarization === "effective" ? { provider: "chatgpt" as const, model: "gpt-5.2-codex" } : null,
@@ -170,6 +225,7 @@ afterEach(() => {
   window.prompt = originalPrompt
   for (const database of databases) database.close()
   databases.clear()
+  window.history.replaceState(null, "", "/")
 })
 
 describe("beta interaction clarity", () => {
@@ -283,7 +339,7 @@ describe("beta interaction clarity", () => {
     const summaryHeading = await screen.findByRole("heading", { name: "summarization", level: 2 })
     const summarySection = summaryHeading.closest("section")
     if (!(summarySection instanceof HTMLElement)) throw new Error("expected summarization section")
-    expect(await within(summarySection).findByText(/Summarization details couldn’t load/)).toBeTruthy()
+    expect(await within(summarySection).findByText(/Summarization settings couldn’t load/)).toBeTruthy()
     expect(await screen.findByText("Source Mac")).toBeTruthy()
     await user.click(within(summarySection).getByRole("button", { name: "try again" }))
     expect(await within(summarySection).findByText("gpt-5.2-codex")).toBeTruthy()
@@ -294,7 +350,56 @@ describe("beta interaction clarity", () => {
     const user = userEvent.setup()
     render(<App />)
     await user.click(await screen.findByRole("button", { name: "settings" }))
-    expect(await screen.findByText("Summarization is off on this hub.")).toBeTruthy()
+    expect(await screen.findByText("Summaries are off. Existing and queued timeline work stays local.")).toBeTruthy()
+  })
+
+  test("stores an API key once and requires consent before switching providers", async () => {
+    await makeLoadedHarness()
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole("button", { name: "settings" }))
+    const summaryHeading = await screen.findByRole("heading", { name: "summarization", level: 2 })
+    const summarySection = summaryHeading.closest("section")
+    if (!(summarySection instanceof HTMLElement)) throw new Error("expected summarization section")
+
+    expect(within(summarySection).getByText(/Unofficial connector/)).toBeTruthy()
+    await user.click(within(summarySection).getByText("use an existing API key instead"))
+    const keyInput = within(summarySection).getByLabelText("OpenRouter API key")
+    const keyForm = keyInput.closest("form")
+    if (!(keyForm instanceof HTMLFormElement)) throw new Error("expected OpenRouter key form")
+    await user.type(keyInput, "private-test-key")
+    await user.click(within(keyForm).getByRole("button", { name: "save key" }))
+
+    const useOpenrouter = await within(summarySection).findByRole("button", { name: "use OpenRouter" })
+    expect(summarySection.textContent).not.toContain("private-test-key")
+    await user.click(useOpenrouter)
+    const consent = await within(summarySection).findByRole("alertdialog")
+    expect(consent.textContent).toContain("bounded digest text to OpenRouter")
+    const chatgptRow = within(summarySection).getByRole("heading", { name: /ChatGPT Plus/ }).closest("article")
+    if (!(chatgptRow instanceof HTMLElement)) throw new Error("expected ChatGPT provider row")
+    expect(within(chatgptRow).getByText("in use")).toBeTruthy()
+
+    await user.click(within(consent).getByRole("button", { name: "cancel" }))
+    expect(within(chatgptRow).getByText("in use")).toBeTruthy()
+    await user.click(within(summarySection).getByRole("button", { name: "use OpenRouter" }))
+    await user.click(within(await within(summarySection).findByRole("alertdialog")).getByRole("button", { name: "confirm and use" }))
+
+    expect(await within(summarySection).findByText("OpenRouter will summarize new and queued digests.")).toBeTruthy()
+    const openrouterRow = within(summarySection).getByRole("heading", { name: "OpenRouter" }).closest("article")
+    if (!(openrouterRow instanceof HTMLElement)) throw new Error("expected OpenRouter provider row")
+    expect(within(openrouterRow).getByText("in use")).toBeTruthy()
+  })
+
+  test("returns an OpenRouter callback directly to provider settings without activating it", async () => {
+    window.location.search = "?settings=summarization&connected=openrouter"
+    await makeLoadedHarness({ summarization: "disabled" })
+    expect(window.location.search).toBe("?settings=summarization&connected=openrouter")
+    render(<App />)
+
+    expect(await screen.findByRole("heading", { name: "settings", level: 1 })).toBeTruthy()
+    expect(await screen.findByText("OpenRouter is connected. Choose “use OpenRouter” to allow Trails to send digests.")).toBeTruthy()
+    expect(window.location.search).toBe("")
+    expect(screen.getByText("Summaries are off. Existing and queued timeline work stays local.")).toBeTruthy()
   })
 
   test("shows a truthful hub failure without inventing a network diagnosis", async () => {

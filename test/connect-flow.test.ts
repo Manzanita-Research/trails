@@ -244,6 +244,7 @@ describe("connector control", () => {
 
 function fakeStatus(): ConnectorStatus {
   return {
+    protocolVersion: 1,
     providers: [
       {
         id: "openrouter",

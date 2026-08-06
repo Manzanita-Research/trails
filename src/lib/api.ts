@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  ChatgptLoginPollV1Schema,
+  ChatgptLoginStartV1Schema,
+  ConnectorStatusV1Schema,
   MachinesV1Schema,
+  OpenrouterLoginStartV1Schema,
   SummarizationStatusV1Schema,
   decodeExact,
   type BootstrapV1,
+  type ChatgptLoginPollV1,
+  type ChatgptLoginStartV1,
+  type ConnectorStatusV1,
   type MachinesV1,
+  type OpenrouterLoginStartV1,
   type SummarizationStatusV1,
 } from "../../shared/protocol"
+import type { ProviderId } from "../../shared/providers"
 
 export interface BootstrapMutations {
   updateSettings(patch: {
@@ -70,6 +79,80 @@ export async function fetchSummarization(
   const response = await request("/api/summarization", { cache: "no-store" })
   if (!response.ok) throw new Error(await errorMessage(response))
   return decodeExact(SummarizationStatusV1Schema, await response.json())
+}
+
+export async function fetchConnectors(
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<ConnectorStatusV1> {
+  const response = await request("/api/connectors", { cache: "no-store" })
+  if (!response.ok) throw new Error(await errorMessage(response))
+  return decodeExact(ConnectorStatusV1Schema, await response.json())
+}
+
+export async function startChatgptLogin(
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<ChatgptLoginStartV1> {
+  const response = await request("/api/connect/chatgpt/start", { method: "POST" })
+  if (!response.ok) throw new Error(await errorMessage(response))
+  return decodeExact(ChatgptLoginStartV1Schema, await response.json())
+}
+
+export async function pollChatgptLogin(
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<ChatgptLoginPollV1> {
+  const response = await request("/api/connect/chatgpt/poll", { method: "POST" })
+  if (!response.ok) throw new Error(await errorMessage(response))
+  return decodeExact(ChatgptLoginPollV1Schema, await response.json())
+}
+
+export async function startOpenrouterLogin(
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<OpenrouterLoginStartV1> {
+  const response = await request("/api/connect/openrouter/start", { method: "POST" })
+  if (!response.ok) throw new Error(await errorMessage(response))
+  return decodeExact(OpenrouterLoginStartV1Schema, await response.json())
+}
+
+async function connectorMutation(
+  path: string,
+  body: unknown,
+  request: BootstrapRequest,
+): Promise<void> {
+  const response = await request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(await errorMessage(response))
+}
+
+export async function setProviderApiKey(
+  provider: "openrouter" | "openai-api",
+  key: string,
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<void> {
+  await connectorMutation(`/api/connect/${provider}/apikey`, { key }, request)
+}
+
+export async function activateSummarizer(
+  provider: ProviderId,
+  model: string,
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<void> {
+  await connectorMutation("/api/summarizer", { provider, model }, request)
+}
+
+export async function disconnectSummarizer(
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<void> {
+  await connectorMutation("/api/summarizer", null, request)
+}
+
+export async function logoutProvider(
+  provider: ProviderId,
+  request: BootstrapRequest = globalThis.fetch,
+): Promise<void> {
+  await connectorMutation(`/api/logout/${encodeURIComponent(provider)}`, undefined, request)
 }
 
 

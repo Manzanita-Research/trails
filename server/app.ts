@@ -633,6 +633,11 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
     return jsonResponse(machinesOf(db, now))
   }
+  if (url.pathname === "/api/connectors") {
+    if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
+    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
+    return jsonResponse(options.connectors.status())
+  }
   if (url.pathname === "/api/connect/chatgpt/start") {
     if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
     if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)

@@ -113,6 +113,19 @@ describe("connector API", () => {
     expect(await body(response)).toEqual({ ok: true })
     expect(loadHubConfig(configPath)?.summarizer).toEqual({ provider: "openai-api", model: "gpt-test" })
 
+    response = await app(new Request(`${origin}/api/connectors`))
+    expect(response.status).toBe(200)
+    expect(await body(response)).toMatchObject({
+      protocolVersion: 1,
+      active: {
+        provider: "openai-api",
+        model: "gpt-test",
+        state: "never_ran",
+        lastErrorClass: null,
+      },
+      legacyRelay: false,
+    })
+
     response = await app(jsonRequest(`${origin}/api/connect/openrouter/start`))
     const openrouterStart = await body(response)
     expect(openrouterStart).toEqual({ authorizeUrl: expect.any(String) })
@@ -140,6 +153,7 @@ describe("connector API", () => {
     const browserBodies = await Promise.all([
       app(new Request(`${origin}/api/bootstrap`)).then((result) => result.text()),
       app(new Request(`${origin}/api/summarization`)).then((result) => result.text()),
+      app(new Request(`${origin}/api/connectors`)).then((result) => result.text()),
     ])
     const sqliteBytes = Buffer.from(database.sqlite.serialize()).toString("utf8")
     const publicText = [...browserBodies, sqliteBytes].join("\n")

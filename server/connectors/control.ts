@@ -12,6 +12,7 @@ import {
   type SummarizerConfig,
 } from "../../cli/config"
 import { PROVIDER_IDS, PROVIDERS, type ProviderId } from "../../shared/providers"
+import type { ConnectorStatusV1 } from "../../shared/protocol"
 import {
   pollChatgptDeviceFlow,
   startChatgptDeviceFlow,
@@ -26,31 +27,7 @@ import {
 } from "./openrouter-auth"
 import { SummarizeError, type SummarizeErrorClass } from "./types"
 
-export type ActiveSummarizerState = "never_ran" | "ok" | "failing"
-
-export interface ProviderConnectionStatus {
-  readonly id: ProviderId
-  readonly label: string
-  readonly company: string
-  readonly login: "pkce" | "device-code" | "api-key"
-  readonly apiKeyFallback: boolean
-  readonly unofficial: boolean
-  readonly defaultModel: string
-  readonly loggedIn: boolean
-}
-
-export interface ConnectorStatus {
-  readonly providers: ReadonlyArray<ProviderConnectionStatus>
-  readonly active: {
-    readonly provider: ProviderId
-    readonly model: string
-    readonly state: ActiveSummarizerState
-    readonly lastAttemptAt: number | null
-    readonly lastSuccessAt: number | null
-    readonly lastErrorClass: SummarizeErrorClass | null
-  } | null
-  readonly legacyRelay: boolean
-}
+export type ConnectorStatus = ConnectorStatusV1
 
 export type ChatgptLoginPoll =
   | { readonly state: "pending" }
@@ -114,6 +91,7 @@ export function createConnectorControl(options: ConnectorControlOptions): Connec
       const selected = config?.summarizer ?? null
       const runtime = options.manager.status
       return {
+        protocolVersion: 1,
         providers: PROVIDER_IDS.map((id) => ({
           id,
           label: PROVIDERS[id].label,
