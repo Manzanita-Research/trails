@@ -208,7 +208,7 @@ describe("onboarding bootstrap contract", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 5 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
     expect(
       migrated.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")

@@ -44,7 +44,7 @@ const FEEDBACK_PANEL_ID = "feedback-panel"
 
 function shellModeOf(data: BootstrapV1 | null, loading: boolean): ShellMode {
   if (data === null) return loading ? "loading" : "hub-error"
-  if (data.sessions.length === 0) return "welcome"
+  if (data.sessions.length === 0 && data.captures.length === 0) return "welcome"
   return data.preferences.onboardingVersion < 1 ? "onboarding" : "loaded"
 }
 

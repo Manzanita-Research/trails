@@ -1,13 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { Effect } from "effect"
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "../server/app"
+import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
 import { MIGRATIONS } from "../server/migrations"
-import type { BootstrapV1, IngestRequestV2, IngestSessionV2 } from "../shared/protocol"
+import type {
+  BootstrapV1,
+  IngestCaptureV1,
+  IngestCapturesRequestV1,
+  IngestRequestV2,
+  IngestSessionV2,
+  MidjourneyCaptureV1,
+} from "../shared/protocol"
 
 const roots = new Set<string>()
 const databases = new Set<TrailsDb>()
@@ -125,6 +134,46 @@ function ingestBody(
   return { protocolVersion: 2, device, sessions }
 }
 
+const syntheticWebp = Buffer.from("RIFF\\x08\\x00\\x00\\x00WEBPsynthetic")
+
+function capture(
+  sourceRecordId: string,
+  overrides: Partial<MidjourneyCaptureV1> = {},
+): MidjourneyCaptureV1 {
+  return {
+    source: "midjourney",
+    sourceRecordId,
+    project: "/Users/tester/code/acme/ambient",
+    projectHint: "Ideas",
+    title: "Synthetic generation",
+    startedAt: "2026-08-03T17:00:00.000Z",
+    endedAt: null,
+    summaryInput: "A bounded synthetic prompt",
+    attentionMinutes: [Math.floor(Date.parse("2026-08-03T17:00:00.000Z") / 60_000)],
+    payload: {
+      eventType: "imagine",
+      jobType: "generation",
+      parentSourceRecordId: null,
+      parentGrid: null,
+    },
+    images: Array.from({ length: 4 }, (_, index) => ({
+      index,
+      mime: "image/webp" as const,
+      width: 640,
+      height: 640,
+      bytes: syntheticWebp.toString("base64"),
+    })),
+    ...overrides,
+  }
+}
+
+function captureBody(
+  captures: ReadonlyArray<IngestCaptureV1>,
+  device = { id: "device-a", name: "Studio" },
+): IngestCapturesRequestV1 {
+  return { protocolVersion: 1, device, captures }
+}
+
 type App = (request: Request) => Promise<Response>
 
 function request(app: App, method: string, path: string, body?: unknown): Promise<Response> {
@@ -149,7 +198,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -157,7 +206,7 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(5)
+    expect(userVersion.user_version).toBe(6)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
     expect(Object.values(busyTimeout)[0]).toBe(5000)
@@ -188,6 +237,9 @@ describe("database opening and ordered migrations", () => {
         "day_summaries",
         "session_summary_jobs",
         "day_summary_jobs",
+        "captures",
+        "capture_attention",
+        "capture_images",
       ]),
     )
     expect((await stat(path)).mode & 0o777).toBe(0o600)
@@ -197,7 +249,7 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(5)
+    expect(reopenedVersion.user_version).toBe(6)
     expect(
       reopened.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
@@ -218,7 +270,7 @@ describe("database opening and ordered migrations", () => {
     const database = openDatabase(path, { defaultTimezone: "Europe/Rome", now: migrationNow })
     databases.add(database)
 
-    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 5 })
+    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
     expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
       timezone: "Europe/Rome",
     })
@@ -331,6 +383,23 @@ describe("database opening and ordered migrations", () => {
     ).toEqual([
       { work_date: "2026-10-31", generation: 7, attempts: 2, last_error: "LegacyError" },
     ])
+  })
+
+
+  test("migrates a version-three database without disturbing canonical state", async () => {
+    const root = await temporaryRoot()
+    const path = join(root, "trails.sqlite")
+    createMigration3Fixture(path)
+    const legacy = new Database(path, { strict: true })
+    legacy.query("UPDATE settings SET halo = 15 WHERE id = 1").run()
+    legacy.close()
+
+    const migrated = trackedDatabase(path)
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(migrated.sqlite.query("SELECT halo FROM settings WHERE id = 1").get()).toEqual({ halo: 15 })
+    expect(migrated.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
+    expect(migrated.sqlite.query("SELECT count(*) AS count FROM sessions").get()).toEqual({ count: 1 })
+    expect(migrated.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "11" })
   })
 })
 
@@ -708,6 +777,148 @@ describe("ingest and bootstrap", () => {
     expect(sessionCount.count).toBe(0)
     expect(activityCount.count).toBe(0)
     expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "0" })
+  })
+})
+
+describe("capture ingest, bootstrap privacy, and image API", () => {
+  test("is idempotent, preserves null reconciliation attribution, and replaces children atomically", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ db: database, now: () => Date.parse("2026-08-03T18:00:00.000Z") })
+    const original = capture("job-private")
+
+    let response = await request(app, "POST", "/api/captures", captureBody([original]))
+    expect(response.status).toBe(200)
+    expect(await json(response)).toEqual({ accepted: 1, unchanged: 0, revision: 1 })
+
+    response = await request(app, "POST", "/api/captures", captureBody([original]))
+    expect(await json(response)).toEqual({ accepted: 0, unchanged: 1, revision: 1 })
+
+    const reconciliation = { ...original, project: null }
+    response = await request(app, "POST", "/api/captures", captureBody([reconciliation]))
+    expect(await json(response)).toEqual({ accepted: 0, unchanged: 1, revision: 1 })
+
+    const updated = { ...reconciliation, summaryInput: "A revised bounded synthetic prompt" }
+    response = await request(app, "POST", "/api/captures", captureBody([updated]))
+    expect(await json(response)).toEqual({ accepted: 1, unchanged: 0, revision: 2 })
+    expect(database.sqlite.query("SELECT project FROM captures").get()).toEqual({ project: "code/acme/ambient" })
+    expect(database.sqlite.query("SELECT count(*) AS count FROM capture_attention").get()).toEqual({ count: 1 })
+    expect(database.sqlite.query("SELECT count(*) AS count FROM capture_images").get()).toEqual({ count: 4 })
+    expect(database.sqlite.query("SELECT count(*) AS count FROM day_summary_jobs").get()).toEqual({ count: 0 })
+    expect(database.sqlite.query("SELECT count(*) AS count FROM session_summary_jobs").get()).toEqual({ count: 0 })
+
+    const reassigned = { ...updated, project: "/Users/tester/code/acme/reassigned" }
+    response = await request(app, "POST", "/api/captures", captureBody([reassigned]))
+    expect(await json(response)).toEqual({ accepted: 1, unchanged: 0, revision: 3 })
+    expect(database.sqlite.query("SELECT project FROM captures").get()).toEqual({ project: "code/acme/reassigned" })
+  })
+
+  test("rolls back the full request when one child insert fails", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const valid = capture("job-valid")
+    const duplicateImages = capture("job-invalid").images.map((image) => ({ ...image, index: 0 }))
+    const invalid = capture("job-invalid", { images: duplicateImages })
+
+    await expect(Effect.runPromise(ingestCaptures(database, captureBody([valid, invalid])))).rejects.toThrow(
+      "capture ingestion failed",
+    )
+    expect(database.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
+    expect(database.sqlite.query("SELECT count(*) AS count FROM machines").get()).toEqual({ count: 0 })
+  })
+
+  test("omits provider identifiers and serves persisted images with private validators", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const now = Date.parse("2026-08-03T18:00:00.000Z")
+    const app = createApp({ db: database, now: () => now })
+    const parent = capture("job-private")
+    const child = capture("variation-private", {
+      startedAt: "2026-08-03T17:01:00.000Z",
+      attentionMinutes: [Math.floor(Date.parse("2026-08-03T17:01:00.000Z") / 60_000)],
+      payload: {
+        eventType: "variation",
+        jobType: "variation",
+        parentSourceRecordId: "job-private",
+        parentGrid: 2,
+      },
+    })
+    expect((await request(app, "POST", "/api/captures", captureBody([parent, child]))).status).toBe(200)
+
+    const bootstrapResponse = await request(app, "GET", "/api/bootstrap")
+    const bootstrap = await json<BootstrapV1>(bootstrapResponse)
+    expect(bootstrap.sessions).toEqual([])
+    expect(bootstrap.captures).toHaveLength(2)
+    expect(bootstrap.indexedAt).toBe("2026-08-03T18:00:00.000Z")
+    const serialized = JSON.stringify(bootstrap)
+    expect(serialized).not.toContain("job-private")
+    expect(serialized).not.toContain("variation-private")
+    expect(serialized).not.toContain("device-a")
+    expect(serialized).not.toContain(syntheticWebp.toString("base64"))
+    const childBootstrap = bootstrap.captures.find((item) => item.source === "midjourney" && item.payload.hasParent)
+    expect(childBootstrap?.source).toBe("midjourney")
+    if (!childBootstrap || childBootstrap.source !== "midjourney") throw new Error("missing child capture")
+    expect(childBootstrap.payload.parentCaptureId).toBe(bootstrap.captures[0]?.id)
+    expect(childBootstrap.payload).not.toHaveProperty("parentSourceRecordId")
+    expect(bootstrap.captures[0]?.images.map((image) => image.url)).toEqual([
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/0\?v=[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/1\?v=[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/2\?v=[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/3\?v=[0-9a-f]{64}$/),
+    ])
+
+    const imageUrl = bootstrap.captures[0]!.images[0]!.url
+    let imageResponse = await request(app, "GET", imageUrl)
+    expect(imageResponse.status).toBe(200)
+    expect(imageResponse.headers.get("content-type")).toBe("image/webp")
+    expect(imageResponse.headers.get("content-length")).toBe(String(syntheticWebp.byteLength))
+    expect(imageResponse.headers.get("cache-control")).toBe("private, max-age=31536000, immutable")
+    expect(Buffer.from(await imageResponse.arrayBuffer())).toEqual(syntheticWebp)
+    const etag = imageResponse.headers.get("etag")
+    expect(etag).toMatch(/^"[0-9a-f]{64}"$/)
+
+    imageResponse = await app(new Request(`http://trails.test${imageUrl}`, { headers: { "If-None-Match": etag! } }))
+    expect(imageResponse.status).toBe(304)
+    expect((await imageResponse.arrayBuffer()).byteLength).toBe(0)
+
+    imageResponse = await request(app, "HEAD", imageUrl)
+    expect(imageResponse.status).toBe(200)
+    expect(imageResponse.headers.get("content-length")).toBe(String(syntheticWebp.byteLength))
+    expect((await imageResponse.arrayBuffer()).byteLength).toBe(0)
+    expect((await request(app, "GET", "/api/capture-images/999/0")).status).toBe(404)
+    expect((await request(app, "GET", "/api/capture-images/not-an-id/0")).status).toBe(400)
+    expect((await request(app, "POST", imageUrl)).status).toBe(405)
+  })
+
+  test("accepts project preferences for a capture-only project", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ db: database })
+    await request(app, "POST", "/api/captures", captureBody([capture("job-project")]))
+
+    const response = await request(app, "PUT", "/api/projects", {
+      project: "code/acme/ambient",
+      displayName: "Ambient",
+    })
+    expect(response.status).toBe(200)
+    expect((await json<BootstrapV1>(await request(app, "GET", "/api/bootstrap"))).preferences.names).toEqual({
+      "code/acme/ambient": "Ambient",
+    })
+  })
+
+  test("rejects invalid and oversized capture requests without partial state", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ db: database })
+    const invalid = { ...captureBody([capture("job-invalid")]), privateToken: "nope" }
+    expect((await request(app, "POST", "/api/captures", invalid)).status).toBe(400)
+    const oversized = new Request("http://trails.test/api/captures", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": String(5 * 1024 * 1024 + 1) },
+      body: "{}",
+    })
+    expect((await app(oversized)).status).toBe(413)
+    expect(database.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
   })
 })
 

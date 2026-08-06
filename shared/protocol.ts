@@ -68,6 +68,139 @@ const UtcActivitySchema = Schema.Array(UtcActivityTupleSchema).pipe(
   }),
 )
 
+export const CaptureSourceV1Schema = Schema.Literal("midjourney", "granola")
+
+export const CaptureAttentionTupleV1Schema = Schema.Tuple(
+  LocalDateSchema,
+  Schema.Number.pipe(Schema.int(), Schema.between(0, 1439)),
+)
+
+const CaptureAttentionV1Schema = Schema.Array(CaptureAttentionTupleV1Schema).pipe(
+  Schema.minItems(1),
+  Schema.maxItems(10_080),
+  Schema.filter((attention) => {
+    let previous = ""
+    for (const [date, minute] of attention) {
+      const key = `${date}:${String(minute).padStart(4, "0")}`
+      if (key <= previous) return "attention tuples must be unique and sorted"
+      previous = key
+    }
+    return true
+  }),
+)
+
+const CaptureUtcAttentionV1Schema = Schema.Array(
+  Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+).pipe(
+  Schema.minItems(1),
+  Schema.maxItems(10_080),
+  Schema.filter((attention) => {
+    let previous = -1
+    for (const utcMinute of attention) {
+      if (utcMinute <= previous) return "attention minutes must be unique and sorted"
+      previous = utcMinute
+    }
+    return true
+  }),
+)
+
+const strictBase64 = Schema.String.pipe(
+  Schema.minLength(4),
+  Schema.filter((value) => {
+    if (
+      value.startsWith("data:") ||
+      value.length % 4 !== 0 ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+    ) {
+      return "must be raw canonical base64"
+    }
+    const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0
+    return (value.length / 4) * 3 - padding <= 500 * 1024 || "decoded image exceeds 500 KiB"
+  }),
+)
+
+export const CaptureImageV1Schema = Schema.Struct({
+  index: Schema.Number.pipe(Schema.int(), Schema.between(0, 3)),
+  mime: Schema.Literal("image/jpeg", "image/png", "image/webp"),
+  width: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
+  height: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
+  bytes: strictBase64,
+})
+
+const MidjourneyImagesV1Schema = Schema.Array(CaptureImageV1Schema).pipe(
+  Schema.itemsCount(4),
+  Schema.filter(
+    (images) =>
+      images.every((image, index) => image.index === index) ||
+      "Midjourney images must contain indexes 0 through 3 in order",
+  ),
+)
+
+const GranolaImagesV1Schema = Schema.Array(CaptureImageV1Schema).pipe(Schema.itemsCount(0))
+
+const CaptureCommonV1Fields = {
+  sourceRecordId: trimmedString(1, 128),
+  project: Schema.NullOr(trimmedString(1, 4096)),
+  projectHint: Schema.NullOr(trimmedString(1, 200)),
+  title: trimmedString(1, 200),
+  startedAt: CanonicalTimestampSchema,
+  endedAt: Schema.NullOr(CanonicalTimestampSchema),
+  summaryInput: trimmedString(1, 12_000),
+  attentionMinutes: CaptureUtcAttentionV1Schema,
+}
+
+const MidjourneyCapturePayloadV1Schema = Schema.Struct({
+  eventType: trimmedString(1, 100),
+  jobType: trimmedString(1, 100),
+  parentSourceRecordId: Schema.NullOr(trimmedString(1, 128)),
+  parentGrid: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(0, 3))),
+})
+
+const GranolaNoteUrlSchema = boundedString(1, 2048).pipe(
+  Schema.filter((value) => {
+    try {
+      const url = new URL(value)
+      const granolaHost = url.hostname === "granola.ai" || url.hostname.endsWith(".granola.ai")
+      return (url.protocol === "https:" && granolaHost) || "must be an HTTPS Granola URL"
+    } catch {
+      return "must be an HTTPS Granola URL"
+    }
+  }),
+)
+
+const GranolaFoldersV1Schema = Schema.Array(trimmedString(1, 200)).pipe(
+  Schema.maxItems(50),
+  Schema.filter((folders) => new Set(folders).size === folders.length || "folder names must be unique"),
+)
+
+const GranolaCapturePayloadV1Schema = Schema.Struct({
+  attendeeCount: Schema.Number.pipe(Schema.int(), Schema.between(0, 10_000)),
+  folders: GranolaFoldersV1Schema,
+  webUrl: Schema.NullOr(GranolaNoteUrlSchema),
+})
+
+const validCaptureInterval = <A extends { readonly startedAt: string; readonly endedAt: string | null }>(
+  capture: A,
+): boolean | string =>
+  capture.endedAt === null || capture.endedAt >= capture.startedAt || "endedAt must not be before startedAt"
+
+export const MidjourneyCaptureV1Schema = Schema.Struct({
+  ...CaptureCommonV1Fields,
+  source: Schema.Literal("midjourney"),
+  payload: MidjourneyCapturePayloadV1Schema,
+  images: MidjourneyImagesV1Schema,
+}).pipe(Schema.filter(validCaptureInterval))
+
+export const GranolaCaptureV1Schema = Schema.Struct({
+  ...CaptureCommonV1Fields,
+  source: Schema.Literal("granola"),
+  payload: GranolaCapturePayloadV1Schema,
+  images: GranolaImagesV1Schema,
+}).pipe(Schema.filter(validCaptureInterval))
+
+export const IngestCaptureV1Schema = Schema.Union(MidjourneyCaptureV1Schema, GranolaCaptureV1Schema)
+
+
 export const IngestSessionV2Schema = Schema.Struct({
   sourceSessionId: boundedString(1, 256),
   source: SourceSchema,
@@ -134,6 +267,11 @@ export const CollectorStatusV1Schema = Schema.Struct({
       error: CollectorErrorCodeSchema,
     }),
   ),
+})
+export const IngestCapturesRequestV1Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(1),
+  device: DeviceV1Schema,
+  captures: Schema.Array(IngestCaptureV1Schema).pipe(Schema.minItems(1), Schema.maxItems(20)),
 })
 
 export const MachineStatusV1Schema = Schema.Struct({
@@ -217,6 +355,51 @@ export const TimeZoneSchema = trimmedString(1, 100).pipe(
   }),
 )
 
+export const BootstrapCaptureImageV1Schema = Schema.Struct({
+  index: Schema.Number.pipe(Schema.int(), Schema.between(0, 3)),
+  mime: Schema.Literal("image/jpeg", "image/png", "image/webp"),
+  width: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
+  height: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
+  byteLength: Schema.Number.pipe(Schema.int(), Schema.between(1, 500 * 1024)),
+  url: boundedString(1, 512),
+})
+
+const BootstrapCaptureCommonV1Fields = {
+  id: boundedString(1, 64),
+  project: Schema.NullOr(trimmedString(1, 4096)),
+  projectHint: Schema.NullOr(trimmedString(1, 200)),
+  title: trimmedString(1, 200),
+  startedAt: CanonicalTimestampSchema,
+  endedAt: Schema.NullOr(CanonicalTimestampSchema),
+  summaryInput: trimmedString(1, 12_000),
+  attentionMinutes: CaptureAttentionV1Schema,
+  updatedAt: CanonicalTimestampSchema,
+  images: Schema.Array(BootstrapCaptureImageV1Schema).pipe(Schema.maxItems(4)),
+}
+
+export const BootstrapMidjourneyCaptureV1Schema = Schema.Struct({
+  ...BootstrapCaptureCommonV1Fields,
+  source: Schema.Literal("midjourney"),
+  payload: Schema.Struct({
+    eventType: trimmedString(1, 100),
+    jobType: trimmedString(1, 100),
+    parentGrid: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(0, 3))),
+    hasParent: Schema.Boolean,
+    parentCaptureId: Schema.NullOr(boundedString(1, 64)),
+  }),
+})
+
+export const BootstrapGranolaCaptureV1Schema = Schema.Struct({
+  ...BootstrapCaptureCommonV1Fields,
+  source: Schema.Literal("granola"),
+  payload: GranolaCapturePayloadV1Schema,
+})
+
+export const BootstrapCaptureV1Schema = Schema.Union(
+  BootstrapMidjourneyCaptureV1Schema,
+  BootstrapGranolaCaptureV1Schema,
+)
+
 export const BootstrapV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
@@ -225,6 +408,7 @@ export const BootstrapV1Schema = Schema.Struct({
   hubUrl: trimmedString(1, 2048),
   timezone: TimeZoneSchema,
   sessions: Schema.Array(BootstrapSessionV1Schema),
+  captures: Schema.Array(BootstrapCaptureV1Schema),
   summaries: Schema.Struct({ sessions: StringRecordSchema, days: StringRecordSchema }),
   preferences: PreferencesV1Schema,
 })
@@ -290,6 +474,17 @@ export type IngestRequestV2 = Schema.Schema.Type<typeof IngestRequestV2Schema> &
 export type BootstrapSessionV1 = Schema.Schema.Type<typeof BootstrapSessionV1Schema> & {
   readonly activity: ReadonlyArray<LocalActivityTuple>
 }
+export type CaptureSourceV1 = Schema.Schema.Type<typeof CaptureSourceV1Schema>
+export type CaptureAttentionTupleV1 = Schema.Schema.Type<typeof CaptureAttentionTupleV1Schema>
+export type CaptureImageV1 = Schema.Schema.Type<typeof CaptureImageV1Schema>
+export type MidjourneyCaptureV1 = Schema.Schema.Type<typeof MidjourneyCaptureV1Schema>
+export type GranolaCaptureV1 = Schema.Schema.Type<typeof GranolaCaptureV1Schema>
+export type IngestCaptureV1 = Schema.Schema.Type<typeof IngestCaptureV1Schema>
+export type IngestCapturesRequestV1 = Schema.Schema.Type<typeof IngestCapturesRequestV1Schema> & {
+  readonly captures: ReadonlyArray<IngestCaptureV1>
+}
+export type BootstrapCaptureImageV1 = Schema.Schema.Type<typeof BootstrapCaptureImageV1Schema>
+export type BootstrapCaptureV1 = Schema.Schema.Type<typeof BootstrapCaptureV1Schema>
 export type PreferencesV1 = Schema.Schema.Type<typeof PreferencesV1Schema>
 export type BootstrapV1 = Schema.Schema.Type<typeof BootstrapV1Schema>
 export type SettingsPatch = Schema.Schema.Type<typeof SettingsPatchSchema>

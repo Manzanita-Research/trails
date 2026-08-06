@@ -4,6 +4,7 @@ import {
   BootstrapV1Schema,
   CollectorStatusV1Schema,
   EngagementCreateSchema,
+  IngestCapturesRequestV1Schema,
   IngestRequestV2Schema,
   MachinesV1Schema,
   SummarizationMetadataV1Schema,
@@ -36,6 +37,39 @@ const request = () => ({
   sessions: [session()],
 })
 
+const imageBytes = Buffer.from("RIFFsyntheticWEBP").toString("base64")
+
+const midjourneyCapture = () => ({
+  source: "midjourney",
+  sourceRecordId: "job-1",
+  project: "/work/project",
+  projectHint: "Ideas",
+  title: "A synthetic generation",
+  startedAt: "2026-07-01T17:00:00.000Z",
+  endedAt: null,
+  summaryInput: "A bounded synthetic prompt",
+  attentionMinutes: [Math.floor(Date.parse("2026-07-01T17:00:00.000Z") / 60_000)],
+  payload: {
+    eventType: "imagine",
+    jobType: "generation",
+    parentSourceRecordId: null,
+    parentGrid: null,
+  },
+  images: Array.from({ length: 4 }, (_, index) => ({
+    index,
+    mime: "image/webp",
+    width: 640,
+    height: 640,
+    bytes: imageBytes,
+  })),
+})
+
+const captureRequest = () => ({
+  protocolVersion: 1,
+  device: { id: "device-1", name: "Desk Mac" },
+  captures: [midjourneyCapture()],
+})
+
 const bootstrap = () => ({
   protocolVersion: 1,
   revision: 3,
@@ -58,6 +92,7 @@ const bootstrap = () => ({
       activity: [["2026-07-01", 600, 2, 1]],
     },
   ],
+  captures: [],
   summaries: { sessions: { "42": "Summary" }, days: { "2026-07-01|/work/project": "Day" } },
   preferences: {
     boundary: 6,
@@ -301,6 +336,78 @@ describe("summarization metadata contracts", () => {
       prompts: { ...metadata.prompts, session: " Session prompt" },
     })
     rejects(SummarizationMetadataV1Schema, { ...metadata, endpoint: "private" })
+  })
+})
+
+describe("capture ingest protocol v1", () => {
+  test("decodes the exact discriminated provider union", () => {
+    expect(decodeExact(IngestCapturesRequestV1Schema, captureRequest()).captures[0]?.source).toBe("midjourney")
+    const granola = {
+      ...midjourneyCapture(),
+      source: "granola",
+      sourceRecordId: "note-1",
+      endedAt: "2026-07-01T18:00:00.000Z",
+      payload: {
+        attendeeCount: 3,
+        folders: ["Research"],
+        webUrl: "https://app.granola.ai/notes/note-1",
+      },
+      images: [],
+    }
+    expect(
+      decodeExact(IngestCapturesRequestV1Schema, { ...captureRequest(), captures: [granola] }).captures[0]
+        ?.source,
+    ).toBe("granola")
+    rejects(IngestCapturesRequestV1Schema, {
+      ...captureRequest(),
+      captures: [{ ...granola, payload: { ...granola.payload, webUrl: "https://granola.example/notes/note-1" } }],
+    })
+    rejects(
+      IngestCapturesRequestV1Schema,
+      changed(captureRequest(), (copy) => Object.assign(copy.captures[0], { accountId: "private" })),
+    )
+    rejects(
+      IngestCapturesRequestV1Schema,
+      changed(captureRequest(), (copy) => Object.assign(copy.captures[0].payload, { remoteUrl: "https://example.com" })),
+    )
+    rejects(
+      IngestCapturesRequestV1Schema,
+      changed(captureRequest(), (copy) => (copy.captures[0].source = "granola")),
+    )
+  })
+
+  test("enforces capture, timestamp, attention, image, and batch bounds", () => {
+    const invalid: unknown[] = [
+      changed(captureRequest(), (copy) => (copy.captures = [])),
+      changed(captureRequest(), (copy) => (copy.captures = Array.from({ length: 21 }, midjourneyCapture))),
+      changed(captureRequest(), (copy) => (copy.captures[0].sourceRecordId = "x".repeat(129))),
+      changed(captureRequest(), (copy) => (copy.captures[0].project = " padded ")),
+      changed(captureRequest(), (copy) => (copy.captures[0].projectHint = "x".repeat(201))),
+      changed(captureRequest(), (copy) => (copy.captures[0].title = "x".repeat(201))),
+      changed(captureRequest(), (copy) => (copy.captures[0].summaryInput = "")),
+      changed(captureRequest(), (copy) => (copy.captures[0].summaryInput = "x".repeat(12_001))),
+      changed(captureRequest(), (copy) =>
+        Object.assign(copy.captures[0], { endedAt: "2026-07-01T16:59:59.999Z" }),
+      ),
+      changed(captureRequest(), (copy) => (copy.captures[0].attentionMinutes = [])),
+      changed(captureRequest(), (copy) => (copy.captures[0].attentionMinutes = [1, 1])),
+      changed(captureRequest(), (copy) => (copy.captures[0].attentionMinutes = [-1])),
+      changed(captureRequest(), (copy) => (copy.captures[0].images = copy.captures[0].images.slice(0, 3))),
+      changed(captureRequest(), (copy) => (copy.captures[0].images[0].bytes = `data:image/webp;base64,${imageBytes}`)),
+      changed(captureRequest(), (copy) => (copy.captures[0].images[0].bytes = "not base64")),
+      changed(captureRequest(), (copy) => {
+        copy.captures[0].images[0].bytes = Buffer.alloc(500 * 1024 + 1).toString("base64")
+      }),
+    ]
+    for (const value of invalid) rejects(IngestCapturesRequestV1Schema, value)
+
+    const maximum = changed(captureRequest(), (copy) => {
+      copy.captures[0].sourceRecordId = "r".repeat(128)
+      copy.captures[0].title = "t".repeat(200)
+      copy.captures[0].summaryInput = "s".repeat(12_000)
+      copy.captures[0].images[0].bytes = Buffer.alloc(500 * 1024).toString("base64")
+    })
+    expect(decodeExact(IngestCapturesRequestV1Schema, maximum).captures).toHaveLength(1)
   })
 })
 

@@ -11,6 +11,7 @@ function bootstrap(revision: number): BootstrapV1 {
     hubUrl: "http://127.0.0.1:7412/",
     timezone: "America/Los_Angeles",
     sessions: [],
+    captures: [],
     summaries: { sessions: {}, days: {} },
     preferences: {
       boundary: 6,
