@@ -74,8 +74,32 @@ curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
 - If a multi-Mac hub is temporarily unavailable, spokes try again on their next scheduled run.
 - Trails stores its database at `~/.manzanita/trails/trails.sqlite` on the hub.
 - Trails creates a committed SQLite backup every day at 03:00 and keeps the latest 14 under `~/.manzanita/trails/backups/`.
-- Generated summaries may be unavailable during the alpha. Trails continues working and uses the first prompt as a fallback.
-- Open **settings** in the web app to choose the day boundary, attention halo, and IANA time zone used for displayed times and day grouping. The same screen shows collector freshness and the effective summarization model and prompts without exposing editable relay configuration.
+- Summaries are optional and stay off until you connect and explicitly choose a provider on the hub.
+- Open **settings** in the web app to choose the day boundary, attention halo, and IANA time zone used for displayed times and day grouping. The same screen shows collector freshness and owns provider connection, model selection, and summary status.
+
+## Optional summaries
+
+The hub can summarize bounded session and day digests through one provider you choose. Collectors never need AI credentials. The first alpha supports:
+
+- **OpenRouter** through its recommended PKCE login, with an existing API key as a fallback;
+- **ChatGPT Plus/Pro** through OpenAI's Codex device-code login—this connector is explicitly labeled **unofficial** because OpenAI does not document the Codex subscription endpoint as a third-party integration;
+- **OpenAI API** through an API key.
+
+Open **settings → summarization** on the hub, connect a provider, choose its model, then confirm **use**. Login and activation are separate: connecting never sends a digest, and changing providers does not resume queued jobs until you confirm the new destination.
+
+The same flow is available from the hub terminal:
+
+```bash
+trails connect
+trails connect status
+trails use openrouter --model openrouter/auto
+trails disconnect
+trails logout openrouter
+```
+
+Use the web UI's password field for API keys when possible. Automation can pipe a key to `trails connect openrouter --api-key-stdin` or `trails connect openai-api --api-key-stdin`; keys are never accepted as command arguments. `trails disconnect` turns summaries off but keeps provider logins. `trails logout PROVIDER` removes that provider's Trails-owned credential.
+
+Authentication failures, provider limits, malformed responses, timeouts, and network failures never stop collection. Jobs remain durable and retry with backoff. Trails never falls back to another provider automatically.
 
 ## Update
 
@@ -117,11 +141,13 @@ Transcript parsing happens on the Mac where each session was created. Trails sen
 
 Trails does **not** send transcript paths or transcript bodies to the hub. The web app receives neither source session identifiers nor digests. The hub service listens only on loopback; optional Tailscale Serve access exposes it privately to the tailnet rather than the LAN or public internet.
 
-If the optional summary relay is enabled, it receives only bounded summary input—not complete transcripts. Session input is capped at 9,000 characters and day input at 12,000 characters.
+When you explicitly activate a summary provider, the hub sends that company only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
+
+Provider credentials live only on the hub in `~/.config/trails/auth.json`; provider selection lives separately in `~/.config/trails/server.json`. Trails creates the directory and files owner-only, writes them atomically, and serializes credential refreshes with a lock. Credentials never enter SQLite, collector traffic, browser responses, feedback, or logs. Browser-visible status is limited to provider, model, login/active state, timestamps, and a closed actionable error class.
 
 Sending beta feedback is explicit. The browser sends only the feedback kind, message, optional follow-up, and creation time unless you opt in to safe context. Safe context is limited to the trails version, current view, canonical revision, selected work date on Days or Project, counts by Claude Code/Codex/omp/pi source, viewport dimensions, and whether synchronization is in an error state. It never includes URLs or tailnet details, device or project names, paths, branches, prompts, summaries, identifiers, digests, transcript content, or user-agent.
 
-Feedback goes directly from the browser to a separate public-write Cloudflare Worker and D1 database with no public read route. It expires after 90 days and is deleted by the next daily cleanup. This feedback store is separate from the optional inference relay; canonical session and organization state remains in SQLite on the hub Mac.
+Feedback goes directly from the browser to a separate public-write Cloudflare Worker and D1 database with no public read route. It expires after 90 days and is deleted by the next daily cleanup. Cloudflare does not provide Trails inference; canonical session and organization state remains in SQLite on the hub Mac.
 
 ## Alpha release
 

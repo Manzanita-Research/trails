@@ -39,6 +39,8 @@ The language is intentionally judgment-free. Trails does not add deadlines, prio
 
 Projects are discovered from session working directories and repository context. You can rename projects and assign related projects to a shared engagement. Those edits live in canonical SQLite on the hub Mac—your same working Mac in a one-Mac installation—so every browser sees the same organization.
 
-## When a summary is missing
+## Optional summaries
 
-Summary generation waits for changed sessions to settle before processing them. If the optional inference relay is unavailable, trails continues to work and uses the first prompt as a fallback. Timeline activity and normalized session observations do not depend on generated prose.
+Summaries are off until the hub owner connects and explicitly activates one provider in **settings → summarization**. The first alpha supports OpenRouter, ChatGPT Plus/Pro through an unofficial Codex subscription connector, and the OpenAI API. Connecting a login never sends a digest by itself; the separate **use** confirmation names the company and model before new and queued jobs begin.
+
+Summary generation waits for changed sessions to settle before processing them. When no provider is active, authentication needs attention, or a provider is temporarily unavailable, trails continues to work and uses the first prompt as fallback copy. Timeline activity and normalized session observations do not depend on generated prose. Trails never sends a queued job to a different provider automatically.
