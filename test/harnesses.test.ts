@@ -78,14 +78,29 @@ describe("harness invocation", () => {
       expect(delivered).toContain(privateDigest)
       expect(request).not.toBeNull()
       expect(request!.args.join(" ")).not.toContain(privateDigest)
+      expect(JSON.stringify(request!.env ?? {})).not.toContain(privateDigest)
       expect(request!.cwd).toContain("trails-summary-")
       if (id === "omp" || id === "pi") {
         expect(request!.args).toContain("--no-tools")
         expect(request!.args).toContain("--no-session")
       }
-      if (id === "claude") expect(request!.args).toContain("--no-session-persistence")
-      if (id === "codex") expect(request!.args).toContain("--ephemeral")
-      if (id === "opencode") expect(request!.args).toContain("--pure")
+      if (id === "claude") {
+        expect(request!.args).toContain("--safe-mode")
+        expect(request!.args).toContain("--no-session-persistence")
+        expect(request!.args).toContain("dontAsk")
+      }
+      if (id === "codex") {
+        expect(request!.args).toContain("--ephemeral")
+        expect(request!.args).toContain("shell_tool")
+        expect(request!.args).toContain("computer_use")
+        expect(request!.args).toContain("mcp_servers={}")
+        expect(request!.args).toContain('web_search="disabled"')
+        expect(request!.args).toContain("never")
+      }
+      if (id === "opencode") {
+        expect(request!.args).toContain("--pure")
+        expect(request!.env?.OPENCODE_CONFIG_CONTENT).toBe('{"permission":{"*":"deny"}}')
+      }
     }
   })
 

@@ -15,11 +15,41 @@ import {
 } from "./types"
 
 const MAX_PROCESS_OUTPUT_BYTES = 1024 * 1024
+const CODEX_ISOLATION_ARGS = [
+  "--disable", "apps",
+  "--disable", "browser_use",
+  "--disable", "browser_use_external",
+  "--disable", "browser_use_full_cdp_access",
+  "--disable", "code_mode",
+  "--disable", "code_mode_host",
+  "--disable", "code_mode_only",
+  "--disable", "computer_use",
+  "--disable", "hooks",
+  "--disable", "image_generation",
+  "--disable", "memories",
+  "--disable", "multi_agent",
+  "--disable", "multi_agent_v2",
+  "--disable", "plugins",
+  "--disable", "shell_snapshot",
+  "--disable", "shell_tool",
+  "--disable", "skill_mcp_dependency_install",
+  "--disable", "skill_search",
+  "--disable", "tool_call_mcp_elicitation",
+  "--disable", "unified_exec",
+  "--disable", "workspace_dependencies",
+  "--ask-for-approval", "never",
+  "--config", 'mcp_servers={}',
+  "--config", 'web_search="disabled"',
+  "--config", "shell_environment_policy.inherit=none",
+] as const
+const OPENCODE_ISOLATION_CONFIG = JSON.stringify({ permission: { "*": "deny" } })
+
 
 export interface HarnessProcessRequest {
   readonly executable: string
   readonly args: readonly string[]
   readonly cwd: string
+  readonly env?: Readonly<Record<string, string>>
   readonly stdin: string | null
   readonly outputPath: string | null
   readonly timeoutMs: number
@@ -62,7 +92,7 @@ async function readLimited(stream: ReadableStream<Uint8Array>, maximumBytes: num
 export const runHarnessProcess: HarnessProcessRunner = async (request) => {
   const process = Bun.spawn([request.executable, ...request.args], {
     cwd: request.cwd,
-    env: { ...globalThis.process.env, HOME: homedir() },
+    env: { ...globalThis.process.env, HOME: homedir(), ...request.env },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -142,6 +172,7 @@ export function resolveHarness(
 interface Invocation {
   readonly args: string[]
   readonly stdin: string | null
+  readonly env?: Readonly<Record<string, string>>
   readonly outputPath: string | null
   readonly parse: (result: HarnessProcessResult) => string
 }
@@ -203,8 +234,9 @@ function invocationOf(
     case "codex":
       return {
         args: [
-          "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--ignore-rules",
-          "--cd", directory, "--output-last-message", outputPath, "-",
+          ...CODEX_ISOLATION_ARGS,
+          "exec", "--ephemeral", "--sandbox", "read-only",
+          "--skip-git-repo-check", "--ignore-rules", "--cd", directory, "--output-last-message", outputPath, "-",
         ],
         stdin: `${systemPrompt}\n\n${input}`,
         outputPath,
@@ -215,6 +247,7 @@ function invocationOf(
         args: ["run", "--format", "json", "--pure", "--agent", "plan", "--dir", directory],
         stdin: `${systemPrompt}\n\n${input}`,
         outputPath: null,
+        env: { OPENCODE_CONFIG_CONTENT: OPENCODE_ISOLATION_CONFIG },
         parse: (result) => parseOpenCode(result.stdout),
       }
     case "pi":
@@ -270,6 +303,7 @@ export function createHarnessSummarizer(options: {
               executable: options.executable,
               args: invocation.args,
               cwd: directory,
+              env: invocation.env,
               stdin: invocation.stdin,
               outputPath: invocation.outputPath,
               timeoutMs,

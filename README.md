@@ -87,7 +87,7 @@ The hub can summarize bounded session and day digests through a coding harness a
 - **OpenCode (`opencode`)**
 - **Pi (`pi`)**
 
-Open **settings → summarization** on the hub and choose one harness. **Automatic** uses the first installed harness in the order above. Trails invokes the CLI non-interactively in a fresh temporary directory, disables tools and session persistence where the harness supports those controls, and removes temporary input/output files after every call.
+Open **settings → summarization** on the hub and choose one harness. **Automatic** uses the first installed harness in the order above. Trails invokes the CLI non-interactively in a fresh temporary directory, disables tool access and session persistence with each harness's native controls, and removes temporary input/output files after every call.
 
 The same controls are available from the hub terminal:
 
