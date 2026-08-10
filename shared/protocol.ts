@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { LocalActivityTuple, Source, UtcActivityTuple } from "./domain"
-import { PROVIDER_IDS } from "./providers"
+import { HARNESS_IDS } from "./harnesses"
 
 const boundedString = (minimum: number, maximum: number) =>
   Schema.String.pipe(Schema.minLength(minimum), Schema.maxLength(maximum))
@@ -291,74 +291,50 @@ export const MachinesV1Schema = Schema.Struct({
   generatedAt: CanonicalTimestampSchema,
   machines: Schema.Array(MachineStatusV1Schema),
 })
-export const SummarizationMetadataV1Schema = Schema.Struct({
-  protocolVersion: Schema.Literal(1),
-  model: trimmedString(1, 200),
+export const HarnessIdSchema = Schema.Literal(...HARNESS_IDS)
+export const HarnessSelectionSchema = Schema.Literal("auto", ...HARNESS_IDS)
+export const SummarizationMetadataV2Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(2),
+  harness: HarnessIdSchema,
   prompts: Schema.Struct({
     session: trimmedString(1, 4_000),
     day: trimmedString(1, 4_000),
   }),
 })
 
-export const SummarizationStatusV1Schema = Schema.Union(
+export const SummarizationStatusV2Schema = Schema.Union(
   Schema.Struct({
     enabled: Schema.Literal(false),
     metadata: Schema.Null,
   }),
   Schema.Struct({
     enabled: Schema.Literal(true),
-    metadata: SummarizationMetadataV1Schema,
+    metadata: SummarizationMetadataV2Schema,
   }),
 )
 
-export const ProviderIdSchema = Schema.Literal(...PROVIDER_IDS)
 export const SummarizeErrorClassSchema = Schema.Literal(
   "auth_required",
   "quota",
-  "provider_rejected",
+  "harness_failed",
   "timeout",
   "protocol",
-  "network",
 )
-export const ProviderConnectionStatusV1Schema = Schema.Struct({
-  id: ProviderIdSchema,
-  label: trimmedString(1, 80),
-  company: trimmedString(1, 80),
-  login: Schema.Literal("pkce", "device-code", "api-key"),
-  apiKeyFallback: Schema.Boolean,
-  unofficial: Schema.Boolean,
-  defaultModel: trimmedString(1, 200),
-  loggedIn: Schema.Boolean,
-})
-export const ConnectorStatusV1Schema = Schema.Struct({
+export const HarnessStatusV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
-  providers: Schema.Array(ProviderConnectionStatusV1Schema),
+  harnesses: Schema.Array(Schema.Struct({
+    id: HarnessIdSchema,
+    label: trimmedString(1, 80),
+    available: Schema.Boolean,
+  })),
   active: Schema.NullOr(Schema.Struct({
-    provider: ProviderIdSchema,
-    model: trimmedString(1, 200),
-    state: Schema.Literal("never_ran", "ok", "failing"),
+    selection: HarnessSelectionSchema,
+    harness: Schema.NullOr(HarnessIdSchema),
+    state: Schema.Literal("unavailable", "never_ran", "ok", "failing"),
     lastAttemptAt: Schema.NullOr(Schema.Number.pipe(Schema.nonNegative())),
     lastSuccessAt: Schema.NullOr(Schema.Number.pipe(Schema.nonNegative())),
     lastErrorClass: Schema.NullOr(SummarizeErrorClassSchema),
   })),
-  legacyRelay: Schema.Boolean,
-})
-export const ChatgptLoginStartV1Schema = Schema.Struct({
-  userCode: trimmedString(1, 200),
-  verificationUrl: trimmedString(1, 2_000),
-  expiresAt: Schema.Number.pipe(Schema.nonNegative()),
-  intervalSeconds: Schema.Number.pipe(Schema.positive()),
-})
-export const ChatgptLoginPollV1Schema = Schema.Union(
-  Schema.Struct({ state: Schema.Literal("pending") }),
-  Schema.Struct({ state: Schema.Literal("logged_in") }),
-  Schema.Struct({
-    state: Schema.Literal("failed"),
-    errorClass: SummarizeErrorClassSchema,
-  }),
-)
-export const OpenrouterLoginStartV1Schema = Schema.Struct({
-  authorizeUrl: trimmedString(1, 4_000),
 })
 
 export const BootstrapSessionV1Schema = Schema.Struct({
@@ -546,13 +522,9 @@ export type CollectorErrorCode = Schema.Schema.Type<typeof CollectorErrorCodeSch
 export type CollectorStatusV1 = Schema.Schema.Type<typeof CollectorStatusV1Schema>
 export type MachineStatusV1 = Schema.Schema.Type<typeof MachineStatusV1Schema>
 export type MachinesV1 = Schema.Schema.Type<typeof MachinesV1Schema>
-export type SummarizationMetadataV1 = Schema.Schema.Type<typeof SummarizationMetadataV1Schema>
-export type SummarizationStatusV1 = Schema.Schema.Type<typeof SummarizationStatusV1Schema>
-export type ProviderConnectionStatusV1 = Schema.Schema.Type<typeof ProviderConnectionStatusV1Schema>
-export type ConnectorStatusV1 = Schema.Schema.Type<typeof ConnectorStatusV1Schema>
-export type ChatgptLoginStartV1 = Schema.Schema.Type<typeof ChatgptLoginStartV1Schema>
-export type ChatgptLoginPollV1 = Schema.Schema.Type<typeof ChatgptLoginPollV1Schema>
-export type OpenrouterLoginStartV1 = Schema.Schema.Type<typeof OpenrouterLoginStartV1Schema>
+export type SummarizationMetadataV2 = Schema.Schema.Type<typeof SummarizationMetadataV2Schema>
+export type SummarizationStatusV2 = Schema.Schema.Type<typeof SummarizationStatusV2Schema>
+export type HarnessStatusV1 = Schema.Schema.Type<typeof HarnessStatusV1Schema>
 export type PocketCreate = Schema.Schema.Type<typeof PocketCreateSchema>
 export type FeedbackSubmissionV1 = Schema.Schema.Type<typeof FeedbackSubmissionV1Schema>
 export type FeedbackReceiptV1 = Schema.Schema.Type<typeof FeedbackReceiptV1Schema>

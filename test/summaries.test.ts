@@ -9,7 +9,7 @@ import {
   SummarizeError,
   type InferenceResult,
   type Summarizer,
-} from "../server/connectors/types"
+} from "../server/harnesses/types"
 
 const START = Date.parse("2026-08-01T12:00:00.000Z")
 const SETTLED = START + 5 * 60_000
@@ -73,8 +73,7 @@ function deferredInference(): {
   const calls: DeferredCall[] = []
   const waiters: Array<{ readonly count: number; readonly resolve: () => void }> = []
   const inference: Summarizer = {
-    provider: "openrouter",
-    model: "fake-model",
+    harness: "omp",
     summarize: (kind, input) =>
       Effect.tryPromise({
         try: () =>
@@ -83,7 +82,7 @@ function deferredInference(): {
               kind,
               input,
               resolve: (result = { text: `summary for ${input}`, model: "fake-model" }) => resolve(result),
-              reject: (error = new SummarizeError("network")) => reject(error),
+              reject: (error = new SummarizeError("harness_failed")) => reject(error),
             })
             for (let index = waiters.length - 1; index >= 0; index--) {
               if (calls.length < waiters[index].count) continue
@@ -91,7 +90,7 @@ function deferredInference(): {
               waiters.splice(index, 1)
             }
           }),
-        catch: (cause) => (cause instanceof SummarizeError ? cause : new SummarizeError("network")),
+        catch: (cause) => (cause instanceof SummarizeError ? cause : new SummarizeError("harness_failed")),
       }),
   }
   return {
@@ -147,8 +146,7 @@ describe("summary work", () => {
     db.sqlite.query("UPDATE day_summary_jobs SET available_at = ?").run(START)
     const kinds: Array<"session" | "day"> = []
     const inference: Summarizer = {
-      provider: "openrouter",
-      model: "fake-model",
+      harness: "omp",
       summarize: (kind) => {
         kinds.push(kind)
         return Effect.succeed({ text: `${kind} summary`, model: "fake-model" })
@@ -172,12 +170,11 @@ describe("summary work", () => {
 
     let calls = 0
     const inference: Summarizer = {
-      provider: "openrouter",
-      model: "fake-model",
+      harness: "omp",
       summarize: () => {
         calls++
         return calls === 1
-          ? Effect.fail(new SummarizeError("network"))
+          ? Effect.fail(new SummarizeError("harness_failed"))
           : Effect.succeed({ text: "The work was summarized.", model: "fake-model" })
       },
     }
@@ -192,7 +189,7 @@ describe("summary work", () => {
         db,
         "SELECT attempts, available_at, last_error FROM session_summary_jobs",
       ),
-    ).toEqual({ attempts: 1, available_at: SETTLED + 60_000, last_error: "network" })
+    ).toEqual({ attempts: 1, available_at: SETTLED + 60_000, last_error: "harness_failed" })
 
     // A fresh in-flight set models the next supervisor poll (including one after a restart).
     expect(
@@ -260,7 +257,7 @@ describe("summary work", () => {
     expect(successCall).toBeDefined()
     expect(failureCall).toBeDefined()
     successCall!.resolve({ text: "obsolete summary", model: "fake-model" })
-    failureCall!.reject(new SummarizeError("provider_rejected"))
+    failureCall!.reject(new SummarizeError("harness_failed"))
     await poll
 
     expect(db.sqlite.query("SELECT * FROM session_summaries").all()).toEqual([])
@@ -336,8 +333,7 @@ describe("summary work", () => {
     makeSessionSummariesReady(db, ["The only session summary."])
     let calls = 0
     const inference: Summarizer = {
-      provider: "openrouter",
-      model: "fake-model",
+      harness: "omp",
       summarize: () => {
         calls++
         return Effect.succeed({ text: "should not be used", model: "fake-model" })
@@ -366,8 +362,7 @@ describe("summary work", () => {
       .run("2026-08-01", PROJECT, START)
     let calls = 0
     const inference: Summarizer = {
-      provider: "openrouter",
-      model: "fake-model",
+      harness: "omp",
       summarize: () => {
         calls++
         return Effect.succeed({ text: "should not be used", model: "fake-model" })

@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createApp } from "../server/app"
-import type { ConnectorControl } from "../server/connectors/control"
+import type { HarnessControl } from "../server/harnesses/control"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
-import { PROVIDER_IDS, PROVIDERS, type ProviderId } from "../shared/providers"
+import { HARNESS_IDS, HARNESSES, type HarnessId, type HarnessSelection } from "../shared/harnesses"
 import { BootstrapV1Schema, decodeExact, type BootstrapV1, type IngestRequestV2 } from "../shared/protocol"
 import { App } from "../src/App"
 
@@ -73,54 +73,48 @@ function inputElement(element: HTMLElement): HTMLInputElement {
 }
 
 
-function connectorHarness(enabled: boolean): ConnectorControl {
-  const loggedIn = new Set<ProviderId>(["chatgpt"])
-  let active: { provider: ProviderId; model: string } | null = enabled
-    ? { provider: "chatgpt", model: "gpt-5.2-codex" }
-    : null
+function harnessRuntime(enabled: boolean): {
+  readonly control: HarnessControl
+  readonly describe: () => { readonly selection: HarnessSelection; readonly harness: HarnessId } | null
+} {
+  const available: Record<HarnessId, boolean> = {
+    omp: true,
+    claude: false,
+    codex: true,
+    opencode: false,
+    pi: false,
+  }
+  let selection: HarnessSelection | null = enabled ? "auto" : null
+  const resolved = (): HarnessId | null =>
+    selection === null ? null : selection === "auto" ? "omp" : available[selection] ? selection : null
   return {
-    status: () => ({
-      protocolVersion: 1,
-      providers: PROVIDER_IDS.map((id) => ({
-        id,
-        label: PROVIDERS[id].label,
-        company: PROVIDERS[id].company,
-        login: PROVIDERS[id].login,
-        apiKeyFallback: PROVIDERS[id].apiKeyFallback,
-        unofficial: PROVIDERS[id].unofficial,
-        defaultModel: PROVIDERS[id].defaultModel,
-        loggedIn: loggedIn.has(id),
-      })),
-      active: active && {
-        ...active,
-        state: "never_ran",
-        lastAttemptAt: null,
-        lastSuccessAt: null,
-        lastErrorClass: null,
+    control: {
+      status: () => ({
+        protocolVersion: 1,
+        harnesses: HARNESS_IDS.map((id) => ({
+          id,
+          label: HARNESSES[id].label,
+          available: available[id],
+        })),
+        active: selection && {
+          selection,
+          harness: resolved(),
+          state: "never_ran",
+          lastAttemptAt: null,
+          lastSuccessAt: null,
+          lastErrorClass: null,
+        },
+      }),
+      activate: (next) => {
+        selection = next.harness
       },
-      legacyRelay: false,
-    }),
-    startChatgpt: async () => ({
-      userCode: "TEST-CODE",
-      verificationUrl: "https://auth.openai.com/device",
-      expiresAt: fixedNow + 600_000,
-      intervalSeconds: 5,
-    }),
-    pollChatgpt: async () => ({ state: "pending" }),
-    startOpenrouter: () => ({ authorizeUrl: "https://openrouter.ai/auth?test=1" }),
-    finishOpenrouter: async () => {},
-    setApiKey: (provider) => {
-      loggedIn.add(provider)
+      disconnect: () => {
+        selection = null
+      },
     },
-    activate: (selection) => {
-      active = { provider: selection.provider, model: selection.model ?? PROVIDERS[selection.provider].defaultModel }
-    },
-    disconnect: () => {
-      active = null
-    },
-    logout: (provider) => {
-      loggedIn.delete(provider)
-      if (active?.provider === provider) active = null
+    describe: () => {
+      const harness = resolved()
+      return selection !== null && harness !== null ? { selection, harness } : null
     },
   }
 }
@@ -132,16 +126,14 @@ async function makeLoadedHarness({
   withDaySummary?: boolean
   summarization?: "effective" | "disabled"
 } = {}): Promise<Harness> {
+  const harness = harnessRuntime(summarization === "effective")
   const db = openDatabase(":memory:", { defaultTimezone: "America/Los_Angeles" })
   databases.add(db)
   const app = createApp({
     db,
     now: () => fixedNow,
-    connectors: connectorHarness(summarization === "effective"),
-    summarization: {
-      describe: () =>
-        summarization === "effective" ? { provider: "chatgpt" as const, model: "gpt-5.2-codex" } : null,
-    },
+    harnesses: harness.control,
+    summarization: { describe: harness.describe },
   })
   let failurePath: string | null = null
   let promptCount = 0
@@ -278,11 +270,11 @@ describe("beta interaction clarity", () => {
     expect(within(settingsPage).getByText("activity sent 0m ago")).toBeTruthy()
     expect(within(settingsPage).getByText("2 found · 1 changed · 1 sent · 0 ignored · 1 unchanged")).toBeTruthy()
     expect(within(settingsPage).queryByText(/online|offline/i)).toBeNull()
-    expect(await within(settingsPage).findByText("gpt-5.2-codex")).toBeTruthy()
+    expect(await within(settingsPage).findByText("using Oh My Pi")).toBeTruthy()
     expect(within(settingsPage).getByText(SESSION_SYSTEM)).toBeTruthy()
     expect(within(settingsPage).getByText(DAY_SYSTEM)).toBeTruthy()
     expect(
-      within(settingsPage).getByText("A one-session day summary may be copied without a second model call."),
+      within(settingsPage).getByText("A one-session day summary may be copied without a second harness call."),
     ).toBeTruthy()
 
     const engagementName = "engagement for very-long-project-name"
@@ -330,7 +322,7 @@ describe("beta interaction clarity", () => {
     const machineSection = machineHeading.closest("section")
     if (!(machineSection instanceof HTMLElement)) throw new Error("expected machines section")
     expect(await within(machineSection).findByText(/Machine status couldn’t load/)).toBeTruthy()
-    expect(await screen.findByText("gpt-5.2-codex")).toBeTruthy()
+    expect(await screen.findByText("using Oh My Pi")).toBeTruthy()
     await user.click(within(machineSection).getByRole("button", { name: "try again" }))
     expect(await within(machineSection).findByText("Source Mac")).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "← back" }))
@@ -342,7 +334,7 @@ describe("beta interaction clarity", () => {
     expect(await within(summarySection).findByText(/Summarization settings couldn’t load/)).toBeTruthy()
     expect(await screen.findByText("Source Mac")).toBeTruthy()
     await user.click(within(summarySection).getByRole("button", { name: "try again" }))
-    expect(await within(summarySection).findByText("gpt-5.2-codex")).toBeTruthy()
+    expect(await within(summarySection).findByText("using Oh My Pi")).toBeTruthy()
   })
 
   test("renders the truthful disabled summarization state", async () => {
@@ -353,7 +345,7 @@ describe("beta interaction clarity", () => {
     expect(await screen.findByText("Summaries are off. Existing and queued timeline work stays local.")).toBeTruthy()
   })
 
-  test("stores an API key once and requires consent before switching providers", async () => {
+  test("requires consent before switching harnesses without handling their credentials", async () => {
     await makeLoadedHarness()
     const user = userEvent.setup()
     render(<App />)
@@ -362,44 +354,24 @@ describe("beta interaction clarity", () => {
     const summarySection = summaryHeading.closest("section")
     if (!(summarySection instanceof HTMLElement)) throw new Error("expected summarization section")
 
-    expect(within(summarySection).getByText(/Unofficial connector/)).toBeTruthy()
-    await user.click(within(summarySection).getByText("use an existing API key instead"))
-    const keyInput = within(summarySection).getByLabelText("OpenRouter API key")
-    const keyForm = keyInput.closest("form")
-    if (!(keyForm instanceof HTMLFormElement)) throw new Error("expected OpenRouter key form")
-    await user.type(keyInput, "private-test-key")
-    await user.click(within(keyForm).getByRole("button", { name: "save key" }))
+    expect(within(summarySection).getByText(/never reads or copies its credentials/)).toBeTruthy()
+    const automaticRow = within(summarySection).getByRole("heading", { name: "Automatic" }).closest("article")
+    if (!(automaticRow instanceof HTMLElement)) throw new Error("expected automatic harness row")
+    expect(within(automaticRow).getByText("in use")).toBeTruthy()
 
-    const useOpenrouter = await within(summarySection).findByRole("button", { name: "use OpenRouter" })
-    expect(summarySection.textContent).not.toContain("private-test-key")
-    await user.click(useOpenrouter)
+    await user.click(within(summarySection).getByRole("button", { name: "use Codex" }))
     const consent = await within(summarySection).findByRole("alertdialog")
-    expect(consent.textContent).toContain("bounded digest text to OpenRouter")
-    const chatgptRow = within(summarySection).getByRole("heading", { name: /ChatGPT Plus/ }).closest("article")
-    if (!(chatgptRow instanceof HTMLElement)) throw new Error("expected ChatGPT provider row")
-    expect(within(chatgptRow).getByText("in use")).toBeTruthy()
-
+    expect(consent.textContent).toContain("invoke Codex")
+    expect(consent.textContent).toContain("provider that harness already uses")
     await user.click(within(consent).getByRole("button", { name: "cancel" }))
-    expect(within(chatgptRow).getByText("in use")).toBeTruthy()
-    await user.click(within(summarySection).getByRole("button", { name: "use OpenRouter" }))
+    expect(within(automaticRow).getByText("in use")).toBeTruthy()
+
+    await user.click(within(summarySection).getByRole("button", { name: "use Codex" }))
     await user.click(within(await within(summarySection).findByRole("alertdialog")).getByRole("button", { name: "confirm and use" }))
-
-    expect(await within(summarySection).findByText("OpenRouter will summarize new and queued digests.")).toBeTruthy()
-    const openrouterRow = within(summarySection).getByRole("heading", { name: "OpenRouter" }).closest("article")
-    if (!(openrouterRow instanceof HTMLElement)) throw new Error("expected OpenRouter provider row")
-    expect(within(openrouterRow).getByText("in use")).toBeTruthy()
-  })
-
-  test("returns an OpenRouter callback directly to provider settings without activating it", async () => {
-    window.location.search = "?settings=summarization&connected=openrouter"
-    await makeLoadedHarness({ summarization: "disabled" })
-    expect(window.location.search).toBe("?settings=summarization&connected=openrouter")
-    render(<App />)
-
-    expect(await screen.findByRole("heading", { name: "settings", level: 1 })).toBeTruthy()
-    expect(await screen.findByText("OpenRouter is connected. Choose “use OpenRouter” to allow Trails to send digests.")).toBeTruthy()
-    expect(window.location.search).toBe("")
-    expect(screen.getByText("Summaries are off. Existing and queued timeline work stays local.")).toBeTruthy()
+    expect(await within(summarySection).findByText("Codex will summarize new and queued digests.")).toBeTruthy()
+    const codexRow = within(summarySection).getByRole("heading", { name: "Codex" }).closest("article")
+    if (!(codexRow instanceof HTMLElement)) throw new Error("expected Codex harness row")
+    expect(within(codexRow).getByText("in use")).toBeTruthy()
   })
 
   test("shows a truthful hub failure without inventing a network diagnosis", async () => {

@@ -550,19 +550,28 @@ describe("summarization status", () => {
 
     const enabled = createApp({
       db: database,
-      summarization: { describe: () => ({ provider: "chatgpt", model: "gpt-5.2-codex" }) },
+      summarization: { describe: () => ({ selection: "auto", harness: "codex" }) },
     })
     expect(await json(await request(enabled, "GET", "/api/summarization"))).toEqual({
       enabled: true,
       metadata: {
-        protocolVersion: 1,
-        model: "gpt-5.2-codex",
+        protocolVersion: 2,
+        harness: "codex",
         prompts: { session: SESSION_SYSTEM, day: DAY_SYSTEM },
       },
     })
 
     const off = createApp({ db: database, summarization: { describe: () => null } })
     expect(await json(await request(off, "GET", "/api/summarization"))).toEqual({
+      enabled: false,
+      metadata: null,
+    })
+
+    const unavailable = createApp({
+      db: database,
+      summarization: { describe: () => ({ selection: "omp", harness: null }) },
+    })
+    expect(await json(await request(unavailable, "GET", "/api/summarization"))).toEqual({
       enabled: false,
       metadata: null,
     })

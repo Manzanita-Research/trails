@@ -269,7 +269,7 @@ export async function install(options: InstallOptions): Promise<void> {
     } else {
       console.log("Access: local only at http://127.0.0.1:7412/")
     }
-    if (!aiConfig) console.warn("Summaries are off; run `trails connect` on the hub to enable them")
+    if (!aiConfig) console.warn("Summaries are off; run `trails summaries use auto` on the hub to enable them")
   }
   if (options.dryRun) return
 
