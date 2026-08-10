@@ -1,7 +1,7 @@
 # Multi-device architecture
 
 **Status:** Implemented on `main`  
-**Decision:** One hub Mac owns Trails and also collects its own sessions. Tailscale is optional and adds private access for other Macs. Optional summaries go directly from the hub to one provider the owner explicitly connects.
+**Decision:** One hub Mac owns Trails and also collects its own sessions. Tailscale is optional and adds private access for other Macs. Optional summaries run through one coding harness already installed and authenticated on the hub.
 
 ## System
 
@@ -12,9 +12,10 @@ flowchart LR
   M --> D[(SQLite WAL<br/>canonical state)]
   M --> K[Daily serialized backups]
   T[Tailnet browser] -->|Tailscale Serve| M
-  M -->|bounded digest + hub-owned prompt| P[Selected provider<br/>OpenRouter or OpenAI]
-  P -->|summary + model| M
-  C[Owner-only auth.json] --- M
+  M -->|bounded digest + hub-owned prompt| H[Selected local harness]
+  H -->|existing login| P[Harness-configured provider]
+  P -->|summary| H
+  H --> M
 ```
 
 The hub process always binds only to `127.0.0.1:7412`. In the default one-Mac mode, the app stays local at `http://127.0.0.1:7412/`; the same binary runs the server, collector, and backup roles.
@@ -27,7 +28,7 @@ Multi-Mac setup adds Tailscale as the private network and HTTPS access boundary.
 
 - the Bun runtime
 - `bun:sqlite`
-- the compiled CLI, collector, API, summary supervisor, and provider login/runtime connectors
+- the compiled CLI, collector, API, summary supervisor, and harness adapters
 - the complete `dist/client` React build and fonts
 
 Target Macs run the matching file without Bun, Node, a source checkout, or sidecar assets. Source and release machines require Bun 1.3.14 or newer.
@@ -124,29 +125,23 @@ Ingest settles a changed digest for five minutes, then the supervisor checks due
 
 Session jobs capture a digest hash. Day jobs capture a generation and an ordered member hash. A completion or failure mutates state only if those guards still match; a newer ingest cannot be overwritten by a stale model response. Failures retain the durable row with exact exponential minute backoff capped at one hour. One-member day summaries copy without a model; zero-member rebuilds remove stale summaries.
 
-The provider boundary is hub-owned and off by default:
+The harness boundary is hub-owned and off by default:
 
-- `~/.config/trails/server.json` protocol V2 stores only the active `{ provider, model? }` selection, or `null`;
-- `~/.config/trails/auth.json` stores Trails-owned provider credentials keyed by provider;
-- both files are mode 0600 under an owner-only directory and are written atomically;
-- credential changes and ChatGPT refresh-token rotation use a mode-0600, `O_EXCL` lock with stale-lock recovery, so the server and CLI cannot overwrite each other;
-- credentials never enter SQLite, collector traffic, browser responses, feedback, or logs.
+- `~/.config/trails/server.json` protocol V3 stores only the active `{ harness }` selection, or `null`;
+- supported selections are `auto`, `omp`, `claude`, `codex`, `opencode`, and `pi`;
+- auto mode resolves the first installed executable in that order;
+- the configuration is mode 0600 under an owner-only directory and written atomically;
+- Trails never reads, copies, refreshes, or stores harness credentials.
 
-The first alpha connectors are:
+Settings or `trails summaries use HARNESS` activates a selection and allows queued jobs to resume. `trails summaries off` pauses the queue without modifying harness state. A selected executable must exist before activation.
 
-| Provider | Login | Request path | Notes |
-|---|---|---|---|
-| OpenRouter | recommended PKCE exchange, or API key | OpenRouter chat completions | the PKCE exchange returns a user-revocable API key |
-| ChatGPT Plus/Pro | OpenAI Codex device-code OAuth | ChatGPT Codex Responses SSE | labeled unofficial; Trails owns its login and refresh tokens and never reads Codex, omp, or pi credentials |
-| OpenAI API | API key | OpenAI chat completions | key entry is password-masked in Settings or piped over CLI stdin |
+Each call runs non-interactively in a fresh mode-0700 temporary directory. Digest input is passed through stdin or a mode-0600 temporary file rather than a command argument. OMP and Pi run without tools, extensions, skills, or session persistence; Claude Code runs in safe mode without tools or session persistence; Codex runs ephemerally with a read-only sandbox; OpenCode runs pure with its plan agent in the empty temporary directory. Temporary input and output are removed after the process exits.
 
-Login and activation are separate operations. A successful login only updates `auth.json`. `trails use PROVIDER` or the Settings confirmation writes `server.json` and allows queued jobs to resume. A failed login leaves the previous credential and active provider untouched. `trails disconnect` clears only the active selection; `trails logout PROVIDER` removes that credential and also disconnects it if active.
+The supervisor re-reads selection every 30-second poll, so changes need no restart. An in-flight request retains the harness it started with, while digest/generation guards prevent stale completion from overwriting newer input. Auto mode does not resend a failed request through another harness.
 
-The supervisor rebuilds the effective connector from disk on every 30-second poll, so configuration changes need no process restart. An in-flight request retains the connector it started with, while its digest/generation guard still prevents a stale completion from overwriting newer input. Trails never falls back to a second provider automatically.
+Trails owns the session and day system prompts. Harness calls carry only the prompt and bounded digest. Session input is capped at 9,000 characters, day input at 12,000 characters, output at 4,000 characters, process output at 1 MiB, and calls at 120 seconds. Browser status exposes only harness availability, selection, attempt/success timestamps, and one closed error class: `auth_required`, `quota`, `harness_failed`, `timeout`, or `protocol`.
 
-Trails owns the session and day system prompts. Provider requests carry only the prompt, the bounded digest, and provider-specific model controls. Session input is capped at 9,000 characters, day input at 12,000 characters, output at 4,000 characters, and requests at 120 seconds. Browser status exposes only provider, model, login/active state, attempt/success timestamps, and one closed error class: `auth_required`, `quota`, `provider_rejected`, `timeout`, `protocol`, or `network`.
-
-A V1 `server.json` relay configuration is read as summaries disconnected. Trails logs one retirement notice; the first V2 write preserves the old file as `server.json.v1.bak`. There is no relay compatibility connector, token forwarding, or automatic migration to a provider.
+Provider-era V1/V2 server configuration is invalid under V3 and is not migrated or backed up. There is no relay or native-provider compatibility path.
 
 ## launchd operations
 
@@ -158,9 +153,9 @@ The compiled installer manages only these labels:
 | `com.manzanita.trails.collector` | RunAtLoad, every 60s | `trails collect --once` |
 | `com.manzanita.trails.backup` | 03:00 daily | `trails backup --output-dir … --retain 14` |
 
-Program arguments and working directories are absolute. The user LaunchAgent receives the owner's `HOME` and a minimal explicit `PATH`; provider calls use Trails' embedded connectors, not an interactive shell or another agent CLI. Logs are mode 0600 under `~/.local/state/trails`. `install --dry-run` performs preflight and prints the complete plan without writing files or changing processes. Server installation requires Tailscale only when `--tailscale` or `--service` exposure is requested; collector installation requires collector configuration.
+Program arguments and working directories are absolute. The server resolves supported harnesses from owner-local executable directories and standard Homebrew/system paths rather than relying on an interactive shell. Logs are mode 0600 under `~/.local/state/trails`. `install --dry-run` performs preflight and prints the complete plan without writing files or changing processes. Server installation requires Tailscale only when `--tailscale` or `--service` exposure is requested; collector installation requires collector configuration.
 
-The installer bootouts, bootstraps, and kickstarts only its exact labels. It never edits or reads Claude, Codex, omp, pi, or OpenCode provider configuration. Provider setup is hub-only and changes only Trails' owner-only files.
+The installer bootouts, bootstraps, and kickstarts only its exact labels. Trails invokes the chosen harness but never edits or reads its provider configuration or credential files.
 
 ## Backup and restore
 
@@ -173,9 +168,9 @@ Restore is intentionally manual: stop the server label, remove stale WAL/SHM sid
 - **Hub unavailable:** collectors retry on their next scheduled run; browser views retain the latest loaded snapshot but mutations cannot complete.
 - **Collector file changes during parsing:** the file is not checkpointed and is retried next run.
 - **Collector crash:** the next process steals only a lock whose recorded PID is dead.
-- **No active provider:** collection and UI continue; summary jobs remain pending without being sent anywhere.
-- **Authentication, quota, provider, timeout, protocol, or network failure:** the closed error class is recorded; the durable job backs off and remains queued.
-- **Provider changes during a request:** the request finishes against its original provider; digest/generation guards discard a stale result, and the next poll uses the newly confirmed selection.
+- **No active harness:** collection and UI continue; summary jobs remain pending without being sent anywhere.
+- **Missing login, quota, harness, timeout, or protocol failure:** the closed error class is recorded; the durable job backs off and remains queued.
+- **Harness changes during a request:** the request finishes against its original harness; digest/generation guards discard a stale result, and the next poll uses the newly confirmed selection.
 - **Tailscale conflict:** installation stops before writing when `/` already proxies somewhere else.
 - **Database loss:** transcript-derived sessions can be re-ingested, but user-authored preferences and pocket state require a backup.
 
@@ -190,4 +185,4 @@ Restore is intentionally manual: stop the server label, remove stale WAL/SHM sid
 
 ## Decision statement
 
-> Trails is a local-first, single-owner service hosted on one Mac, which is also its first collector. Tailscale optionally connects more Macs. Optional summaries go directly from the hub to one explicitly selected provider. Cloudflare is limited to public release transport and opt-in feedback, never inference or canonical storage.
+> Trails is a local-first, single-owner service hosted on one Mac, which is also its first collector. Tailscale optionally connects more Macs. Optional summaries run through one explicitly selected coding harness on the hub. Cloudflare is limited to public release transport and opt-in feedback, never inference or canonical storage.

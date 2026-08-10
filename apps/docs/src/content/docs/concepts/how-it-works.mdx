@@ -60,14 +60,14 @@ Canonical SQLite state includes:
 
 Browsers are readers and editors over that canonical state. A second browser converges on the same organization.
 
-## Optional provider boundary
+## Optional harness boundary
 
 Cloudflare does not host the trails application, its canonical database, or its inference.
 
-When the owner activates summary generation, the hub sends bounded digest input and trails-owned prompts directly to one selected provider. The first alpha supports OpenRouter, ChatGPT Plus/Pro through an unofficial Codex subscription connector, and the OpenAI API. Provider credentials stay in owner-only files on the hub; collectors and browsers never receive them.
+When the owner activates summary generation, the hub invokes one installed coding harness with bounded digest input and trails-owned prompts. The harness uses its existing provider, model, login, and billing. Trails never reads, copies, refreshes, or stores the harness's credentials.
 
 When a tester explicitly sends beta feedback, the browser writes that report to a separate public-write Cloudflare Worker and expiring D1 store with no public read route. Safe context is opt-in and bounded; feedback expires after 90 days and is deleted by the next daily cleanup.
 
-SQLite on the hub Mac remains canonical for trails session and organization state. Trails never falls back to a second summary provider automatically.
+SQLite on the hub Mac remains canonical for trails session and organization state. Trails never retries a failed summary job through a different harness automatically.
 
 [Read the exact privacy boundary →](/concepts/privacy)
