@@ -235,7 +235,7 @@ function invocationOf(
       return {
         args: [
           ...CODEX_ISOLATION_ARGS,
-          "exec", "--ephemeral", "--sandbox", "read-only",
+          "exec", "--ephemeral", "--ignore-user-config", "--sandbox", "read-only",
           "--skip-git-repo-check", "--ignore-rules", "--cd", directory, "--output-last-message", outputPath, "-",
         ],
         stdin: `${systemPrompt}\n\n${input}`,

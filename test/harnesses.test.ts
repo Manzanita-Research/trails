@@ -91,6 +91,7 @@ describe("harness invocation", () => {
       }
       if (id === "codex") {
         expect(request!.args).toContain("--ephemeral")
+        expect(request!.args).toContain("--ignore-user-config")
         expect(request!.args).toContain("shell_tool")
         expect(request!.args).toContain("computer_use")
         expect(request!.args).toContain("mcp_servers={}")
