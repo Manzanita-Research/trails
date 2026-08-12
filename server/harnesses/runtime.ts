@@ -42,6 +42,8 @@ const CODEX_ISOLATION_ARGS = [
   "--config", 'web_search="disabled"',
   "--config", "shell_environment_policy.inherit=none",
 ] as const
+const HARNESS_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter)
+
 const OPENCODE_ISOLATION_CONFIG = JSON.stringify({ permission: { "*": "deny" } })
 
 
@@ -49,6 +51,7 @@ export interface HarnessProcessRequest {
   readonly executable: string
   readonly args: readonly string[]
   readonly cwd: string
+  readonly signal?: AbortSignal
   readonly env?: Readonly<Record<string, string>>
   readonly stdin: string | null
   readonly outputPath: string | null
@@ -91,8 +94,16 @@ async function readLimited(stream: ReadableStream<Uint8Array>, maximumBytes: num
 
 export const runHarnessProcess: HarnessProcessRunner = async (request) => {
   const process = Bun.spawn([request.executable, ...request.args], {
-    cwd: request.cwd,
-    env: { ...globalThis.process.env, HOME: homedir(), ...request.env },
+    env: {
+      HOME: homedir(),
+      PATH: HARNESS_PATH,
+      LANG: "en_US.UTF-8",
+      LC_ALL: "en_US.UTF-8",
+      TMPDIR: request.cwd,
+      TMP: request.cwd,
+      TEMP: request.cwd,
+      ...request.env,
+    },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -100,16 +111,41 @@ export const runHarnessProcess: HarnessProcessRunner = async (request) => {
   if (request.stdin !== null) process.stdin.write(request.stdin)
   process.stdin.end()
   let timedOut = false
+  let termination: Promise<void> | null = null
+  const terminate = (): Promise<void> => {
+    if (termination !== null) return termination
+    termination = (async () => {
+      process.kill("SIGTERM")
+      const exitedGracefully = await Promise.race([
+        process.exited.then(() => true),
+        Bun.sleep(1_000).then(() => false),
+      ])
+      if (!exitedGracefully) process.kill("SIGKILL")
+      await process.exited
+    })()
+    return termination
+  }
+  const abort = () => { void terminate() }
+  request.signal?.addEventListener("abort", abort, { once: true })
   const timer = setTimeout(() => {
     timedOut = true
-    process.kill()
+    void terminate()
   }, request.timeoutMs)
   try {
-    const [exitCode, stdout, stderr] = await Promise.all([
+    const [exitCode, stdoutResult, stderrResult] = await Promise.all([
       process.exited,
-      readLimited(process.stdout, MAX_PROCESS_OUTPUT_BYTES),
-      readLimited(process.stderr, MAX_PROCESS_OUTPUT_BYTES),
+      readLimited(process.stdout, MAX_PROCESS_OUTPUT_BYTES).then(
+        (value) => ({ value, error: null }),
+        (error: unknown) => ({ value: "", error }),
+      ),
+      readLimited(process.stderr, MAX_PROCESS_OUTPUT_BYTES).then(
+        (value) => ({ value, error: null }),
+        (error: unknown) => ({ value: "", error }),
+      ),
     ])
+    if (stdoutResult.error !== null || stderrResult.error !== null) {
+      throw stdoutResult.error ?? stderrResult.error
+    }
     let output: string | null = null
     if (request.outputPath !== null) {
       try {
@@ -120,9 +156,13 @@ export const runHarnessProcess: HarnessProcessRunner = async (request) => {
         if (exitCode === 0) throw error
       }
     }
-    return { exitCode, stdout, stderr, output, timedOut }
+    return { exitCode, stdout: stdoutResult.value, stderr: stderrResult.value, output, timedOut }
+  } catch (error) {
+    await terminate()
+    throw error
   } finally {
     clearTimeout(timer)
+    request.signal?.removeEventListener("abort", abort)
   }
 }
 
@@ -285,7 +325,7 @@ export function createHarnessSummarizer(options: {
     harness: options.id,
     summarize(kind, input): Effect.Effect<InferenceResult, SummarizeError> {
       return Effect.tryPromise({
-        try: async () => {
+        try: async (signal) => {
           const directory = await mkdtemp(join(tmpdir(), "trails-summary-"))
           const promptPath = join(directory, "input.txt")
           const outputPath = join(directory, "output.txt")
@@ -307,6 +347,7 @@ export function createHarnessSummarizer(options: {
               stdin: invocation.stdin,
               outputPath: invocation.outputPath,
               timeoutMs,
+              signal,
             })
             if (result.exitCode !== 0 || result.timedOut) throw new SummarizeError(errorClassOf(result))
             return { text: invocation.parse(result), model: `harness:${options.id}` }

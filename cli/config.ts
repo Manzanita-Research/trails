@@ -112,6 +112,14 @@ const ServerConfigV3Schema = Schema.Struct({
   protocolVersion: Schema.Literal(3),
   summarizer: Schema.NullOr(SummarizerSchema),
 })
+const ServerConfigV2Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(2),
+  summarizer: Schema.NullOr(Schema.Struct({
+    provider: Schema.Literal("openrouter", "chatgpt", "openai-api"),
+    model: Schema.optional(Schema.String),
+  })),
+})
+
 
 export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
   let raw: string
@@ -133,6 +141,27 @@ export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
     throw new Error("server configuration is invalid")
   }
 }
+export function isLegacyProviderHubConfig(path = SERVER_CONFIG_PATH): boolean {
+  let raw: string
+  try {
+    const info = statSync(path)
+    const currentUid = process.getuid?.()
+    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
+      throw new Error("server configuration permissions are unsafe")
+    }
+    raw = readFileSync(path, "utf8")
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false
+    throw new Error("server configuration is invalid")
+  }
+  try {
+    decodeExact(ServerConfigV2Schema, JSON.parse(raw))
+    return true
+  } catch {
+    return false
+  }
+}
+
 
 export function writeHubConfig(summarizer: SummarizerConfig | null, path = SERVER_CONFIG_PATH): void {
   if (summarizer !== null) decodeExact(SummarizerSchema, summarizer)

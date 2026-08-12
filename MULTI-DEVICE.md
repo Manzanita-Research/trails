@@ -141,7 +141,7 @@ The supervisor re-reads selection every 30-second poll, so changes need no resta
 
 Trails owns the session and day system prompts. Harness calls carry only the prompt and bounded digest. Session input is capped at 9,000 characters, day input at 12,000 characters, output at 4,000 characters, process output at 1 MiB, and calls at 120 seconds. Browser status exposes only harness availability, selection, attempt/success timestamps, and one closed error class: `auth_required`, `quota`, `harness_failed`, `timeout`, or `protocol`.
 
-Provider-era V1/V2 server configuration is invalid under V3 and is not migrated or backed up. There is no relay or native-provider compatibility path.
+Provider-era V1/V2 server configuration is invalid under V3 and is not retained as a compatibility path. On a recognized alpha.7 upgrade, the installer stops the old server, validates and removes the exact owner-only Trails provider credential file, and writes summaries off in V3. The operator must still revoke old provider grants or keys at the provider. Unexpected file type, ownership, permissions, or schema aborts with manual-remediation guidance.
 
 ## launchd operations
 

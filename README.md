@@ -98,7 +98,7 @@ trails summaries use codex
 trails summaries off
 ```
 
-The harness owns its login, provider, model, and billing. Trails never reads, copies, refreshes, or stores harness credentials. Authentication failures, quota limits, malformed responses, timeouts, and harness failures never stop collection. Jobs remain durable and retry with backoff; a failed request is never resent through a different harness automatically.
+The harness owns its login, provider, model, and billing. Trails never reads, copies, refreshes, or stores harness credentials. Authentication failures, quota limits, malformed responses, timeouts, and harness failures never stop collection. Jobs remain durable and retry with backoff; a failed request is never resent through a different harness automatically. Upgrading from alpha.7 removes the retired Trails-owned credential file after validating it; revoke the former OpenRouter, OpenAI, or ChatGPT grant in that provider account because deleting the local copy cannot revoke a remote credential.
 
 ## Update
 

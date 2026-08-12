@@ -11,6 +11,7 @@ import {
   createHarnessResolver,
   createHarnessSummarizer,
   resolveHarness,
+  runHarnessProcess,
   type HarnessProcessRequest,
   type HarnessProcessResult,
 } from "../server/harnesses/runtime"
@@ -102,6 +103,42 @@ describe("harness invocation", () => {
         expect(request!.args).toContain("--pure")
         expect(request!.env?.OPENCODE_CONFIG_CONTENT).toBe('{"permission":{"*":"deny"}}')
       }
+    }
+  })
+
+  test("constructs a minimal child environment at the real spawn boundary", async () => {
+    const root = mkdtempSync(join(tmpdir(), "trails-harness-env-"))
+    roots.push(root)
+    const executable = join(root, "print-env")
+    writeFileSync(executable, `#!/bin/sh
+printf '%s\\n' "\${PRIVATE_PARENT_SECRET-unset}"
+printf '%s\\n' "$HOME"
+printf '%s\\n' "$PATH"
+printf '%s\\n' "$TMPDIR"
+printf '%s\\n' "\${OPENCODE_CONFIG_CONTENT-unset}"
+`, { mode: 0o700 })
+    chmodSync(executable, 0o700)
+    const previous = process.env.PRIVATE_PARENT_SECRET
+    process.env.PRIVATE_PARENT_SECRET = "must-not-leak"
+    try {
+      const result = await runHarnessProcess({
+        executable,
+        args: [],
+        cwd: root,
+        env: { OPENCODE_CONFIG_CONTENT: "owned-config" },
+        stdin: null,
+        outputPath: null,
+        timeoutMs: 5_000,
+      })
+      const [secret, home, path, temporary, owned] = result.stdout.trim().split("\n")
+      expect(secret).toBe("unset")
+      expect(home).toBeTruthy()
+      expect(path).toBe("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+      expect(temporary).toBe(root)
+      expect(owned).toBe("owned-config")
+    } finally {
+      if (previous === undefined) delete process.env.PRIVATE_PARENT_SECRET
+      else process.env.PRIVATE_PARENT_SECRET = previous
     }
   })
 

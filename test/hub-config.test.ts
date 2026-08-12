@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { loadHubConfig, writeHubConfig } from "../cli/config"
+import { isLegacyProviderHubConfig, loadHubConfig, writeHubConfig } from "../cli/config"
 
 let dir: string
 let path: string
@@ -40,6 +40,21 @@ describe("hub config V3", () => {
     writeHubConfig({ harness: "omp" }, path)
     expect(loadHubConfig(path)).toEqual({ summarizer: { harness: "omp" } })
     expect(existsSync(`${path}.v1.bak`)).toBe(false)
+    expect(isLegacyProviderHubConfig(path)).toBe(false)
+  })
+
+  test("recognizes only exact owner-only provider-era V2 configs for retirement", () => {
+    writeFileSync(path, JSON.stringify({
+      protocolVersion: 2,
+      summarizer: { provider: "chatgpt", model: "gpt-5.2-codex" },
+    }), { mode: 0o600 })
+    expect(isLegacyProviderHubConfig(path)).toBe(true)
+
+    writeFileSync(path, JSON.stringify({
+      protocolVersion: 2,
+      summarizer: { provider: "future-provider" },
+    }), { mode: 0o600 })
+    expect(isLegacyProviderHubConfig(path)).toBe(false)
   })
 
   test("rejects invalid content, unsafe permissions, and unknown harnesses", () => {
