@@ -7,8 +7,9 @@ import {
   IngestCapturesRequestV1Schema,
   IngestRequestV2Schema,
   MachinesV1Schema,
-  SummarizationMetadataV1Schema,
-  SummarizationStatusV1Schema,
+  HarnessStatusV1Schema,
+  SummarizationMetadataV2Schema,
+  SummarizationStatusV2Schema,
   PocketCreateSchema,
   ProjectPatchSchema,
   SettingsPatchSchema,
@@ -314,28 +315,46 @@ describe("collector status contracts", () => {
   })
 })
 
-describe("summarization metadata contracts", () => {
+describe("harness summarization contracts", () => {
   const metadata = {
-    protocolVersion: 1,
-    model: "@cf/model",
+    protocolVersion: 2,
+    harness: "omp",
     prompts: { session: "Session prompt", day: "Day prompt" },
   } as const
 
   test("requires exact effective metadata and possible enabled states", () => {
-    expect(decodeExact(SummarizationMetadataV1Schema, metadata)).toEqual(metadata)
+    expect(decodeExact(SummarizationMetadataV2Schema, metadata)).toEqual(metadata)
     expect(
-      decodeExact(SummarizationStatusV1Schema, { enabled: false, metadata: null }),
+      decodeExact(SummarizationStatusV2Schema, { enabled: false, metadata: null }),
     ).toEqual({ enabled: false, metadata: null })
     expect(
-      decodeExact(SummarizationStatusV1Schema, { enabled: true, metadata }),
+      decodeExact(SummarizationStatusV2Schema, { enabled: true, metadata }),
     ).toEqual({ enabled: true, metadata })
-    rejects(SummarizationStatusV1Schema, { enabled: true, metadata: null })
-    rejects(SummarizationStatusV1Schema, { enabled: false, metadata })
-    rejects(SummarizationMetadataV1Schema, {
-      ...metadata,
-      prompts: { ...metadata.prompts, session: " Session prompt" },
+    rejects(SummarizationStatusV2Schema, { enabled: true, metadata: null })
+    rejects(SummarizationStatusV2Schema, { enabled: false, metadata })
+    rejects(SummarizationMetadataV2Schema, { ...metadata, harness: "future" })
+    rejects(SummarizationMetadataV2Schema, { ...metadata, endpoint: "private" })
+  })
+
+  test("exposes availability and closed runtime state without executable paths", () => {
+    const value = {
+      protocolVersion: 1,
+      harnesses: [{ id: "codex", label: "Codex", available: true }],
+      active: {
+        selection: "auto",
+        harness: "codex",
+        state: "failing",
+        lastAttemptAt: 100,
+        lastSuccessAt: null,
+        lastErrorClass: "auth_required",
+      },
+    } as const
+    expect(decodeExact(HarnessStatusV1Schema, value)).toEqual(value)
+    rejects(HarnessStatusV1Schema, { ...value, executable: "/private/path" })
+    rejects(HarnessStatusV1Schema, {
+      ...value,
+      active: { ...value.active, lastErrorClass: "private failure" },
     })
-    rejects(SummarizationMetadataV1Schema, { ...metadata, endpoint: "private" })
   })
 })
 

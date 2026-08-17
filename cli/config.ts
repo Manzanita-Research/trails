@@ -1,6 +1,5 @@
 import { Schema } from "effect"
 import {
-  copyFileSync,
   chmodSync,
   mkdirSync,
   openSync,
@@ -14,7 +13,7 @@ import {
 import { homedir, hostname } from "node:os"
 import { dirname, join } from "node:path"
 import { decodeExact } from "../shared/protocol"
-import { PROVIDER_IDS, type ProviderId } from "../shared/providers"
+import { HARNESS_IDS, type HarnessSelection } from "../shared/harnesses"
 
 export interface CollectorConfig {
   readonly protocolVersion: 1
@@ -28,11 +27,6 @@ const CollectorConfigSchema = Schema.Struct({
   server: Schema.String,
   deviceId: Schema.String,
   deviceName: Schema.String,
-})
-const LegacyServerConfigSchema = Schema.Struct({
-  protocolVersion: Schema.Literal(1),
-  aiUrl: Schema.String,
-  aiToken: Schema.String,
 })
 
 export const COLLECTOR_CONFIG_PATH = join(homedir(), ".config/trails/collector.json")
@@ -104,24 +98,28 @@ export function configureCollector(options: {
 }
 
 export interface SummarizerConfig {
-  readonly provider: ProviderId
-  readonly model?: string
+  readonly harness: HarnessSelection
 }
 
 export interface HubAiConfig {
   readonly summarizer: SummarizerConfig | null
-  /** True when the file still holds the retired V1 relay configuration. */
-  readonly legacyRelay: boolean
 }
 
 const SummarizerSchema = Schema.Struct({
-  provider: Schema.Literal(...PROVIDER_IDS),
-  model: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200))),
+  harness: Schema.Literal("auto", ...HARNESS_IDS),
+})
+const ServerConfigV3Schema = Schema.Struct({
+  protocolVersion: Schema.Literal(3),
+  summarizer: Schema.NullOr(SummarizerSchema),
 })
 const ServerConfigV2Schema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
-  summarizer: Schema.NullOr(SummarizerSchema),
+  summarizer: Schema.NullOr(Schema.Struct({
+    provider: Schema.Literal("openrouter", "chatgpt", "openai-api"),
+    model: Schema.optional(Schema.String),
+  })),
 })
+
 
 export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
   let raw: string
@@ -137,34 +135,35 @@ export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
     throw new Error("server configuration is invalid")
   }
   try {
-    const parsed: unknown = JSON.parse(raw)
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "protocolVersion" in parsed &&
-      parsed.protocolVersion === 1
-    ) {
-      decodeExact(LegacyServerConfigSchema, parsed)
-      return { summarizer: null, legacyRelay: true }
-    }
-    const config = decodeExact(ServerConfigV2Schema, parsed)
-    return { summarizer: config.summarizer, legacyRelay: false }
+    const config = decodeExact(ServerConfigV3Schema, JSON.parse(raw))
+    return { summarizer: config.summarizer }
   } catch {
     throw new Error("server configuration is invalid")
   }
 }
+export function isLegacyProviderHubConfig(path = SERVER_CONFIG_PATH): boolean {
+  let raw: string
+  try {
+    const info = statSync(path)
+    const currentUid = process.getuid?.()
+    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
+      throw new Error("server configuration permissions are unsafe")
+    }
+    raw = readFileSync(path, "utf8")
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false
+    throw new Error("server configuration is invalid")
+  }
+  try {
+    decodeExact(ServerConfigV2Schema, JSON.parse(raw))
+    return true
+  } catch {
+    return false
+  }
+}
+
 
 export function writeHubConfig(summarizer: SummarizerConfig | null, path = SERVER_CONFIG_PATH): void {
   if (summarizer !== null) decodeExact(SummarizerSchema, summarizer)
-  let legacyRelay = false
-  try {
-    legacyRelay = loadHubConfig(path)?.legacyRelay ?? false
-  } catch {
-    // A corrupt or unsafe existing file is replaced outright with owner-only V2.
-  }
-  if (legacyRelay) {
-    copyFileSync(path, `${path}.v1.bak`)
-    chmodSync(`${path}.v1.bak`, 0o600)
-  }
-  atomicWriteJson(path, { protocolVersion: 2, summarizer })
+  atomicWriteJson(path, { protocolVersion: 3, summarizer })
 }

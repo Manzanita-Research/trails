@@ -1,115 +1,48 @@
 import { useCallback, useEffect, useState } from "react"
-import type {
-  ChatgptLoginStartV1,
-  ConnectorStatusV1,
-  SummarizationStatusV1,
-} from "../../shared/protocol"
-import { PROVIDERS, type ProviderId } from "../../shared/providers"
+import {
+  HARNESS_AUTO_ORDER,
+  HARNESSES,
+  type HarnessSelection,
+} from "../../shared/harnesses"
+import type { HarnessStatusV1, SummarizationStatusV2 } from "../../shared/protocol"
 import {
   activateSummarizer,
   disconnectSummarizer,
-  fetchConnectors,
+  fetchHarnesses,
   fetchSummarization,
-  logoutProvider,
-  pollChatgptLogin,
-  setProviderApiKey,
-  startChatgptLogin,
-  startOpenrouterLogin,
 } from "../lib/api"
 
 const actionFailure = "That change didn’t work. Try again."
 const errorCopy = {
-  auth_required: "Sign in again before summaries can resume.",
-  quota: "The provider reports that its quota or balance is exhausted.",
-  provider_rejected: "The provider rejected the selected model or request.",
-  timeout: "The provider timed out. Trails will retry the queued job.",
-  protocol: "The provider returned an unreadable response. Trails will retry the queued job.",
-  network: "The provider could not be reached. Trails will retry the queued job.",
+  auth_required: "The harness needs you to sign in on this hub.",
+  quota: "The harness reports that its provider quota or balance is exhausted.",
+  harness_failed: "The harness could not complete the summary. Trails will retry the queued job.",
+  timeout: "The harness timed out. Trails will retry the queued job.",
+  protocol: "The harness returned an unreadable response. Trails will retry the queued job.",
 } as const
 
-type BusyAction = "chatgpt" | "openrouter" | "api-key" | "activate" | "disconnect" | "logout" | null
-
-function ApiKeyForm({
-  provider,
-  busy,
-  onSaved,
-}: {
-  readonly provider: "openrouter" | "openai-api"
-  readonly busy: boolean
-  readonly onSaved: () => Promise<void>
-}) {
-  const [key, setKey] = useState("")
-  const [failed, setFailed] = useState(false)
-  const label = provider === "openrouter" ? "OpenRouter" : "OpenAI"
-
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setFailed(false)
-    try {
-      await setProviderApiKey(provider, key)
-      setKey("")
-      await onSaved()
-    } catch {
-      setFailed(true)
-    }
-  }
-
-  return (
-    <form className="provider-key-form" onSubmit={(event) => void submit(event)}>
-      <label htmlFor={`provider-key-${provider}`}>{label} API key</label>
-      <div className="provider-key-entry">
-        <input
-          id={`provider-key-${provider}`}
-          type="password"
-          value={key}
-          autoComplete="off"
-          spellCheck={false}
-          disabled={busy}
-          onChange={(event) => setKey(event.target.value)}
-        />
-        <button type="submit" className="quiet-btn" disabled={busy || key.trim().length === 0}>save key</button>
-      </div>
-      <p className="provider-help">Stored once in the hub’s owner-only configuration. Trails never shows it again.</p>
-      {failed && <p role="alert" className="provider-error">The key wasn’t saved. Check it and try again.</p>}
-    </form>
-  )
-}
+type BusyAction = "activate" | "disconnect" | null
 
 export function SummarizationSettings() {
-  const [connectors, setConnectors] = useState<ConnectorStatusV1 | null>(null)
-  const [summarization, setSummarization] = useState<SummarizationStatusV1 | null>(null)
+  const [harnesses, setHarnesses] = useState<HarnessStatusV1 | null>(null)
+  const [summarization, setSummarization] = useState<SummarizationStatusV2 | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
   const [busy, setBusy] = useState<BusyAction>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [chatgptFlow, setChatgptFlow] = useState<ChatgptLoginStartV1 | null>(null)
-  const [openrouterUrl, setOpenrouterUrl] = useState<string | null>(null)
-  const [confirmProvider, setConfirmProvider] = useState<ProviderId | null>(null)
-  const [confirmLogout, setConfirmLogout] = useState<ProviderId | null>(null)
-  const [models, setModels] = useState<Record<ProviderId, string>>({
-    openrouter: PROVIDERS.openrouter.defaultModel,
-    chatgpt: PROVIDERS.chatgpt.defaultModel,
-    "openai-api": PROVIDERS["openai-api"].defaultModel,
-  })
+  const [confirmSelection, setConfirmSelection] = useState<HarnessSelection | null>(null)
 
   const reload = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
     setLoadFailed(false)
     try {
-      const [nextConnectors, nextSummarization] = await Promise.all([
-        fetchConnectors(),
+      const [nextHarnesses, nextSummarization] = await Promise.all([
+        fetchHarnesses(),
         fetchSummarization(),
       ])
-      setConnectors(nextConnectors)
+      setHarnesses(nextHarnesses)
       setSummarization(nextSummarization)
-      setModels((current) => {
-        const next = { ...current }
-        for (const provider of nextConnectors.providers) {
-          if (nextConnectors.active?.provider === provider.id) next[provider.id] = nextConnectors.active.model
-        }
-        return next
-      })
     } catch {
       setLoadFailed(true)
     } finally {
@@ -119,79 +52,17 @@ export function SummarizationSettings() {
 
   useEffect(() => {
     void reload(true)
-    const params = new URLSearchParams(window.location.search)
-    if (params.get("settings") !== "summarization") return
-    if (params.get("connected") === "openrouter") {
-      setNotice("OpenRouter is connected. Choose “use OpenRouter” to allow Trails to send digests.")
-    } else if (params.has("connectError")) {
-      setActionError("OpenRouter sign-in didn’t finish. Start it again.")
-    }
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`)
+    const timer = window.setInterval(() => void reload(), 30_000)
+    return () => window.clearInterval(timer)
   }, [reload])
 
-  useEffect(() => {
-    if (!chatgptFlow) return
-    let cancelled = false
-    let timer = 0
-    const poll = async () => {
-      try {
-        const result = await pollChatgptLogin()
-        if (cancelled) return
-        if (result.state === "pending") {
-          timer = window.setTimeout(() => void poll(), chatgptFlow.intervalSeconds * 1_000)
-          return
-        }
-        setChatgptFlow(null)
-        if (result.state === "logged_in") {
-          setNotice("ChatGPT is connected. Choose “use ChatGPT” to allow Trails to send digests.")
-          await reload()
-        } else {
-          setActionError(errorCopy[result.errorClass])
-        }
-      } catch {
-        if (!cancelled) setActionError(actionFailure)
-      }
-    }
-    timer = window.setTimeout(() => void poll(), chatgptFlow.intervalSeconds * 1_000)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [chatgptFlow, reload])
-
-  const startChatgpt = async () => {
-    setBusy("chatgpt")
-    setActionError(null)
-    setNotice(null)
-    try {
-      setChatgptFlow(await startChatgptLogin())
-    } catch {
-      setActionError("ChatGPT sign-in couldn’t start. Try again.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const startOpenrouter = async () => {
-    setBusy("openrouter")
-    setActionError(null)
-    setNotice(null)
-    try {
-      setOpenrouterUrl((await startOpenrouterLogin()).authorizeUrl)
-    } catch {
-      setActionError("OpenRouter sign-in couldn’t start. Try again.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const activate = async (provider: ProviderId) => {
+  const activate = async (selection: HarnessSelection) => {
     setBusy("activate")
     setActionError(null)
     try {
-      await activateSummarizer(provider, models[provider].trim())
-      setConfirmProvider(null)
-      setNotice(`${PROVIDERS[provider].label} will summarize new and queued digests.`)
+      await activateSummarizer(selection)
+      setConfirmSelection(null)
+      setNotice(`${selection === "auto" ? "Automatic harness selection" : HARNESSES[selection].label} will summarize new and queued digests.`)
       await reload()
     } catch {
       setActionError(actionFailure)
@@ -205,37 +76,17 @@ export function SummarizationSettings() {
     setActionError(null)
     try {
       await disconnectSummarizer()
-      setNotice("Summaries are off. Provider logins were kept on this hub.")
+      setNotice("Summaries are off. Harness logins and queued work were left untouched.")
       await reload()
     } catch {
       setActionError(actionFailure)
     } finally {
       setBusy(null)
     }
-  }
-
-  const logout = async (provider: ProviderId) => {
-    setBusy("logout")
-    setActionError(null)
-    try {
-      await logoutProvider(provider)
-      setConfirmLogout(null)
-      setNotice(`${PROVIDERS[provider].label} was logged out on this hub.`)
-      await reload()
-    } catch {
-      setActionError(actionFailure)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const keySaved = async () => {
-    setNotice("API key saved. Choose a provider below to allow Trails to send digests.")
-    await reload()
   }
 
   if (loading) return <p className="settings-muted">Reading summarization configuration…</p>
-  if (loadFailed || !connectors) {
+  if (loadFailed || !harnesses) {
     return (
       <p className="settings-load-error">
         Summarization settings couldn’t load. <button className="text-action" onClick={() => void reload(true)}>try again</button>
@@ -243,127 +94,81 @@ export function SummarizationSettings() {
     )
   }
 
-  const active = connectors.active
+  const active = harnesses.active
+  const available = harnesses.harnesses.filter((harness) => harness.available)
+  const activeLabel = active?.harness ? HARNESSES[active.harness].label : null
   return (
     <div className="summarization-content">
       <div className="summarization-intro">
-        <p>Summaries are made on this hub. Only bounded session and day digests go to the provider you explicitly choose.</p>
+        <p>
+          Trails asks an installed coding harness on this hub to summarize bounded session and day digests. The harness uses its own login; Trails never reads or copies its credentials.
+        </p>
         {active ? (
           <div className="active-summarizer">
             <p>
-              <strong>{PROVIDERS[active.provider].label}</strong>
-              <span><code>{active.model}</code></span>
-              <span>{active.state === "ok" ? "connected" : active.state === "never_ran" ? "ready; no summary attempted yet" : errorCopy[active.lastErrorClass ?? "protocol"]}</span>
+              <strong>{active.selection === "auto" ? "automatic" : HARNESSES[active.selection].label}</strong>
+              <span>{activeLabel ? `using ${activeLabel}` : "no matching harness found"}</span>
+              <span>{active.state === "ok"
+                ? "working"
+                : active.state === "never_ran"
+                  ? "ready; no summary attempted yet"
+                  : active.state === "unavailable"
+                    ? "unavailable on this hub"
+                    : errorCopy[active.lastErrorClass ?? "protocol"]}</span>
             </p>
             <button className="quiet-btn" disabled={busy !== null} onClick={() => void disconnect()}>turn summaries off</button>
           </div>
         ) : (
           <p className="summaries-off">Summaries are off. Existing and queued timeline work stays local.</p>
         )}
-        {connectors.legacyRelay && <p className="provider-notice">The previous relay setup was retired. Choose a provider below.</p>}
         {notice && <p role="status" className="provider-notice">{notice}</p>}
         {actionError && <p role="alert" className="provider-error">{actionError}</p>}
       </div>
 
       <div className="provider-list">
-        {connectors.providers.map((provider) => {
-          const isActive = active?.provider === provider.id
-          const model = models[provider.id]
-          const selectionChanged = !isActive || model.trim() !== active.model
+        <article className={`provider-row${active?.selection === "auto" ? " provider-active" : ""}`}>
+          <header>
+            <div>
+              <h3>Automatic</h3>
+              <p>{available.length > 0 ? `first available: ${HARNESS_AUTO_ORDER.map((id) => HARNESSES[id].label).join(" → ")}` : "no supported harness found"}</p>
+            </div>
+            {active?.selection === "auto" && <span className="provider-badge">in use</span>}
+          </header>
+          {active?.selection !== "auto" && (
+            <button className="quiet-btn" disabled={busy !== null || available.length === 0} onClick={() => setConfirmSelection("auto")}>use automatic</button>
+          )}
+        </article>
+
+        {harnesses.harnesses.map((harness) => {
+          const isActive = active?.selection === harness.id
           return (
-            <article key={provider.id} className={`provider-row${isActive ? " provider-active" : ""}`}>
+            <article key={harness.id} className={`provider-row${isActive ? " provider-active" : ""}`}>
               <header>
                 <div>
-                  <h3>{provider.label}</h3>
-                  <p>{provider.company} · {provider.loggedIn ? "connected on this hub" : "not connected"}</p>
+                  <h3>{harness.label}</h3>
+                  <p>{harness.available ? "installed on this hub" : "not found on this hub"}</p>
                 </div>
                 {isActive && <span className="provider-badge">in use</span>}
               </header>
-
-              {provider.unofficial && (
-                <p className="provider-disclosure">
-                  Unofficial connector. Trails uses OpenAI’s public Codex device login and ChatGPT Codex endpoint; OpenAI does not document this as a third-party integration.
-                </p>
-              )}
-
-              {!provider.loggedIn && provider.id === "chatgpt" && (
-                <div className="provider-connect-flow">
-                  <button className="quiet-btn" disabled={busy !== null} onClick={() => void startChatgpt()}>connect ChatGPT</button>
-                  {chatgptFlow && (
-                    <div className="device-code" role="status">
-                      <p>Open ChatGPT, then enter this one-time code:</p>
-                      <strong>{chatgptFlow.userCode}</strong>
-                      <a href={chatgptFlow.verificationUrl} target="_blank" rel="noreferrer">open ChatGPT sign-in ↗</a>
-                      <p>Waiting for approval…</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {!provider.loggedIn && provider.id === "openrouter" && (
-                <div className="provider-connect-flow">
-                  <button className="quiet-btn" disabled={busy !== null} onClick={() => void startOpenrouter()}>connect OpenRouter</button>
-                  {openrouterUrl && <a href={openrouterUrl}>continue to OpenRouter ↗</a>}
-                  <details>
-                    <summary>use an existing API key instead</summary>
-                    <ApiKeyForm provider="openrouter" busy={busy !== null} onSaved={keySaved} />
-                  </details>
-                </div>
-              )}
-
-              {!provider.loggedIn && provider.id === "openai-api" && (
-                <ApiKeyForm provider="openai-api" busy={busy !== null} onSaved={keySaved} />
-              )}
-
-              {provider.loggedIn && (
-                <div className="provider-controls">
-                  <label htmlFor={`provider-model-${provider.id}`}>model</label>
-                  <input
-                    id={`provider-model-${provider.id}`}
-                    value={model}
-                    maxLength={200}
-                    spellCheck={false}
-                    disabled={busy !== null}
-                    onChange={(event) => setModels((current) => ({ ...current, [provider.id]: event.target.value }))}
-                  />
-                  {selectionChanged && (
-                    <button
-                      className="quiet-btn"
-                      disabled={busy !== null || model.trim().length === 0}
-                      onClick={() => setConfirmProvider(provider.id)}
-                    >
-                      use {provider.label}
-                    </button>
-                  )}
-                  <button className="text-action provider-logout" disabled={busy !== null} onClick={() => setConfirmLogout(provider.id)}>log out</button>
-                </div>
-              )}
-
-              {confirmProvider === provider.id && (
-                <div className="provider-confirm" role="alertdialog" aria-labelledby={`activate-${provider.id}`}>
-                  <p id={`activate-${provider.id}`}>
-                    Trails will send bounded digest text to {provider.company} using <code>{model.trim()}</code>. New and queued summaries will use this selection.
-                  </p>
-                  <div>
-                    <button className="quiet-btn" disabled={busy !== null} onClick={() => void activate(provider.id)}>confirm and use</button>
-                    <button className="text-action" disabled={busy !== null} onClick={() => setConfirmProvider(null)}>cancel</button>
-                  </div>
-                </div>
-              )}
-
-              {confirmLogout === provider.id && (
-                <div className="provider-confirm" role="alertdialog" aria-labelledby={`logout-${provider.id}`}>
-                  <p id={`logout-${provider.id}`}>Remove this provider login from Trails on the hub? Timeline data and queued jobs stay intact.</p>
-                  <div>
-                    <button className="quiet-btn" disabled={busy !== null} onClick={() => void logout(provider.id)}>confirm log out</button>
-                    <button className="text-action" disabled={busy !== null} onClick={() => setConfirmLogout(null)}>cancel</button>
-                  </div>
-                </div>
+              {!isActive && (
+                <button className="quiet-btn" disabled={busy !== null || !harness.available} onClick={() => setConfirmSelection(harness.id)}>use {harness.label}</button>
               )}
             </article>
           )
         })}
       </div>
+
+      {confirmSelection !== null && (
+        <div className="provider-confirm" role="alertdialog" aria-labelledby="activate-harness">
+          <p id="activate-harness">
+            Trails will invoke {confirmSelection === "auto" ? "the first available harness" : HARNESSES[confirmSelection].label} on this hub. New and queued bounded digests will be sent through the provider that harness already uses.
+          </p>
+          <div>
+            <button className="quiet-btn" disabled={busy !== null} onClick={() => void activate(confirmSelection)}>confirm and use</button>
+            <button className="text-action" disabled={busy !== null} onClick={() => setConfirmSelection(null)}>cancel</button>
+          </div>
+        </div>
+      )}
 
       {summarization?.enabled === true && (
         <details className="summarization-details">
@@ -379,7 +184,7 @@ export function SummarizationSettings() {
             </div>
             <div>
               <dt className="sr-only">one-session behavior</dt>
-              <dd>A one-session day summary may be copied without a second model call.</dd>
+              <dd>A one-session day summary may be copied without a second harness call.</dd>
             </div>
           </dl>
         </details>

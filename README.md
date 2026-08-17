@@ -74,32 +74,31 @@ curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
 - If a multi-Mac hub is temporarily unavailable, spokes try again on their next scheduled run.
 - Trails stores its database at `~/.manzanita/trails/trails.sqlite` on the hub.
 - Trails creates a committed SQLite backup every day at 03:00 and keeps the latest 14 under `~/.manzanita/trails/backups/`.
-- Summaries are optional and stay off until you connect and explicitly choose a provider on the hub.
-- Open **settings** in the web app to choose the day boundary, attention halo, and IANA time zone used for displayed times and day grouping. The same screen shows collector freshness and owns provider connection, model selection, and summary status.
+- Summaries are optional and stay off until you explicitly choose an installed harness on the hub.
+- Open **settings** in the web app to choose the day boundary, attention halo, IANA time zone, and summary harness. The same screen shows collector and harness freshness.
 
 ## Optional summaries
 
-The hub can summarize bounded session and day digests through one provider you choose. Collectors never need AI credentials. The first alpha supports:
+The hub can summarize bounded session and day digests through a coding harness already installed and authenticated on that Mac. Collectors never need AI credentials. Trails supports:
 
-- **OpenRouter** through its recommended PKCE login, with an existing API key as a fallback;
-- **ChatGPT Plus/Pro** through OpenAI's Codex device-code login—this connector is explicitly labeled **unofficial** because OpenAI does not document the Codex subscription endpoint as a third-party integration;
-- **OpenAI API** through an API key.
+- **Oh My Pi (`omp`)**
+- **Claude Code (`claude`)**
+- **Codex (`codex`)**
+- **OpenCode (`opencode`)**
+- **Pi (`pi`)**
 
-Open **settings → summarization** on the hub, connect a provider, choose its model, then confirm **use**. Login and activation are separate: connecting never sends a digest, and changing providers does not resume queued jobs until you confirm the new destination.
+Open **settings → summarization** on the hub and choose one harness. **Automatic** uses the first installed harness in the order above. Trails invokes the CLI non-interactively in a fresh temporary directory, disables tool access and session persistence with each harness's native controls, and removes temporary input/output files after every call.
 
-The same flow is available from the hub terminal:
+The same controls are available from the hub terminal:
 
 ```bash
-trails connect
-trails connect status
-trails use openrouter --model openrouter/auto
-trails disconnect
-trails logout openrouter
+trails summaries status
+trails summaries use auto
+trails summaries use codex
+trails summaries off
 ```
 
-Use the web UI's password field for API keys when possible. Automation can pipe a key to `trails connect openrouter --api-key-stdin` or `trails connect openai-api --api-key-stdin`; keys are never accepted as command arguments. `trails disconnect` turns summaries off but keeps provider logins. `trails logout PROVIDER` removes that provider's Trails-owned credential.
-
-Authentication failures, provider limits, malformed responses, timeouts, and network failures never stop collection. Jobs remain durable and retry with backoff. Trails never falls back to another provider automatically.
+The harness owns its login, provider, model, and billing. Trails never reads, copies, refreshes, or stores harness credentials. Authentication failures, quota limits, malformed responses, timeouts, and harness failures never stop collection. Jobs remain durable and retry with backoff; a failed request is never resent through a different harness automatically. Upgrading from alpha.7 removes the retired Trails-owned credential file after validating it; revoke the former OpenRouter, OpenAI, or ChatGPT grant in that provider account because deleting the local copy cannot revoke a remote credential.
 
 ## Update
 
@@ -141,9 +140,9 @@ Transcript parsing happens on the Mac where each session was created. Trails sen
 
 Trails does **not** send transcript paths or transcript bodies to the hub. The web app receives neither source session identifiers nor digests. The hub service listens only on loopback; optional Tailscale Serve access exposes it privately to the tailnet rather than the LAN or public internet.
 
-When you explicitly activate a summary provider, the hub sends that company only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
+When you explicitly activate a summary harness, the provider already configured in that harness receives only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, collector traffic, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
 
-Provider credentials live only on the hub in `~/.config/trails/auth.json`; provider selection lives separately in `~/.config/trails/server.json`. Trails creates the directory and files owner-only, writes them atomically, and serializes credential refreshes with a lock. Credentials never enter SQLite, collector traffic, browser responses, feedback, or logs. Browser-visible status is limited to provider, model, login/active state, timestamps, and a closed actionable error class.
+Harness selection lives in owner-only `~/.config/trails/server.json`. Harness credentials remain owned by the harness and never enter Trails configuration, SQLite, collector traffic, browser responses, feedback, or logs. Browser-visible status is limited to harness availability, selection, attempt/success timestamps, and a closed actionable error class.
 
 Sending beta feedback is explicit. The browser sends only the feedback kind, message, optional follow-up, and creation time unless you opt in to safe context. Safe context is limited to the trails version, current view, canonical revision, selected work date on Days or Project, counts by Claude Code/Codex/omp/pi source, viewport dimensions, and whether synchronization is in an error state. It never includes URLs or tailnet details, device or project names, paths, branches, prompts, summaries, identifiers, digests, transcript content, or user-agent.
 
@@ -151,7 +150,7 @@ Feedback goes directly from the browser to a separate public-write Cloudflare Wo
 
 ## Alpha release
 
-Current version: `0.1.0-alpha.7`
+Current version: `0.1.0-alpha.9`
 
 The stable installer URL is:
 
@@ -161,8 +160,8 @@ It follows the recommended `alpha` channel. The installer downloads the matching
 
 ```text
 https://releases.manzanita.dev/trails/channels/alpha.json
-https://releases.manzanita.dev/trails/releases/0.1.0-alpha.7/release.json
-https://releases.manzanita.dev/trails/releases/0.1.0-alpha.7/SHA256SUMS
+https://releases.manzanita.dev/trails/releases/0.1.0-alpha.9/release.json
+https://releases.manzanita.dev/trails/releases/0.1.0-alpha.9/SHA256SUMS
 ```
 
 ## Release operations

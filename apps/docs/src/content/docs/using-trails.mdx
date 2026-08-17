@@ -41,6 +41,6 @@ Projects are discovered from session working directories and repository context.
 
 ## Optional summaries
 
-Summaries are off until the hub owner connects and explicitly activates one provider in **settings → summarization**. The first alpha supports OpenRouter, ChatGPT Plus/Pro through an unofficial Codex subscription connector, and the OpenAI API. Connecting a login never sends a digest by itself; the separate **use** confirmation names the company and model before new and queued jobs begin.
+Summaries are off until the hub owner explicitly activates one installed coding harness in **settings → summarization**. Trails supports Oh My Pi, Claude Code, Codex, OpenCode, and Pi. **Automatic** chooses the first installed harness in that order. The harness keeps ownership of its provider, model, login, and billing.
 
-Summary generation waits for changed sessions to settle before processing them. When no provider is active, authentication needs attention, or a provider is temporarily unavailable, trails continues to work and uses the first prompt as fallback copy. Timeline activity and normalized session observations do not depend on generated prose. Trails never sends a queued job to a different provider automatically.
+Summary generation waits for changed sessions to settle before processing them. When no harness is active, its login needs attention, or it is temporarily unavailable, trails continues to work and uses the first prompt as fallback copy. Timeline activity and normalized session observations do not depend on generated prose. Trails never retries a failed job through a different harness automatically.

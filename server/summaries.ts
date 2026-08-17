@@ -1,8 +1,8 @@
 import { Effect, Schedule } from "effect"
 import { createHash } from "node:crypto"
 import { localParts, workdayOf } from "../shared/domain"
-import type { SummaryRuntimeStatus } from "./connectors/manager"
-import type { InferenceResult, Summarizer } from "./connectors/types"
+import type { SummaryRuntimeStatus } from "./harnesses/manager"
+import type { InferenceResult, Summarizer } from "./harnesses/types"
 import type { TrailsDb } from "./db"
 
 export interface SummaryPollOptions {

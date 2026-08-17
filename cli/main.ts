@@ -6,14 +6,14 @@ import { parseSourceRoot } from "../collector/sources"
 import { configureCollector, loadCollectorConfig, normalizeCollectorServer } from "./config"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "../server/app"
-import { createSummarizerManager } from "../server/connectors/manager"
-import { createConnectorControl } from "../server/connectors/control"
+import { createSummarizerManager } from "../server/harnesses/manager"
+import { createHarnessControl } from "../server/harnesses/control"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { summarySupervisor } from "../server/summaries"
 import { createBackup } from "../server/backup"
 import { currentTailnetUrl, install, normalizeTailscaleService } from "./install"
 import { runSetup, type SetupActions } from "./setup"
-import { runConnectorCommand } from "./connect"
+import { runSummariesCommand } from "./summaries"
 
 const VERSION = packageJson.version
 
@@ -44,10 +44,7 @@ Commands:
   setup join URL [--name NAME]
   serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
-  connect [openrouter|chatgpt|openai-api|status] [--api-key-stdin]
-  use PROVIDER [--model MODEL] [--yes]
-  logout PROVIDER
-  disconnect
+  summaries [status | use auto|omp|claude|codex|opencode|pi | off]
   configure collector --server URL [--name NAME] [--reset-device-id]
   backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
   install server|collector [--dry-run] [--tailscale] [--service svc:NAME]
@@ -81,9 +78,9 @@ async function serve(args: string[]): Promise<void> {
       )
     : undefined
   const summarization = createSummarizerManager()
-  const connectors = createConnectorControl({ manager: summarization })
+  const harnesses = createHarnessControl({ manager: summarization })
   const db = openDatabase(dbPath)
-  const app = createApp({ db, staticRoot, staticAssets, summarization, connectors })
+  const app = createApp({ db, staticRoot, staticAssets, summarization, harnesses })
   const server = Bun.serve({ hostname: host, port, fetch: app })
   const summaryFiber = Effect.runFork(
     summarySupervisor({ db, summarizer: () => summarization.current(), status: summarization.status }),
@@ -238,9 +235,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   if (command === "configure") return configure(args.slice(1))
   if (command === "backup") return backup(args.slice(1))
   if (command === "install") return installCommand(args.slice(1))
-  if (command === "connect" || command === "use" || command === "logout" || command === "disconnect") {
-    return runConnectorCommand(command, args.slice(1))
-  }
+  if (command === "summaries") return runSummariesCommand(args.slice(1))
   if (command === "version") {
     console.log(VERSION)
     return

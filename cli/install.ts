@@ -2,18 +2,19 @@ import {
   access,
   chmod,
   copyFile,
+  lstat,
   mkdir,
   open,
   readFile,
   realpath,
   rename,
   stat,
+  unlink,
 } from "node:fs/promises"
 import { constants } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { COLLECTOR_CONFIG_PATH, loadCollectorConfig, loadHubConfig } from "./config"
-
+import { COLLECTOR_CONFIG_PATH, isLegacyProviderHubConfig, loadCollectorConfig, loadHubConfig, writeHubConfig } from "./config"
 export type InstallKind = "server" | "collector"
 
 export interface InstallOptions {
@@ -36,6 +37,9 @@ const destination = join(homedir(), ".local/bin/trails")
 const stateDirectory = join(homedir(), ".local/state/trails")
 const launchAgentDirectory = join(homedir(), "Library/LaunchAgents")
 const tailscaleProxy = "http://127.0.0.1:7412"
+const legacyAuthPath = join(homedir(), ".config/trails/auth.json")
+const legacyProviders = new Set(["openrouter", "chatgpt", "openai-api"])
+
 
 function xml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -218,6 +222,87 @@ export function currentTailnetUrl(service?: string): string {
   return `https://${normalizedService.slice(4)}${nodeName.slice(separator)}/`
 }
 
+function isLegacyCredential(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || !("type" in value)) return false
+  if (value.type === "api") {
+    return Object.keys(value).every((key) => key === "type" || key === "key") &&
+      "key" in value && typeof value.key === "string" && value.key.length > 0
+  }
+  if (value.type !== "oauth") return false
+  return Object.keys(value).every((key) => ["type", "access", "refresh", "expires", "accountId"].includes(key)) &&
+    "access" in value && typeof value.access === "string" && value.access.length > 0 &&
+    "refresh" in value && typeof value.refresh === "string" && value.refresh.length > 0 &&
+    "expires" in value && typeof value.expires === "number" &&
+    (!("accountId" in value) || typeof value.accountId === "string")
+}
+
+async function validatedLegacyFile(path: string, validate: (value: unknown) => boolean): Promise<{
+  readonly dev: number
+  readonly ino: number
+} | null> {
+  let info
+  try {
+    info = await lstat(path)
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
+    throw error
+  }
+  const currentUid = process.getuid?.()
+  if (!info.isFile() || info.isSymbolicLink() || (currentUid !== undefined && info.uid !== currentUid) ||
+    (info.mode & 0o777) !== 0o600 || info.size > 64 * 1024) {
+    throw new Error(`legacy Trails file requires manual removal: ${path}`)
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(await readFile(path, "utf8"))
+  } catch {
+    throw new Error(`legacy Trails file requires manual removal: ${path}`)
+  }
+  if (!validate(value)) throw new Error(`legacy Trails file requires manual removal: ${path}`)
+  return { dev: info.dev, ino: info.ino }
+}
+
+function isLegacyAuth(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Object.keys(value).some((key) => !["protocolVersion", "providers"].includes(key))) {
+    return false
+  }
+  if (!("protocolVersion" in value) || value.protocolVersion !== 1 || !("providers" in value) ||
+    typeof value.providers !== "object" || value.providers === null) return false
+  return Object.entries(value.providers).every(([provider, credential]) =>
+    legacyProviders.has(provider) && isLegacyCredential(credential)
+  )
+}
+
+async function removeValidatedLegacyFile(path: string, expected: { readonly dev: number; readonly ino: number }): Promise<void> {
+  const current = await lstat(path)
+  if (!current.isFile() || current.isSymbolicLink() || current.dev !== expected.dev || current.ino !== expected.ino) {
+    throw new Error(`legacy Trails file changed during upgrade: ${path}`)
+  }
+  await unlink(path)
+}
+
+export async function retireLegacyProviderConfig(options: {
+  readonly authPath?: string
+  readonly configPath?: string
+} = {}): Promise<boolean> {
+  const authPath = options.authPath ?? legacyAuthPath
+  const configPath = options.configPath
+  const auth = await validatedLegacyFile(authPath, isLegacyAuth)
+  const configIsLegacy = isLegacyProviderHubConfig(configPath)
+  if (auth === null && !configIsLegacy) return false
+  if (auth !== null) {
+    await removeValidatedLegacyFile(authPath, auth)
+    const directory = await open(dirname(authPath), "r")
+    try {
+      await directory.sync()
+    } finally {
+      await directory.close()
+    }
+  }
+  if (configIsLegacy) writeHubConfig(null, configPath)
+  return true
+}
+
 export async function install(options: InstallOptions): Promise<void> {
   const standalone = "isStandaloneExecutable" in Bun
     ? Bun.isStandaloneExecutable === true
@@ -229,12 +314,10 @@ export async function install(options: InstallOptions): Promise<void> {
     throw new Error("collector configuration is required before installation")
   }
   let aiConfig: unknown = null
+  let legacyProviderConfig = false
   if (options.kind === "server") {
-    try {
-      aiConfig = loadHubConfig()?.summarizer ?? null
-    } catch {
-      aiConfig = null
-    }
+    legacyProviderConfig = isLegacyProviderHubConfig()
+    if (!legacyProviderConfig) aiConfig = loadHubConfig()?.summarizer ?? null
   }
   const service = options.kind === "server" ? normalizeTailscaleService(options.service) : undefined
   const exposeThroughTailscale = options.kind === "server" && (options.tailscale === true || service !== undefined)
@@ -269,9 +352,18 @@ export async function install(options: InstallOptions): Promise<void> {
     } else {
       console.log("Access: local only at http://127.0.0.1:7412/")
     }
-    if (!aiConfig) console.warn("Summaries are off; run `trails connect` on the hub to enable them")
+    if (!aiConfig) console.warn("Summaries are off; run `trails summaries use auto` on the hub to enable them")
   }
   if (options.dryRun) return
+  if (options.kind === "server" && legacyProviderConfig) {
+    const domain = `gui/${process.getuid?.() ?? 0}`
+    const bootout = run(launchctl, ["bootout", `${domain}/com.manzanita.trails.server`])
+    if (bootout.exitCode !== 0 && !isMissingLaunchdService(bootout.stderr)) {
+      throw new Error("failed to stop com.manzanita.trails.server")
+    }
+    await retireLegacyProviderConfig()
+    console.warn("Retired Trails-owned provider credentials; revoke the old provider keys or sessions in their provider accounts")
+  }
 
   await atomicCopy(process.execPath, destination)
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 })

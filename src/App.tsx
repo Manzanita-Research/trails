@@ -73,13 +73,10 @@ function LoadedApp({
 }
 ) {
   const { boundary, halo, assignments, customEngagements, names, pocket } = bootstrap.preferences
-  const returningFromProvider = new URLSearchParams(window.location.search).get("settings") === "summarization"
-  const [view, setView] = useState<AppView>(returningFromProvider ? "settings" : "days")
+  const [view, setView] = useState<AppView>("days")
   const [lastListView, setLastListView] = useState<ListView>("days")
   const [projectBackView, setProjectBackView] = useState<ListView | "settings">("days")
-  const [settingsEntry, setSettingsEntry] = useState<"top" | "projects" | "summarization">(
-    returningFromProvider ? "summarization" : "top",
-  )
+  const [settingsEntry, setSettingsEntry] = useState<"top" | "projects" | "summarization">("top")
   const [projectKey, setProjectKey] = useState<string | null>(null)
   const [dayIdx, setDayIdx] = useState(0)
 

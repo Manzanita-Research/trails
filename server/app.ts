@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect"
 import { basename, join, resolve, sep } from "node:path"
 import { localActivityOf, orgOf, type LocalActivityTuple, type UtcActivityTuple } from "../shared/domain"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
-import { PROVIDER_IDS, isProviderId, type ProviderId } from "../shared/providers"
+import type { HarnessId, HarnessSelection } from "../shared/harnesses"
 import {
   BootstrapV1Schema,
   CollectorStatusV1Schema,
@@ -10,8 +10,8 @@ import {
   IngestCapturesRequestV1Schema,
   IngestRequestV2Schema,
   MachinesV1Schema,
-  SummarizationMetadataV1Schema,
-  SummarizationStatusV1Schema,
+  HarnessSelectionSchema,
+  SummarizationStatusV2Schema,
   PocketCreateSchema,
   ProjectPatchSchema,
   SettingsPatchSchema,
@@ -28,19 +28,15 @@ import { ingestCaptures } from "./captures"
 import { ingestSessions } from "./ingest"
 import { rebuildDaySummaryJobs } from "./day-jobs"
 
-import type { ConnectorControl } from "./connectors/control"
-import { SummarizeError } from "./connectors/types"
+import type { HarnessControl } from "./harnesses/control"
+
 export interface SummarizationDescriber {
-  describe(): { readonly provider: ProviderId; readonly model: string } | null
+  describe(): { readonly selection: HarnessSelection; readonly harness: HarnessId | null } | null
 }
 
-const ApiKeyBodySchema = Schema.Struct({
-  key: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4_096)),
-})
 const SummarizerSelectionBodySchema = Schema.NullOr(
   Schema.Struct({
-    provider: Schema.Literal(...PROVIDER_IDS),
-    model: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(200))),
+    harness: HarnessSelectionSchema,
   }),
 )
 
@@ -49,7 +45,7 @@ export interface AppOptions {
   readonly staticRoot?: string
   readonly staticAssets?: ReadonlyArray<Blob & { readonly name: string }>
   readonly summarization?: SummarizationDescriber
-  readonly connectors?: ConnectorControl
+  readonly harnesses?: HarnessControl
   readonly now?: () => number
 }
 
@@ -520,21 +516,17 @@ function recordCollectorStatus(
 
 function summarizationOf(options: AppOptions): unknown {
   const active = options.summarization?.describe() ?? null
-  if (!active) {
-    return decodeExact(SummarizationStatusV1Schema, { enabled: false, metadata: null })
+  if (active?.harness === null || !active) {
+    return decodeExact(SummarizationStatusV2Schema, { enabled: false, metadata: null })
   }
-  return decodeExact(SummarizationStatusV1Schema, {
+  return decodeExact(SummarizationStatusV2Schema, {
     enabled: true,
     metadata: {
-      protocolVersion: 1,
-      model: active.model,
+      protocolVersion: 2,
+      harness: active.harness,
       prompts: { session: SESSION_SYSTEM, day: DAY_SYSTEM },
     },
   })
-}
-
-function connectorErrorClass(error: unknown): string {
-  return error instanceof SummarizeError ? error.errorClass : "protocol"
 }
 
 async function apiResponse(options: AppOptions, request: Request, url: URL, now: number): Promise<Response> {
@@ -633,80 +625,21 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
     return jsonResponse(machinesOf(db, now))
   }
-  if (url.pathname === "/api/connectors") {
+  if (url.pathname === "/api/harnesses") {
     if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
-    return jsonResponse(options.connectors.status())
-  }
-  if (url.pathname === "/api/connect/chatgpt/start") {
-    if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
-    try {
-      return jsonResponse(await options.connectors.startChatgpt())
-    } catch (error) {
-      return jsonResponse({ state: "failed", errorClass: connectorErrorClass(error) }, 502)
-    }
-  }
-  if (url.pathname === "/api/connect/chatgpt/poll") {
-    if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
-    return jsonResponse(await options.connectors.pollChatgpt())
-  }
-  if (url.pathname === "/api/connect/openrouter/start") {
-    if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
-    const callback = new URL("/api/connect/openrouter/callback", url.origin)
-    return jsonResponse(options.connectors.startOpenrouter(callback.toString()))
-  }
-  if (url.pathname === "/api/connect/openrouter/callback") {
-    if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
-    const state = url.searchParams.get("state") ?? ""
-    const code = url.searchParams.get("code") ?? ""
-    const destination = new URL("/", url.origin)
-    destination.searchParams.set("settings", "summarization")
-    try {
-      await options.connectors.finishOpenrouter(state, code)
-      destination.searchParams.set("connected", "openrouter")
-    } catch (error) {
-      destination.searchParams.set("connectError", connectorErrorClass(error))
-    }
-    return Response.redirect(destination, 303)
-  }
-  const apiKeyMatch = /^\/api\/connect\/([^/]+)\/apikey$/.exec(url.pathname)
-  if (apiKeyMatch) {
-    if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
-    const provider = apiKeyMatch[1]
-    if (provider !== "openrouter" && provider !== "openai-api") {
-      throw new ApiError("invalid_request", "provider does not accept API keys", 400)
-    }
-    const body = decodeBody(ApiKeyBodySchema, await readJson(request, 8 * 1024))
-    try {
-      options.connectors.setApiKey(provider, body.key)
-    } catch {
-      throw new ApiError("invalid_request", "API key is invalid", 400)
-    }
-    return jsonResponse({ ok: true })
+    if (!options.harnesses) throw new ApiError("not_found", "harness API is unavailable", 404)
+    return jsonResponse(options.harnesses.status())
   }
   if (url.pathname === "/api/summarizer") {
     if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
+    if (!options.harnesses) throw new ApiError("not_found", "harness API is unavailable", 404)
     const body = decodeBody(SummarizerSelectionBodySchema, await readJson(request, 64 * 1024))
     try {
-      if (body === null) options.connectors.disconnect()
-      else options.connectors.activate(body)
+      if (body === null) options.harnesses.disconnect()
+      else options.harnesses.activate(body)
     } catch {
-      throw new ApiError("invalid_request", "provider is not logged in or model is invalid", 400)
+      throw new ApiError("invalid_request", "selected harness is unavailable", 400)
     }
-    return jsonResponse({ ok: true })
-  }
-  if (url.pathname.startsWith("/api/logout/")) {
-    if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    if (!options.connectors) throw new ApiError("not_found", "connector API is unavailable", 404)
-    const provider = decodeURIComponent(url.pathname.slice("/api/logout/".length))
-    if (!isProviderId(provider)) throw new ApiError("invalid_request", "unknown provider", 400)
-    options.connectors.logout(provider)
     return jsonResponse({ ok: true })
   }
   if (url.pathname === "/api/summarization") {

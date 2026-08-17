@@ -45,19 +45,19 @@ The web app receives the information needed to render the timeline and save your
 
 In local mode the browser connects to `http://127.0.0.1:7412/`. In multi-Mac mode an authorized tailnet device can use the private HTTPS URL configured by Tailscale Serve.
 
-## May reach one selected provider
+## May reach one harness-configured provider
 
-Generated summaries are optional and off by default. After the hub owner connects and separately activates a provider, the hub sends that company only trails-owned system prompts and the bounded summary input for a queued job. Complete transcripts, source files, database contents, collector traffic, and unrelated environment values are never provider input.
+Generated summaries are optional and off by default. After the hub owner activates a harness, Trails sends that local process only trails-owned system prompts and the bounded summary input for a queued job. The provider already configured in the harness may receive that input. Complete transcripts, source files, database contents, collector traffic, and unrelated environment values are never summary input.
 
 Current limits are:
 
 - up to 9,000 characters for a session summary input;
 - up to 12,000 characters for a day summary input;
-- up to 4,000 characters of stored provider output.
+- up to 4,000 characters of stored harness output.
 
-Provider credentials remain on the hub in an owner-only `~/.config/trails/auth.json` file. The active provider and model live separately in `~/.config/trails/server.json`. Credentials never enter SQLite, collector traffic, browser responses, feedback, or logs. The browser receives only provider, model, login/active state, timestamps, and a closed error class.
+Harness selection remains on the hub in owner-only `~/.config/trails/server.json`. Harness credentials stay under the harness's ownership; Trails never reads, copies, refreshes, stores, or exposes them. The browser receives only harness availability, selection, timestamps, and a closed error class.
 
-If no provider is active or a provider is unavailable, timeline collection continues and durable summary jobs remain queued. Trails uses the session's first prompt as fallback copy and never sends the job to another provider automatically.
+If no harness is active or it is unavailable, timeline collection continues and durable summary jobs remain queued. Trails uses the session's first prompt as fallback copy and never sends a failed job to another harness automatically.
 
 ## Optional beta feedback
 
@@ -76,8 +76,8 @@ Safe context never includes a URL or tailnet detail, device or project name, loc
 
 The browser writes the report directly to a separate Cloudflare feedback Worker and D1 database. That endpoint accepts writes from allowed trails origins and has no public read route. Feedback records expire after 90 days and are deleted by the next daily cleanup.
 
-This expiring feedback store is separate from provider inference. It never becomes canonical trails state; the hub Mac’s SQLite database remains canonical for sessions and organization.
+This expiring feedback store is separate from summary generation. It never becomes canonical trails state; the hub Mac’s SQLite database remains canonical for sessions and organization.
 
 <Aside type="note" title="You hold the system">
-  Your hub Mac owns the database, backups, provider selection, and provider credentials. A tailnet and summary provider are optional. Trails does not need a hosted application or inference server.
+  Your hub Mac owns the database, backups, and harness selection. Each harness owns its own provider configuration and credentials. A tailnet and generated summaries are optional. Trails does not need a hosted application or inference server.
 </Aside>
