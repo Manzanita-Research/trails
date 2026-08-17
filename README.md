@@ -77,6 +77,30 @@ curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
 - Summaries are optional and stay off until you explicitly choose an installed harness on the hub.
 - Open **settings** in the web app to choose the day boundary, attention halo, IANA time zone, and summary harness. The same screen shows collector and harness freshness.
 
+## View Trails in Herdr
+
+The Herdr plugin is a terminal-native, read-only view of Trails: recent days, a seven-workday overview, project threads, collector freshness, and summary-harness health. It automatically reads the server URL from the existing `~/.config/trails/collector.json` without modifying that file. If the tailnet is unavailable, the pane stays usable, reports the offline state, and retries every 30 seconds; reconnecting Tailscale is enough to bring it back.
+
+During local development, build and link the plugin from this checkout:
+
+```bash
+bun run herdr:build
+herdr plugin link ./plugins/herdr-trails
+herdr plugin action invoke open --plugin manzanita.trails
+```
+
+Use `1`–`4` to switch between days, week, threads, and status; `j`/`k` to move; `enter` to open details; `r` to refresh; and `q` to close the pane.
+
+The fixture server is loopback-only and never reads or writes the installed Trails database or client configuration:
+
+```bash
+bun run herdr:fixture
+TRAILS_HERDR_SERVER_URL=http://127.0.0.1:7414/ \
+  plugins/herdr-trails/dist/trails-herdr --snapshot
+```
+
+`TRAILS_HERDR_SERVER_URL` is an ephemeral override for development. A durable plugin-only override may instead be stored as `{"server":"https://…"}` in `config.json` under the directory printed by `herdr plugin config-dir manzanita.trails`; this also leaves the Trails collector configuration untouched.
+
 ## Optional summaries
 
 The hub can summarize bounded session and day digests through a coding harness already installed and authenticated on that Mac. Collectors never need AI credentials. Trails supports:

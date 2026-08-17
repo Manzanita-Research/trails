@@ -1,0 +1,21 @@
+id = "manzanita.trails"
+name = "Trails"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Browse Trails days, weeks, project threads, and collector health without leaving Herdr."
+platforms = ["macos"]
+
+[[build]]
+command = ["bash", "build.sh"]
+
+[[panes]]
+id = "dashboard"
+title = "Trails"
+placement = "tab"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/dist/trails-herdr\""]
+
+[[actions]]
+id = "open"
+title = "Trails: open dashboard"
+contexts = ["pane", "workspace"]
+command = ["bash", "open.sh"]

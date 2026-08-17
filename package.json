@@ -22,7 +22,9 @@
     "feedback:deploy": "wrangler deploy --config wrangler.feedback.jsonc",
     "feedback:list": "wrangler d1 execute trails-beta-feedback --remote --config wrangler.feedback.jsonc --json --command \"SELECT id, kind, message, follow_up, context_json, client_created_at, received_at FROM feedback WHERE expires_at > CAST(strftime('%s','now') AS INTEGER) * 1000 ORDER BY received_at DESC LIMIT 50\"",
     "docs:dev": "bun run --cwd apps/docs dev",
-    "docs:build": "bun run --cwd apps/docs build"
+    "docs:build": "bun run --cwd apps/docs build",
+    "herdr:build": "bash plugins/herdr-trails/build.sh",
+    "herdr:fixture": "bun plugins/herdr-trails/dev/server.ts"
   },
   "dependencies": {
     "effect": "^3.22.0",
