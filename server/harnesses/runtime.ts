@@ -42,7 +42,19 @@ const CODEX_ISOLATION_ARGS = [
   "--config", 'web_search="disabled"',
   "--config", "shell_environment_policy.inherit=none",
 ] as const
-const HARNESS_PATH = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter)
+// mirrors the user-level directories the resolver searches: a harness found in
+// ~/.local/bin or ~/.bun/bin may be a script whose interpreter lives there too
+const HARNESS_PATH = [
+  join(homedir(), ".local/bin"),
+  join(homedir(), ".bun/bin"),
+  join(homedir(), ".opencode/bin"),
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/usr/sbin",
+  "/sbin",
+].join(delimiter)
 
 const OPENCODE_ISOLATION_CONFIG = JSON.stringify({ permission: { "*": "deny" } })
 

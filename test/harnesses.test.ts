@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadHubConfig } from "../cli/config"
 import { HARNESS_IDS, type HarnessId } from "../shared/harnesses"
@@ -133,7 +133,19 @@ printf '%s\\n' "\${OPENCODE_CONFIG_CONTENT-unset}"
       const [secret, home, path, temporary, owned] = result.stdout.trim().split("\n")
       expect(secret).toBe("unset")
       expect(home).toBeTruthy()
-      expect(path).toBe("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+      expect(path).toBe(
+        [
+          join(homedir(), ".local/bin"),
+          join(homedir(), ".bun/bin"),
+          join(homedir(), ".opencode/bin"),
+          "/opt/homebrew/bin",
+          "/usr/local/bin",
+          "/usr/bin",
+          "/bin",
+          "/usr/sbin",
+          "/sbin",
+        ].join(":"),
+      )
       expect(temporary).toBe(root)
       expect(owned).toBe("owned-config")
     } finally {
