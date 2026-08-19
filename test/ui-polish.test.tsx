@@ -387,8 +387,8 @@ describe("beta interaction clarity", () => {
     expect(screen.queryByText(/unreachable/i)).toBeNull()
   })
 
-  test("explains when indexed activity is waiting for summaries", async () => {
-    await makeLoadedHarness({ withDaySummary: false })
+  test("explains missing summaries truthfully when summarization is off", async () => {
+    await makeLoadedHarness({ withDaySummary: false, summarization: "disabled" })
     render(<App />)
 
     expect(await screen.findByText("Project summaries haven’t arrived yet.")).toBeTruthy()
@@ -396,6 +396,16 @@ describe("beta interaction clarity", () => {
       screen.getByText("Your indexed activity is already visible above. Summaries will appear here when they’re ready."),
     ).toBeTruthy()
     expect(screen.queryByRole("button", { name: /jump to day summary/ })).toBeNull()
+    expect(screen.queryByText("summary on its way")).toBeNull()
+  })
+
+  test("holds a project's place while the hub is still summarizing it", async () => {
+    await makeLoadedHarness({ withDaySummary: false })
+    render(<App />)
+
+    expect((await screen.findAllByText("summary on its way")).length).toBeGreaterThan(0)
+    expect(screen.queryByText("Project summaries haven’t arrived yet.")).toBeNull()
+    expect(screen.getAllByRole("button", { name: /jump to day summary/ }).length).toBeGreaterThan(0)
   })
 
   test("keeps all timeline geometry and full accessible labels inside 390 pixels", async () => {

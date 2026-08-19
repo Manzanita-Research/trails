@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { fetchSummarization } from "../lib/api"
 import { localParts, workdayOf } from "../../shared/domain"
 import { Ticks } from "./SessLine"
 import {
@@ -169,6 +170,24 @@ function Pager({
   )
 }
 
+// whether the hub is writing summaries in the background: projects without a
+// note yet then read as "on the way" instead of silently missing
+function useSummarizing(): boolean {
+  const [enabled, setEnabled] = useState(false)
+  useEffect(() => {
+    let alive = true
+    fetchSummarization()
+      .then((status) => {
+        if (alive) setEnabled(status.enabled)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+  return enabled
+}
+
 export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: number) => void }) {
   const t = useTrails()
   const [ref, width] = useWidth<HTMLElement>()
@@ -177,6 +196,7 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
   const notesRef = useRef<HTMLDivElement>(null)
   const [activeProj, setActiveProj] = useState<string | null>(null)
   const [stuck, setStuck] = useState(false)
+  const summarizing = useSummarizing()
 
   // which way the page turn travels: older days settle in from the left (the
   // past), newer from the right — no direction on first arrival. pinned per
@@ -280,11 +300,12 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
         : indexedParts.minute
       : undefined
 
-  // story order = timeline order: first activity of the day first
-  const notes = [...projMap.entries()]
+  // story order = timeline order: first activity of the day first. while the
+  // hub is summarizing, projects still waiting keep their place as placeholders
+  const stories = [...projMap.entries()]
     .sort((a, b) => Math.min(...a[1].all) - Math.min(...b[1].all))
     .map(([project]) => ({ project, note: t.daySummary(date, project) }))
-    .filter((n): n is { project: string; note: string } => !!n.note)
+  const rows = summarizing ? stories : stories.filter((story) => story.note !== undefined)
 
   return (
     <section ref={ref} className="view">
@@ -308,7 +329,7 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
             widthPx={widthPx}
             cutoff={cutoff}
             active={activeProj}
-            noteProjects={new Set(notes.map(({ project }) => project))}
+            noteProjects={new Set(rows.map(({ project }) => project))}
             onPick={jumpTo}
           />
         </div>
@@ -316,17 +337,25 @@ export function DaysView({ dayIdx, onDayIdx }: { dayIdx: number; onDayIdx: (i: n
 
 
         <h2 className="sect">the day, by project</h2>
-        {notes.length > 0 ? (
+        {rows.length > 0 ? (
           <div className="notes" ref={notesRef}>
-            {notes.map(({ project, note }) => (
-              <div key={project} data-project={project} className="note">
+            {rows.map(({ project, note }) => (
+              <div key={project} data-project={project} className={note ? "note" : "note note-pending"}>
                 <button className="proj-cap" onClick={() => t.openProject(project)}>
                   <span className="sq" style={{ background: engColor(t.engOf(project)) }} />
                   {t.dispName(project)}
                 </button>
-                <span className="sum">
-                  <Ticks text={note} />
-                </span>
+                {note !== undefined ? (
+                  <span className="sum">
+                    <Ticks text={note} />
+                  </span>
+                ) : (
+                  <span className="sum sum-pending">
+                    <span className="sr-only">summary on its way</span>
+                    <span className="sum-skeleton" aria-hidden="true" />
+                    <span className="sum-skeleton" aria-hidden="true" />
+                  </span>
+                )}
               </div>
             ))}
           </div>
