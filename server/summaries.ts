@@ -1,4 +1,5 @@
 import { Effect, Schedule } from "effect"
+import type { DurationInput } from "effect/Duration"
 import { createHash } from "node:crypto"
 import { localParts, workdayOf } from "../shared/domain"
 import type { SummaryRuntimeStatus } from "./harnesses/manager"
@@ -318,9 +319,13 @@ export function runSummaryPoll(options: SummaryPollOptions): Effect.Effect<numbe
   ).pipe(Effect.map(() => jobs.length))
 }
 
-export function summarySupervisor(options: Omit<SummaryPollOptions, "now">): Effect.Effect<never, never> {
-  return runSummaryPoll(options).pipe(
-    Effect.repeat(Schedule.spaced("30 seconds")),
+export function summarySupervisor(
+  options: Omit<SummaryPollOptions, "now">,
+  interval: DurationInput = "30 seconds",
+): Effect.Effect<never, never> {
+  const inFlight = options.inFlight ?? new Set<string>()
+  return Effect.suspend(() => runSummaryPoll({ ...options, inFlight, now: Date.now() })).pipe(
+    Effect.repeat(Schedule.spaced(interval)),
     Effect.flatMap(() => Effect.never),
   )
 }

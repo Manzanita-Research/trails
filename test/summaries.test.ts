@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import type { IngestSessionV2 } from "../shared/protocol"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { ingestSessions } from "../server/ingest"
-import { runSummaryPoll } from "../server/summaries"
+import { runSummaryPoll, summarySupervisor } from "../server/summaries"
 import {
   SummarizeError,
   type InferenceResult,
@@ -374,5 +374,44 @@ describe("summary work", () => {
     expect(db.sqlite.query("SELECT * FROM day_summaries").all()).toEqual([])
     expect(db.sqlite.query("SELECT * FROM day_summary_jobs").all()).toEqual([])
     expect(scalar<{ value: string }>(db, "SELECT value FROM meta WHERE key = 'state_revision'")).toEqual({ value: "1" })
+  })
+
+  test("supervisor picks up a harness selected after startup", async () => {
+    await ingest(db, START, session("late-selection", "late digest"))
+    const { inference, calls, waitForCalls } = deferredInference()
+    let selected: Summarizer | null = null
+    let polls = 0
+    const pollWaiters: Array<{ readonly count: number; readonly resolve: () => void }> = []
+    const waitForPolls = (count: number): Promise<void> => {
+      if (polls >= count) return Promise.resolve()
+      const { promise, resolve } = Promise.withResolvers<void>()
+      pollWaiters.push({ count, resolve })
+      return promise
+    }
+    const summarizer = (): Summarizer | null => {
+      polls++
+      for (let index = pollWaiters.length - 1; index >= 0; index--) {
+        if (polls < pollWaiters[index].count) continue
+        pollWaiters[index].resolve()
+        pollWaiters.splice(index, 1)
+      }
+      return selected
+    }
+    const fiber = Effect.runFork(summarySupervisor({ db, summarizer }, 1))
+
+    await waitForPolls(2)
+    expect(calls).toHaveLength(0)
+
+    selected = inference
+    await waitForCalls(1)
+    expect(calls[0].kind).toBe("session")
+    const pollsBeforeCompletion = polls
+    calls[0].resolve({ text: "late summary", model: "fake-model" })
+
+    await waitForPolls(pollsBeforeCompletion + 1)
+    await Effect.runPromise(Fiber.interrupt(fiber))
+    expect(scalar<{ summary: string }>(db, "SELECT summary FROM session_summaries")).toEqual({
+      summary: "late summary",
+    })
   })
 })
