@@ -174,7 +174,7 @@ Feedback goes directly from the browser to a separate public-write Cloudflare Wo
 
 ## Alpha release
 
-Current version: `0.1.0-alpha.10`
+Current version: `0.1.0-alpha.11`
 
 The stable installer URL is:
 
@@ -184,8 +184,8 @@ It follows the recommended `alpha` channel. The installer downloads the matching
 
 ```text
 https://releases.manzanita.dev/trails/channels/alpha.json
-https://releases.manzanita.dev/trails/releases/0.1.0-alpha.10/release.json
-https://releases.manzanita.dev/trails/releases/0.1.0-alpha.10/SHA256SUMS
+https://releases.manzanita.dev/trails/releases/0.1.0-alpha.11/release.json
+https://releases.manzanita.dev/trails/releases/0.1.0-alpha.11/SHA256SUMS
 ```
 
 ## Release operations
