@@ -340,6 +340,168 @@ describe("hosted feedback Worker boundary", () => {
     expect(invalidUtf8.d1.statements).toHaveLength(0)
   })
 
+  test("rejects excessive or invalid declared lengths without pulling the body", async () => {
+    for (const [length, status] of [["8193", 413], ["999999999999999999999999", 413], ["-1", 400], ["8x", 400]] as const) {
+      let pulls = 0
+      let cancelled = false
+      const stream = new ReadableStream<Uint8Array>({
+        pull() { pulls += 1 },
+        cancel() {
+          cancelled = true
+          return new Promise<void>(() => {})
+        },
+      }, { highWaterMark: 0 })
+      const request = feedbackRequest(stream)
+      request.headers.set("Content-Length", length)
+      const { env, d1 } = fakeEnv()
+      const response = await worker.fetch(request, env)
+      expect(response.status).toBe(status)
+      expect(pulls).toBe(0)
+      expect(cancelled).toBe(true)
+      expect(stream.locked).toBe(false)
+      expect(d1.statements).toHaveLength(0)
+      expectCors(response)
+    }
+  })
+
+  test("cancels a 1 MiB upload at the first excess chunk even with no or understated length", async () => {
+    for (const declaredLength of [null, "0", "8192"]) {
+      let delivered = 0
+      let cancelled = false
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (delivered === 1024 * 1024) return controller.close()
+          delivered += 4096
+          controller.enqueue(new Uint8Array(4096))
+        },
+        cancel() {
+          cancelled = true
+          return Promise.reject(new Error("private cancellation failure"))
+        },
+      }, { highWaterMark: 0 })
+      const request = feedbackRequest(stream)
+      if (declaredLength !== null) request.headers.set("Content-Length", declaredLength)
+      const { env, d1 } = fakeEnv()
+      const response = await worker.fetch(request, env)
+      expect(response.status).toBe(413)
+      expect(delivered).toBe(12_288)
+      expect(cancelled).toBe(true)
+      expect(stream.locked).toBe(false)
+      expect(d1.statements).toHaveLength(0)
+      expectCors(response)
+      expect(await responseJson(response)).toEqual({ error: "request too large" })
+    }
+  })
+
+  test("cancels an endless stream and a single huge chunk without reading again", async () => {
+    for (const chunkSize of [1, 1024 * 1024]) {
+      let delivered = 0
+      let cancelled = false
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          delivered += chunkSize
+          controller.enqueue(new Uint8Array(chunkSize))
+        },
+        cancel() {
+          cancelled = true
+          return new Promise<void>(() => {})
+        },
+      }, { highWaterMark: 0 })
+      const { env, d1 } = fakeEnv()
+      const response = await worker.fetch(feedbackRequest(stream), env)
+      expect(response.status).toBe(413)
+      expect(delivered).toBe(chunkSize === 1 ? 8193 : chunkSize)
+      expect(cancelled).toBe(true)
+      expect(stream.locked).toBe(false)
+      expect(d1.statements).toHaveLength(0)
+      expectCors(response)
+    }
+  })
+
+  test("accepts exact-limit chunked JSON with split multibyte UTF-8", async () => {
+    const json = JSON.stringify({ ...BASE_SUBMISSION, message: "界" })
+    const encoded = new TextEncoder().encode(json)
+    const bytes = new Uint8Array(8192).fill(0x20)
+    bytes.set(encoded)
+    for (const declaredLength of [null, "8192"]) {
+      let position = 0
+      let cancelled = false
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (position === bytes.length) return controller.close()
+          controller.enqueue(bytes.subarray(position, ++position))
+        },
+        cancel() { cancelled = true },
+      }, { highWaterMark: 0 })
+      const request = feedbackRequest(stream)
+      if (declaredLength !== null) request.headers.set("Content-Length", declaredLength)
+      const { env, d1 } = fakeEnv()
+      const response = await worker.fetch(request, env)
+      expect(response.status).toBe(201)
+      expect(d1.rows.get(ID)?.message).toBe("界")
+      expect(cancelled).toBe(false)
+      expect(stream.locked).toBe(false)
+    }
+  })
+
+  test("bounds concurrent stalled and trickling uploads by a total read deadline", async () => {
+    await Promise.all(["stalled", "exact-limit", "trickle", "empty-chunks"].map(async (mode) => {
+      let cancelled = false
+      let sent = false
+      let interval: ReturnType<typeof setInterval> | undefined
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (mode === "trickle" || mode === "empty-chunks") {
+            interval = setInterval(() => {
+              controller.enqueue(new Uint8Array(mode === "trickle" ? 1 : 0))
+            }, 50)
+          }
+        },
+        pull(controller) {
+          if (mode === "exact-limit" && !sent) {
+            sent = true
+            controller.enqueue(new Uint8Array(8192))
+          }
+        },
+        cancel() {
+          cancelled = true
+          return new Promise<void>(() => {})
+        },
+      }, { highWaterMark: 0 })
+      const { env, d1 } = fakeEnv()
+      const start = performance.now()
+      try {
+        const response = await worker.fetch(feedbackRequest(stream), env)
+        expect(response.status).toBe(408)
+        expect(performance.now() - start).toBeGreaterThanOrEqual(4900)
+        expect(performance.now() - start).toBeLessThan(7000)
+        expect(cancelled).toBe(true)
+        expect(stream.locked).toBe(false)
+        expect(d1.statements).toHaveLength(0)
+        expectCors(response)
+        expect(await responseJson(response)).toEqual({ error: "request timed out" })
+      } finally {
+        clearInterval(interval)
+      }
+    }))
+    expect((await worker.fetch(feedbackRequest(), fakeEnv().env)).status).toBe(201)
+  }, 10_000)
+
+  test("handles missing or failed streams without database access or private errors", async () => {
+    const failed = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.error(new Error("private read failure")) },
+    })
+    for (const body of [null, failed]) {
+      const { env, d1 } = fakeEnv()
+      const response = await worker.fetch(feedbackRequest(body), env)
+      expect(response.status).toBe(400)
+      expect(await responseJson(response)).toEqual({ error: "invalid request" })
+      expect(d1.statements).toHaveLength(0)
+      expectCors(response)
+    }
+    expect(failed.locked).toBe(false)
+  })
+
   test("rejects malformed JSON and every exact submission boundary", async () => {
     const malformed = fakeEnv()
     const malformedResponse = await worker.fetch(feedbackRequest("{"), malformed.env)
