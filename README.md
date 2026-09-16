@@ -48,14 +48,14 @@ https://your-hub.your-tailnet.ts.net/
 On the hub, create a separate pairing file for each additional Mac:
 
 ```bash
-trails auth pair --server https://your-hub.your-tailnet.ts.net/ --name "Laptop" --output pairing.json
+trails auth pair --server https://your-hub.your-tailnet.ts.net/ --name "Laptop" --output ~/.config/trails/pairing.json
 ```
 
-Transfer that file privately to the additional Mac, then run the installer there using the same URL:
+Transfer that file privately to `~/.config/trails/pairing.json` on the additional Mac (directory mode `700`, file mode `600`), then run the installer there using the same URL:
 
 ```bash
 curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
-  join https://your-hub.your-tailnet.ts.net/ --pairing-file pairing.json
+  join https://your-hub.your-tailnet.ts.net/ --pairing-file ~/.config/trails/pairing.json
 ```
 
 Each spoke parses its own sessions locally and sends normalized observations to the hub every minute. The hub continues collecting its own sessions too; clients and servers are roles within the same Trails binary, not separate products or required machines.
@@ -215,12 +215,16 @@ After updating an existing installation:
 
 1. Rerun `trails setup hub` on the hub, retaining its original `--tailscale` or `--service svc:NAME` option. This keeps its device ID and provisions its local collector. Existing data and summary selection remain intact. A manually started hub can use `trails serve` to initialize owner authentication without installing services.
 2. Sign in using `trails auth owner`. Unauthenticated requests now return 401; there is no legacy anonymous mode.
-3. For each remote collector, read its existing `deviceId` from `~/.config/trails/collector.json`. On the hub, run `trails auth pair --server HUB_URL --device-id EXISTING_ID --name NAME --output pairing.json`. Transfer the file privately and run `trails setup join HUB_URL --pairing-file pairing.json` on that collector. Using its existing ID preserves session history and progress. Pairing files are bearer credentials, not public invitation links; delete transferred copies after import. Use a fresh credential per device. Legacy collector configuration must be owned by the collector account and mode 0600 (`chmod 600 ~/.config/trails/collector.json`).
-4. For each read integration, run `trails auth read --server HUB_URL --output reader.json` on the hub. Transfer it privately to that integration's host account and install it at `~/.config/trails/reader.json` with mode 0600. Both BB and Herdr read this file, independently of collector credentials, and refuse to send it to a different hub URL. Use `http://127.0.0.1:7412/` for a local integration. Server URL changes require a matching reader configuration.
+3. For each remote collector, read its existing `deviceId` from `~/.config/trails/collector.json`. On the hub, run `trails auth pair --server HUB_URL --device-id EXISTING_ID --name NAME --output ~/.config/trails/pairing.json`. Transfer the file privately and run `trails setup join HUB_URL --pairing-file ~/.config/trails/pairing.json` on that collector. Using its existing ID preserves session history and progress. Pairing files are bearer credentials, not public invitation links; delete transferred copies after import. Use a fresh credential per device. Legacy collector configuration must be owned by the collector account and mode 0600 (`chmod 600 ~/.config/trails/collector.json`).
+4. For each read integration, run `trails auth read --server HUB_URL --output ~/.config/trails/reader.json` on the hub. Transfer it privately to that integration's host account and install it at `~/.config/trails/reader.json` with mode 0600. Both BB and Herdr read this file, independently of collector credentials, and refuse to send it to a different hub URL. Use `http://127.0.0.1:7412/` for a local integration. Server URL changes require a matching reader configuration.
 
 Run `trails auth list` on the hub to see credential IDs and device bindings without exposing tokens. `trails auth revoke CREDENTIAL_ID` immediately revokes a collector or read credential without deleting history; revoke every credential listed for a device when unpairing it. To replace a revoked credential, issue and import a new pairing/read file. `trails auth rotate-owner` replaces the owner credential and revokes all browser sessions, including when the owner token file was lost. It does not revoke collectors or read integrations. These administrative commands require access to the hub account and database; keep credential files and database backups private. Processes running as that same OS account remain inside the owner trust boundary.
 
 When you explicitly activate a summary harness, the provider already configured in that harness receives only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, collector traffic, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
+
+Trails checks private files and their parent directories before use. Configuration, credentials, collector state, databases (including SQLite sidecars), logs, and backups must be regular files owned by the running account with no group/other access, normally mode `600`. Their immediate directories must be owned by that account with mode `700`. Ancestors may be searchable by others but cannot be group/other-writable or owned by another non-root account. Root-owned sticky temporary directories and root-owned system directory aliases such as macOS `/tmp` are supported; user-created directory symlinks, file symlinks, and hardlinked private files are rejected.
+
+Existing safe files upgrade normally. Unsafe paths fail with the offending path and repair guidance; Trails does not silently chmod or take ownership of existing data. Stop the affected Trails service, inspect the reported path and its ownership, and remove unintended group/other permissions only after confirming it is your intended file or directory. Store exported pairing credentials inside an owner-only directory too. These checks protect against other local accounts with access through unsafe filesystem permissions. They do not isolate processes running as the same OS account; SQLite and launchd still open validated paths by name.
 
 Harness selection lives in owner-only `~/.config/trails/server.json`. Harness credentials remain owned by the harness and never enter Trails configuration, SQLite, collector traffic, browser responses, feedback, or logs. Browser-visible status is limited to harness availability, selection, attempt/success timestamps, and a closed actionable error class.
 

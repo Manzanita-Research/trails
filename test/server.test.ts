@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { writeFileSync } from "node:fs"
 import { Effect } from "effect"
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -39,6 +40,7 @@ const LEGACY_END = "2026-11-01T09:31:00.000Z"
 const LEGACY_UPDATED_AT = Date.parse("2026-11-01T09:32:00.000Z")
 
 function createMigration3Fixture(path: string): void {
+  writeFileSync(path, "", { mode: 0o600, flag: "wx" })
   const legacy = new Database(path, { create: true, strict: true })
   for (const migration of MIGRATIONS.slice(0, 3)) legacy.exec(migration.sql)
   legacy.exec("PRAGMA user_version = 3")
