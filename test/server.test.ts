@@ -5,6 +5,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "./authenticated-app"
+import { createApp as productionApp } from "../server/app"
+import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
@@ -742,6 +744,47 @@ describe("ingest and bootstrap", () => {
 })
 
 describe("capture ingest, bootstrap privacy, and image API", () => {
+  test.each(["midjourney", "granola"] as const)("keeps %s summary input internal for every bootstrap reader", async (source) => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const options = { trustedOrigins: ["http://trails.test"], db: database }
+    const summaryInput = `SYNTHETIC_PRIVATE_${source.toUpperCase()}_DIGEST`
+    const base = capture("private-record", { summaryInput })
+    const input: IngestCaptureV1 = source === "midjourney" ? base : {
+      ...base,
+      source,
+      payload: { attendeeCount: 2, folders: ["Planning"], webUrl: null },
+      images: [],
+    }
+    expect((await request(createApp(options), "POST", "/api/captures", captureBody([input]))).status).toBe(200)
+    expect(database.sqlite.query("SELECT summary_input FROM captures").get()).toEqual({ summary_input: summaryInput })
+
+    const app = productionApp(options)
+    for (const role of ["owner", "read"] as const) {
+      const credential = issueCredential(database, role)
+      for (const path of ["/api/bootstrap", "/api/bootstrap?after=0"]) {
+        const response = await app(new Request(`http://trails.test${path}`, {
+          headers: { Authorization: `Bearer ${credential.token}` },
+        }))
+        expect(response.status).toBe(200)
+        const body = await response.text()
+        expect(body).not.toContain(summaryInput)
+        expect(body).not.toContain("summaryInput")
+        expect(body).not.toContain("summary_input")
+        const bootstrap = JSON.parse(body) as BootstrapV1
+        expect(bootstrap.captures).toHaveLength(1)
+        expect(bootstrap.captures[0]).toMatchObject({
+          source,
+          title: input.title,
+          projectHint: input.projectHint,
+          startedAt: input.startedAt,
+          attentionMinutes: [["2026-08-03", 600]],
+        })
+        if (input.source === "granola") expect(bootstrap.captures[0]?.payload).toEqual(input.payload)
+      }
+    }
+  })
+
   test("is idempotent, preserves null reconciliation attribution, and replaces children atomically", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))

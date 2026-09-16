@@ -391,6 +391,7 @@ export const BootstrapCaptureImageV1Schema = Schema.Struct({
   url: boundedString(1, 512),
 })
 
+// Display fields only; summaryInput belongs to the ingest/storage boundary.
 const BootstrapCaptureCommonV1Fields = {
   id: boundedString(1, 64),
   project: Schema.NullOr(trimmedString(1, 4096)),
@@ -398,7 +399,6 @@ const BootstrapCaptureCommonV1Fields = {
   title: trimmedString(1, 200),
   startedAt: CanonicalTimestampSchema,
   endedAt: Schema.NullOr(CanonicalTimestampSchema),
-  summaryInput: trimmedString(1, 12_000),
   attentionMinutes: CaptureAttentionV1Schema,
   updatedAt: CanonicalTimestampSchema,
   images: Schema.Array(BootstrapCaptureImageV1Schema).pipe(Schema.maxItems(4)),
