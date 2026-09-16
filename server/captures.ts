@@ -4,6 +4,7 @@ import { normalizeCwd } from "../shared/domain"
 import type { IngestCaptureV1, IngestCapturesRequestV1 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
 import type { IngestResult } from "./ingest"
+import { CaptureImageValidationError, validateCaptureImages } from "./capture-images"
 
 export class CaptureIngestError extends Error {
   readonly _tag = "CaptureIngestError"
@@ -54,8 +55,11 @@ export function ingestCaptures(
   db: TrailsDb,
   input: IngestCapturesRequestV1,
   now = Date.now(),
-): Effect.Effect<IngestResult, CaptureIngestError> {
-  return Effect.try({
+): Effect.Effect<IngestResult, CaptureIngestError | CaptureImageValidationError> {
+  return Effect.tryPromise({
+    try: () => validateCaptureImages(input),
+    catch: (cause) => cause instanceof CaptureImageValidationError ? cause : new CaptureIngestError(cause),
+  }).pipe(Effect.flatMap((images) => Effect.try({
     try: () =>
       db.sqlite.transaction(() => {
         const sqlite = db.sqlite
@@ -158,7 +162,7 @@ export function ingestCaptures(
           if (!existing || contentChanged) {
             for (const utcMinute of capture.attentionMinutes) insertAttention.run(captureId, utcMinute)
             for (const image of capture.images) {
-              const bytes = Buffer.from(image.bytes, "base64")
+              const bytes = images.get(image.bytes)!
               insertImage.run(
                 captureId,
                 image.index,
@@ -185,5 +189,5 @@ export function ingestCaptures(
         return { accepted, unchanged, revision }
       })(),
     catch: (cause) => new CaptureIngestError(cause),
-  })
+  })))
 }

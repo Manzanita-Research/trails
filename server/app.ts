@@ -561,8 +561,16 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     const body = decodeBody(IngestCapturesRequestV1Schema, input)
     requireDevice(credential, body.device.id)
     try {
-      return jsonResponse(await Effect.runPromise(ingestCaptures(db, body, now)))
-    } catch {
+      const result = await Effect.runPromise(Effect.either(ingestCaptures(db, body, now)))
+      if (result._tag === "Left") {
+        if (result.left._tag === "CaptureImageValidationError") {
+          throw new ApiError("invalid_request", result.left.message, 400)
+        }
+        throw result.left
+      }
+      return jsonResponse(result.right)
+    } catch (error) {
+      if (error instanceof ApiError) throw error
       throw new ApiError("internal_error", "internal server error", 500)
     }
   }
@@ -588,6 +596,9 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
       "Content-Type": row.mime,
       "Content-Length": String(row.byte_length),
       "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
       ETag: etag,
     })
     if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers })

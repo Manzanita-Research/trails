@@ -197,6 +197,8 @@ The hub rejects HTTP authorities outside its configured allowlist before serving
 
 Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; the application credentials below authenticate local processes and tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
 
+Capture uploads accept static JPEG, PNG and WebP images only. The hub inspects and fully decodes the bytes before writing any part of the request, checks that format and dimensions match the supplied metadata, and rejects damaged or animated images. Limits are 500 KiB compressed bytes and 4,000,000 pixels per image, 16,384 pixels per side, and 32,000,000 image pixels per request. The embedded ImageMagick WebAssembly decoder restricts formats and memory allocations, with a 64 MiB pixel cache and no disk spill or external delegates. Image responses require authentication and use `no-store`, `nosniff`, same-origin resource policy and a sandbox CSP. Previously stored images are not retroactively decoded or removed.
+
 ### Authentication and upgrading an existing hub
 
 Trails is a single-owner service on loopback or a private tailnet. Network reachability does not grant access. The public health response contains only `{ "ok": true }`; the sign-in page and its assets contain no timeline data. All timeline, machine, image, and harness reads require credentials.
