@@ -37,7 +37,7 @@ Target Macs run the matching file without Bun, Node, a source checkout, or sidec
 
 ## Release transport
 
-`bun run release:stage` runs the production web and standalone binary builds, then writes a deterministic product-owned staging directory under `dist/release/trails/<version>/`. It contains both architecture binaries, the POSIX installer pinned to immutable HTTPS paths and SHA-256 hashes, `SHA256SUMS`, and `release-input.json`. Trails does not contain Cloudflare credentials or assume a sibling checkout path.
+`bun run release:stage` runs the production web and standalone binary builds, then writes a deterministic product-owned staging directory under `dist/release/trails/<version>/`. It contains both architecture binaries, the POSIX installer pinned to immutable HTTPS paths and SHA-256 hashes, `SHA256SUMS`, `release-input.json`, and a local `release-audit.json` report binding the audited asset/module inventory and policy to the staged hashes. Staging statically validates both Mach-O architectures, the Bun payload allowlist, privacy patterns, installer syntax, and descriptor integrity. The report is reproducible with `bun scripts/stage-release.ts --audit <staging-directory>`; it is not a public transport object. Trails does not contain Cloudflare credentials or assume a sibling checkout path.
 
 The public release boundary begins after staging. The shared [`Manzanita-Research/releases`](https://github.com/Manzanita-Research/releases) repository validates the registered product, manifest schema, file types, paths, sizes, and hashes; refuses any immutable collision; uploads to a private R2 bucket; and exposes only read-only `GET`/`HEAD` access through `https://releases.manzanita.dev/`.
 

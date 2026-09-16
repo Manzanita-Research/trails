@@ -261,6 +261,16 @@ This writes:
 dist/release/trails/<version>/
 ```
 
+Staging rejects non-executable or wrong-architecture Mach-O files, symlinks and special files, unexpected client assets or embedded modules, source maps/bytecode, invalid installer syntax, descriptor mismatches, and recognized private payload patterns. `scripts/release-audit.ts` defines the explicit asset and privacy policy. The native Bun module format is inspected statically for both architectures; an unfamiliar format fails closed and requires policy review when upgrading Bun.
+
+Each staging directory also contains `release-audit.json`: a deterministic local review artifact with the policy hash, asset inventory, embedded module inventory, and staged file sizes/hashes. It contains no timestamps, operator paths, environment values, or matched private text. Recheck the staged bytes against that report and the current client build without recompiling:
+
+```sh
+bun scripts/stage-release.ts --audit dist/release/trails/<version>
+```
+
+The audit report stays local; the shared publisher's transport contract is unchanged. Keep it with the release review evidence. Pattern checks cover credential formats, sensitive environment values, personal paths, private endpoints, transcript/digest fixtures, source history, and source maps. Known Bun CI source paths have a narrow native-runtime exception, never an exception in the product module graph. These checks cannot prove that arbitrary or encoded secrets are absent. Review policy changes and audit findings before publication. A local validation build does not reserve a version: select a fresh version before publishing changed bytes.
+
 Validate through the shared publisher before uploading:
 
 ```sh
