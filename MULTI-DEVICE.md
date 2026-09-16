@@ -87,6 +87,10 @@ Remove `--dry-run` after review. Selecting an older version rolls back without d
 
 Every bootstrap-visible change increments one monotonic revision. Replayed ingestion, last-seen timestamps, duplicate engagement creation, and exact preference no-ops do not. Browsers poll `/api/bootstrap?after=<revision>` while visible and retain the last snapshot through temporary failures.
 
+Session and capture timestamps must be canonical UTC milliseconds from `1970-01-01T00:00:00.000Z` through `9999-12-30T23:59:59.999Z`. UTC activity/attention minutes must be integers in that range and fall within the record's start/end minute buckets (inclusive); a null capture end leaves the upper interval open. The final UTC day of year 9999 is reserved so timezone conversion stays within the four-digit calendar. Invalid batches are rejected before any writes.
+
+Migration 7 recovers existing invalid session/capture timing by moving each affected record and its children into local `timestamp_quarantine_*` tables in the same database. These tables preserve original data, including image bytes, digests, summaries, and jobs, but are excluded from bootstrap and processing. Session recovery also clears derived day summaries and rebuilds day jobs; any recovery increments the revision once. The migration is transactional and runs once. Corrected records can be ingested again; archived copies remain available for manual inspection through SQLite and are included in database backups. Treat them as private data, just like the active tables.
+
 There is no scan-blob or localStorage compatibility path. Transcript history is re-ingested from source logs.
 
 ## Periodic collectors
