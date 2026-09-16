@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { createApp, setAdvertisedHubUrl } from "../server/app"
+import { createApp, setAdvertisedHubUrl } from "./authenticated-app"
 import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
@@ -199,7 +199,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -207,7 +207,7 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(6)
+    expect(userVersion.user_version).toBe(7)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
     expect(Object.values(busyTimeout)[0]).toBe(5000)
@@ -250,7 +250,7 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(6)
+    expect(reopenedVersion.user_version).toBe(7)
     expect(
       reopened.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
@@ -271,7 +271,7 @@ describe("database opening and ordered migrations", () => {
     const database = openDatabase(path, { defaultTimezone: "Europe/Rome", now: migrationNow })
     databases.add(database)
 
-    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
       timezone: "Europe/Rome",
     })
@@ -396,7 +396,7 @@ describe("database opening and ordered migrations", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(migrated.sqlite.query("SELECT halo FROM settings WHERE id = 1").get()).toEqual({ halo: 15 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM sessions").get()).toEqual({ count: 1 })
@@ -833,7 +833,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     expect(imageResponse.status).toBe(200)
     expect(imageResponse.headers.get("content-type")).toBe("image/webp")
     expect(imageResponse.headers.get("content-length")).toBe(String(syntheticWebp.byteLength))
-    expect(imageResponse.headers.get("cache-control")).toBe("private, max-age=31536000, immutable")
+    expect(imageResponse.headers.get("cache-control")).toBe("no-store")
     expect(Buffer.from(await imageResponse.arrayBuffer())).toEqual(syntheticWebp)
     const etag = imageResponse.headers.get("etag")
     expect(etag).toMatch(/^"[0-9a-f]{64}"$/)
@@ -1108,7 +1108,7 @@ describe("static and method routing", () => {
     expect(await json(response)).toEqual({ error: { code: "not_found", message: "static serving is disabled" } })
     response = await request(apiOnly, "GET", "/api/health")
     expect(response.status).toBe(200)
-    expect(await json(response)).toEqual({ ok: true, revision: 0 })
+    expect(await json(response)).toEqual({ ok: true })
 
     expect(await readFile(join(root, "outside.txt"), "utf8")).toBe("must not escape")
     expect(await readdir(staticRoot)).toEqual(expect.arrayContaining(["index.html", "app-12345678.js", "plain.css"]))

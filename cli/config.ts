@@ -1,3 +1,4 @@
+import { readPrivateFile } from "../server/auth"
 import { Schema } from "effect"
 import {
   chmodSync,
@@ -20,6 +21,7 @@ export interface CollectorConfig {
   readonly server: string
   readonly deviceId: string
   readonly deviceName: string
+  readonly token?: string
 }
 
 const CollectorConfigSchema = Schema.Struct({
@@ -27,6 +29,7 @@ const CollectorConfigSchema = Schema.Struct({
   server: Schema.String,
   deviceId: Schema.String,
   deviceName: Schema.String,
+  token: Schema.optional(Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{43}$/))),
 })
 
 export const COLLECTOR_CONFIG_PATH = join(homedir(), ".config/trails/collector.json")
@@ -70,10 +73,10 @@ export function atomicWriteJson(path: string, value: unknown): void {
 
 export function loadCollectorConfig(path = COLLECTOR_CONFIG_PATH): CollectorConfig | null {
   try {
-    return decodeExact(CollectorConfigSchema, JSON.parse(readFileSync(path, "utf8"))) as CollectorConfig
+    return decodeExact(CollectorConfigSchema, JSON.parse(readPrivateFile(path))) as CollectorConfig
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
-    throw error
+    throw new Error("collector configuration is invalid or its permissions are unsafe")
   }
 }
 
@@ -92,6 +95,8 @@ export function configureCollector(options: {
     server: normalizeCollectorServer(options.server),
     deviceId: !options.resetDeviceId && existing ? existing.deviceId : crypto.randomUUID(),
     deviceName,
+    ...(!options.resetDeviceId && existing?.server === normalizeCollectorServer(options.server) && existing.token
+      ? { token: existing.token } : {}),
   }
   atomicWriteJson(path, config)
   return config
@@ -166,4 +171,13 @@ export function isLegacyProviderHubConfig(path = SERVER_CONFIG_PATH): boolean {
 export function writeHubConfig(summarizer: SummarizerConfig | null, path = SERVER_CONFIG_PATH): void {
   if (summarizer !== null) decodeExact(SummarizerSchema, summarizer)
   atomicWriteJson(path, { protocolVersion: 3, summarizer })
+}
+
+export function importCollectorPairing(pairingPath: string, server: string, path = COLLECTOR_CONFIG_PATH): CollectorConfig {
+  const config = loadCollectorConfig(pairingPath)
+  if (!config?.token || normalizeCollectorServer(config.server) !== normalizeCollectorServer(server)) {
+    throw new Error("pairing file must contain a credential for this exact hub URL")
+  }
+  atomicWriteJson(path, { ...config, server: normalizeCollectorServer(server) })
+  return config
 }

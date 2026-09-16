@@ -1,9 +1,11 @@
+import { runAuthCommand } from "./auth"
+import { initializeOwner, issueCredential, credentialFor, ownerTokenPath } from "../server/auth"
 import packageJson from "../package.json" with { type: "json" }
 import { Effect, Fiber } from "effect"
 import { runCollection } from "../collector/sync"
 import { DEFAULT_STATE_PATH } from "../collector/state"
 import { parseSourceRoot } from "../collector/sources"
-import { configureCollector, loadCollectorConfig, normalizeCollectorServer } from "./config"
+import { atomicWriteJson, COLLECTOR_CONFIG_PATH, importCollectorPairing, configureCollector, loadCollectorConfig, normalizeCollectorServer } from "./config"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "../server/app"
 import { localOrigins, normalizeTrustedOrigin } from "../server/request-boundary"
@@ -42,9 +44,10 @@ function printUsage(): void {
 
 Commands:
   setup hub [--name NAME] [--tailscale] [--service svc:NAME]
-  setup join URL [--name NAME]
+  setup join URL --pairing-file FILE
   serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH] [--trusted-origin ORIGIN ...]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
+  auth owner|rotate-owner|list|revoke|pair|read [--db PATH]
   summaries [status | use auto|omp|claude|codex|opencode|pi | off]
   configure collector --server URL [--name NAME] [--reset-device-id]
   backup --output PATH | --output-dir DIR [--retain 14] [--db PATH]
@@ -83,6 +86,7 @@ async function serve(args: string[]): Promise<void> {
   const summarization = createSummarizerManager()
   const harnesses = createHarnessControl({ manager: summarization })
   const db = openDatabase(dbPath)
+  initializeOwner(db)
   const app = createApp({ db, trustedOrigins, staticRoot, staticAssets, summarization, harnesses })
   const server = Bun.serve({ hostname: host, port, fetch: app })
   const summaryFiber = Effect.runFork(
@@ -96,6 +100,7 @@ async function serve(args: string[]): Promise<void> {
   process.once("SIGINT", shutdown)
   process.once("SIGTERM", shutdown)
   console.log(`trails serving on http://${host}:${server.port}`)
+  console.log(`Owner sign-in: trails auth owner (credential file: ${ownerTokenPath(db)})`)
 }
 
 async function collect(args: string[]): Promise<void> {
@@ -107,10 +112,15 @@ async function collect(args: string[]): Promise<void> {
   if (!server || !deviceId || !deviceName) {
     throw new Error("collector server and device identity are not configured")
   }
+  if (!config?.token) throw new Error("collector is not paired; use setup hub or setup join URL --pairing-file FILE")
+  if (normalizeCollectorServer(server) !== config.server || deviceId !== config.deviceId) {
+    throw new Error("collector credentials cannot be used with another hub or device ID")
+  }
   const sourceRoots = valuesAfter(args, "--source-root")
   const result = await Effect.runPromise(
     runCollection({
       server,
+      token: config.token,
       deviceId,
       deviceName,
       statePath: resolve(valueAfter(args, "--state") ?? DEFAULT_STATE_PATH),
@@ -176,9 +186,7 @@ async function waitForServer(server: string): Promise<void> {
         typeof body === "object" &&
         body !== null &&
         "ok" in body &&
-        body.ok === true &&
-        "revision" in body &&
-        typeof body.revision === "number"
+        body.ok === true
       ) return
       lastFailure = `health check returned HTTP ${response.status}`
     } catch (error) {
@@ -196,7 +204,24 @@ async function setupCommand(args: string[]): Promise<void> {
   const tailscale = args.includes("--tailscale") || service !== undefined
   const actions: SetupActions = {
     configureCollector: (server, deviceName) => {
-      const config = configureCollector({ server, name: deviceName })
+      let config
+      if (mode === "join") {
+        const pairingFile = valueAfter(args, "--pairing-file")
+        if (!pairingFile) throw new Error("setup join requires --pairing-file from the hub owner")
+        config = importCollectorPairing(pairingFile, server)
+      } else {
+        config = configureCollector({ server, name: deviceName })
+        const database = openDatabase(process.env.TRAILS_DB_PATH ?? DEFAULT_DB_PATH)
+        try {
+          initializeOwner(database)
+          const existing = config.token ? credentialFor(database, config.token) : null
+          if (existing?.role !== "collector" || existing.deviceId !== config.deviceId) {
+            const credential = issueCredential(database, "collector", config.deviceId)
+            config = { ...config, token: credential.token }
+            atomicWriteJson(COLLECTOR_CONFIG_PATH, config)
+          }
+        } finally { database.close() }
+      }
       console.log(`configured ${config.deviceName} for ${config.server}`)
     },
     install: (kind, options) => install({ kind, dryRun: false, ...options }),
@@ -215,7 +240,7 @@ async function setupCommand(args: string[]): Promise<void> {
   if (mode === "hub") {
     const url = await runSetup({ mode, name, tailscale, service }, actions)
     console.log(`Trails is ready at ${url}`)
-    if (tailscale) console.log(`Join another Mac with: trails setup join ${url}`)
+    if (tailscale) console.log(`Pair another Mac on this hub with: trails auth pair --server ${url} --output pairing.json`)
     else console.log("This Mac is both the hub and collector. Add --tailscale only when connecting other Macs.")
     return
   }
@@ -232,6 +257,7 @@ async function setupCommand(args: string[]): Promise<void> {
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   const command = args[0]
+  if (command === "auth") return runAuthCommand(args.slice(1))
   if (command === "setup") return setupCommand(args.slice(1))
   if (command === "serve") return serve(args.slice(1))
   if (command === "collect") return collect(args.slice(1))

@@ -91,3 +91,21 @@ test("repository scope includes checkout subdirectories and known worktrees, exc
   expect(JSON.stringify(days)).not.toContain("Unrelated project summary");
   expect(days.days[0].sessionCount).toBe(3);
 });
+
+test("reads with a separate URL-bound credential and never returns its value", async () => {
+  const home = await mkdtemp(join(tmpdir(), "trails-bb-auth-")); dirs.push(home);
+  await mkdir(join(home, ".config/trails"), { recursive: true });
+  const token = "r".repeat(43);
+  await writeFile(join(home, ".config/trails/reader.json"), JSON.stringify({ server: "https://hub.example/", token }), { mode: 0o600 });
+  let calls = 0;
+  const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${token}`);
+    expect(init?.redirect).toBe("error");
+    return Response.json(fixture);
+  }) as typeof fetch;
+  const report = await queryTrails(querySchema.parse({}), "https://hub.example/", new AbortController().signal, { home, fetch: fetcher });
+  expect(JSON.stringify(report)).not.toContain(token);
+  await expect(queryTrails(querySchema.parse({}), "https://different.example/", new AbortController().signal, { home, fetch: fetcher })).rejects.toThrow("exact hub URL");
+  expect(calls).toBe(1);
+});
