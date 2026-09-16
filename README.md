@@ -101,6 +101,27 @@ TRAILS_HERDR_SERVER_URL=http://127.0.0.1:7414/ \
 
 `TRAILS_HERDR_SERVER_URL` is an ephemeral override for development. A durable plugin-only override may instead be stored as `{"server":"https://…"}` in `config.json` under the directory printed by `herdr plugin config-dir manzanita.trails`; this also leaves the Trails collector configuration untouched.
 
+## View Trails in BB
+
+The BB plugin adds a **Trails** sidebar page with working days, project sessions, and collector/summary health, plus `bb trails` commands and a `trails_query` agent tool. It reads the existing connection on an enrolled BB machine, so the browser and BB server do not need direct access to the hub.
+
+```sh
+cd plugins/bb-plugin-trails
+npm ci --include=dev
+bb plugin build
+bb plugin install . --yes
+```
+
+Open **Trails** in BB and choose the machine with your collector configuration. Commands inside a BB thread use that thread's machine:
+
+```sh
+bb trails days --limit 7
+bb trails projects --date 2026-09-16 --json
+bb trails status
+```
+
+The plugin is read-only. Activity queries include private project names, paths, first prompts, and summaries in BB; agent queries also include them in the conversation. Full transcripts, digests, source session identifiers, and capture payloads are excluded. See [the plugin README](plugins/bb-plugin-trails/README.md) for machine selection, connection overrides, pagination, and development checks.
+
 ## Optional summaries
 
 The hub can summarize bounded session and day digests through a coding harness already installed and authenticated on that Mac. Collectors never need AI credentials. Trails supports:

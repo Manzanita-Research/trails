@@ -24,7 +24,10 @@
     "docs:dev": "bun run --cwd apps/docs dev",
     "docs:build": "bun run --cwd apps/docs build",
     "herdr:build": "bash plugins/herdr-trails/build.sh",
-    "herdr:fixture": "bun plugins/herdr-trails/dev/server.ts"
+    "herdr:fixture": "bun plugins/herdr-trails/dev/server.ts",
+    "bb:build": "bb plugin build plugins/bb-plugin-trails",
+    "bb:check": "bun run --cwd plugins/bb-plugin-trails check",
+    "bb:test": "bun test plugins/bb-plugin-trails"
   },
   "dependencies": {
     "effect": "^3.22.0",
