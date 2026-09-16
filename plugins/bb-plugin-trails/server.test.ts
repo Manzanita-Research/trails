@@ -67,7 +67,7 @@ test("thread queries resolve repository checkouts and machine on the server and 
     expect(await harness.behavior.callRpc("threadQuery", { threadId: "thread" })).toEqual({ repository: "Trails", report });
     const call = harness.experimental_hostRpcCalls.at(-1)!;
     expect(call.hostId).toBe("thread-host");
-    expect(call.input).toMatchObject({ view: "projects", repoPaths: ["/Users/example/code/trails", "/worktrees/other", "/worktrees/feature"] });
+    expect(call.input).toMatchObject({ view: "days", repoPaths: ["/Users/example/code/trails", "/worktrees/other", "/worktrees/feature"] });
     for (const override of [{ hostId: "elsewhere" }, { project: "other" }, { repoPaths: ["/"] }, { view: "status" }]) {
       await expect(harness.behavior.callRpc("threadQuery", { threadId: "thread", ...override })).rejects.toThrow();
     }

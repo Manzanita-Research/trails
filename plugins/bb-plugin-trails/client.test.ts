@@ -77,7 +77,7 @@ test("reads a real loopback server, rejects redirects, and propagates cancellati
   } finally { server.stop(true); }
 });
 
-test("repository scope includes checkout subdirectories and known worktrees, excluding neighboring repos and whole-day summaries", () => {
+test("repository scope includes checkout subdirectories and known worktrees, excluding neighboring repos and their summaries", () => {
   const data = structuredClone(fixture);
   data.sessions.push({ ...data.sessions[0], id: "subdir", cwd: "/Users/example/code/trails/packages/ui" });
   data.sessions.push({ ...data.sessions[0], id: "neighbor", cwd: "/Users/example/code/trails-other" });
@@ -86,6 +86,8 @@ test("repository scope includes checkout subdirectories and known worktrees, exc
   const report = buildReport(data, querySchema.parse({ view: "projects" }), "local hub", new Date(), paths);
   expect(report.projects.flatMap(project => project.sessions.map(session => session.id)).sort()).toEqual(["s1", "subdir", "worktree"]);
   const days = buildReport(data, querySchema.parse({ view: "days" }), "local hub", new Date(), paths);
-  expect(days.days.every(day => day.summary === null)).toBe(true);
+  expect(days.days[0].projects.find(project => project.path === "code/trails")?.summary).toBe("Built the plugin");
+  expect(days.days[0].projects.find(project => project.path === "worktrees/feature")?.summary).toBeNull();
+  expect(JSON.stringify(days)).not.toContain("Unrelated project summary");
   expect(days.days[0].sessionCount).toBe(3);
 });

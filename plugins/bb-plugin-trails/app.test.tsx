@@ -64,7 +64,7 @@ test("failed manual refresh preserves the last result and recovery clears the er
   } finally { slot.lifecycle.unmount(); }
 });
 
-test("thread tab queries its own thread, ignores persisted scope, and keeps both views repository-scoped", async () => {
+test("thread tab queries its own thread, ignores persisted scope, and groups sessions and repository summaries by workday", async () => {
   const queries: Record<string, unknown>[] = [];
   const app = await loadPluginApp(() => import("./app"));
   const slot = renderSlot(app.threadPanelActions[0]!, {
@@ -81,10 +81,13 @@ test("thread tab queries its own thread, ignores persisted scope, and keeps both
     await slot.findByText("Connected Trails to BB");
     expect(slot.queryByRole("combobox", { name: "Machine" })).toBeNull();
     expect(slot.queryByRole("button", { name: "Status" })).toBeNull();
-    expect(queries[0]).toEqual({ threadId: "project-thread", view: "projects", offset: 0, limit: 7 });
-    fireEvent.click(slot.getByRole("button", { name: "Days" }));
-    await waitFor(() => expect(queries.at(-1)?.view).toBe("days"));
+    expect(queries[0]).toEqual({ threadId: "project-thread", view: "days", offset: 0, limit: 7 });
+    expect(slot.queryByRole("navigation", { name: "Trails views" })).toBeNull();
     expect(queries.every(query => query.threadId === "project-thread" && !("project" in query) && !("hostId" in query))).toBe(true);
-    expect(slot.queryByText("Built the plugin")).toBeNull();
+    await slot.findByText("Built the plugin");
+    expect(slot.queryByText("Unrelated project summary")).toBeNull();
+    const card = slot.getByText("Built the plugin").closest("article")!;
+    expect(card.textContent).toContain("Connected Trails to BB");
+    expect(card.textContent).toContain("September 15");
   } finally { slot.lifecycle.unmount(); }
 });

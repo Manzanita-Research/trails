@@ -34,7 +34,7 @@ Leave `serverUrl` blank for discovery. Settings apply to the next query without 
 
 ## Repository activity beside a thread
 
-In a project thread, open the right panel's new-tab launcher and choose **Trails**. The tab opens on **Sessions**, with a **Days** view and work-date filter. BB resolves the thread's project and machine on every request, matching the project's source checkouts, their subdirectories, and known worktrees. The tab persists across reloads and does not expose a machine picker or a way to clear repository scope. Whole-day summaries are omitted because they may describe unrelated repositories.
+In a project thread, open the right panel's new-tab launcher and choose **Trails**. The tab shows sessions grouped by workday, with the repository’s day summary above its sessions and a work-date filter. BB resolves the thread's project and machine on every request, matching the project's source checkouts, their subdirectories, and known worktrees. The tab persists across reloads and does not expose a machine picker or a way to clear repository scope. Each project row shows its existing day summary, matched by work date and project path; summaries from other repositories stay excluded.
 
 The current BB SDK lists thread-panel actions in all existing threads. In a projectless thread, this tab displays a project-thread message and does not query Trails. It is not registered on the New thread screen.
 
@@ -44,10 +44,10 @@ Days honor the hub's workday boundary and timezone. Attention minutes merge over
 
 This integration is read-only and does not install Trails, write its configuration, store a second activity database, or expose a public port. The existing hub remains canonical. Activity queries carry project paths, machine names, first prompts, and summaries through BB to the browser or agent conversation. They exclude source session identifiers, digests, transcript bodies, and capture payloads. Responses are projected through runtime schemas, text is capped, and CLI/tool results are bounded. Agents should query only activity relevant to the request.
 
-HTTP calls use an eight-second timeout, reject redirects, and cap input at 32 MiB. Pages allow 1–20 rows, default seven; each day includes at most 30 projects and each project at most ten session details. Text fields are capped at 2,048 characters. Extremely large results require a narrower query. The full bootstrap is read per activity query because Trails does not currently provide a paginated read API.
+HTTP calls use an eight-second timeout, reject redirects, and cap input at 32 MiB. Pages allow 1–20 rows, default seven; each day includes at most 30 projects and each project at most ten session details. The repository tab includes up to ten recent sessions per workday, with a count when more exist. Text fields are capped at 2,048 characters. Extremely large results require a narrower query. The full bootstrap is read per activity query because Trails does not currently provide a paginated read API.
 
 ## Verification
 
-`bun test` covers configuration discovery, URL validation, workday rollover, overlapping attention, filters, pagination, response projection, failure isolation, cancellation, HTTP reads, host routing, live setting changes, RPC/tool/CLI boundaries, and disposal using BB's public SDK harness. `bun run check` validates all three entries; `bb plugin build` produces server, host, and app bundles.
+`bun test` covers configuration discovery, URL validation, workday rollover, overlapping attention, filters, pagination, response projection, failure isolation, cancellation, HTTP reads, host routing, live setting changes, RPC/tool/CLI boundaries, and disposal using BB's public SDK harness. From the repository root, `bun run bb:test` also exercises the plugin against the real server bootstrap to check project summary keys and workday grouping. `bun run check` validates all three entries; `bb plugin build` produces server, host, and app bundles.
 
 The package is self-contained: it uses public BB SDK APIs and declares runtime dependencies. Generated bundles and `node_modules` stay untracked. It can be installed from this repository using `--subdirectory plugins/bb-plugin-trails`; it has not been published to a marketplace.

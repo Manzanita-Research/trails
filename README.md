@@ -112,7 +112,7 @@ bb plugin build
 bb plugin install . --yes
 ```
 
-Open **Trails** in BB and choose the machine with your collector configuration. In a project thread, choose **Trails** from the right panel's new-tab launcher for repository-scoped Sessions and Days, including known worktrees. Commands inside a BB thread use that thread's machine:
+Open **Trails** in BB and choose the machine with your collector configuration. In a project thread, choose **Trails** from the right panel's new-tab launcher for repository-scoped sessions grouped by workday, with day summaries and known worktrees included. Commands inside a BB thread use that thread's machine:
 
 ```sh
 bb trails days --limit 7

@@ -9,7 +9,7 @@ export function TrailsPage({ threadId }: { threadId?: string } = {}) {
   const rpc = useRpc<typeof rpcContract>();
   const [hosts, setHosts] = useState<{ id: string; name: string }[]>([]);
   const [hostId, setHostId] = useState("");
-  const [view, setView] = useState<"days" | "projects" | "status">(threadId ? "projects" : "days");
+  const [view, setView] = useState<"days" | "projects" | "status">("days");
   const [offset, setOffset] = useState(0);
   const [project, setProject] = useState<string | undefined>();
   const [date, setDate] = useState("");
@@ -38,7 +38,7 @@ export function TrailsPage({ threadId }: { threadId?: string } = {}) {
       try {
         if (threadId) {
           const result = await rpc.call("threadQuery", {
-            threadId, view: view === "days" ? "days" : "projects", offset, limit: 7,
+            threadId, view: "days", offset, limit: 7,
             ...(date ? { date } : {}),
           });
           if (active) { setRepository(result.repository); setReport(result.report); setError(null); }
@@ -68,9 +68,9 @@ export function TrailsPage({ threadId }: { threadId?: string } = {}) {
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <nav aria-label="Trails views" className="flex gap-1">
+        {!threadId && <nav aria-label="Trails views" className="flex gap-1">
           {(["days", "projects", "status"] as const).filter(tab => !threadId || tab !== "status").map(tab => <Button key={tab} variant="ghost" size="sm" aria-pressed={view === tab} onClick={() => changeView(tab)}>{tab === "days" ? "Days" : tab === "projects" ? (threadId ? "Sessions" : "Projects") : "Status"}</Button>)}
-        </nav>
+        </nav>}
         {view !== "status" && <div className="flex items-center gap-2"><input type="date" aria-label="Work date" value={date} onChange={event => { setDate(event.target.value); setOffset(0); }} className="max-w-full rounded border border-input bg-background px-2 py-1 text-sm" />{date && <Button variant="ghost" size="sm" onClick={() => { setDate(""); setOffset(0); }}>All dates</Button>}</div>}
       </div>
       {project && !threadId && <div className="flex min-w-0 items-center gap-2 text-sm"><span className="min-w-0 break-all text-muted-foreground">{project}</span><Button size="sm" variant="ghost" onClick={() => { setProject(undefined); setOffset(0); }}>Clear</Button></div>}
@@ -81,8 +81,17 @@ export function TrailsPage({ threadId }: { threadId?: string } = {}) {
         {report.warnings.map(warning => <p role="status" key={warning} className="text-sm text-muted-foreground">{warning}</p>)}
         {view === "days" && report.days.map(day => <article key={day.date} className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3"><h2 className="font-medium">{new Date(`${day.date}T12:00:00Z`).toLocaleDateString(undefined, { timeZone: "UTC", weekday: "short", month: "long", day: "numeric", year: "numeric" })}</h2><span className="text-sm text-muted-foreground">{duration(day.focusMinutes)} attention · {day.sessionCount} {day.sessionCount === 1 ? "session" : "sessions"}</span></div>
-          {day.summary && <p className="whitespace-pre-wrap break-words px-4 pt-3 text-sm">{day.summary}</p>}
-          <ul className="divide-y divide-border px-4">{day.projects.map(item => <li key={item.path}><button className="flex w-full items-center justify-between gap-3 py-3 text-left text-sm hover:text-primary" onClick={() => { setProject(item.path); setDate(day.date); setView("projects"); setOffset(0); }}><span className="min-w-0 break-words">{item.name}</span><span className="shrink-0 text-muted-foreground">{duration(item.focusMinutes)}</span></button></li>)}</ul>
+          {threadId ? <>
+            {day.projects.filter(item => item.summary).map(item => <div key={item.path} className="px-4 pt-3">
+              {day.projects.length > 1 && <p className="text-xs text-muted-foreground">{item.name}</p>}
+              <p className="whitespace-pre-wrap break-words pb-3 text-sm">{item.summary}</p>
+            </div>)}
+            <ul className="divide-y divide-border px-4">{day.sessions.map(session => <li key={session.id} className="space-y-1 py-3">
+              <p className="break-words text-xs text-muted-foreground">{session.source} · {session.machine} · {timestamp(session.end)}{session.branch ? ` · ${session.branch}` : ""}</p>
+              <p className="whitespace-pre-wrap break-words text-sm">{session.summary ?? session.firstPrompt ?? "Session"}</p>
+            </li>)}</ul>
+            {day.sessionCount > day.sessions.length && <p className="px-4 pb-3 text-xs text-muted-foreground">Latest {day.sessions.length} of {day.sessionCount} sessions</p>}
+          </> : <ul className="divide-y divide-border px-4">{day.projects.map(item => <li key={item.path}><button className="flex w-full items-center justify-between gap-3 py-3 text-left text-sm hover:text-primary" onClick={() => { setProject(item.path); setDate(day.date); setView("projects"); setOffset(0); }}><span className="min-w-0 break-words">{item.name}</span><span className="shrink-0 text-muted-foreground">{duration(item.focusMinutes)}</span></button>{item.summary && <p className="whitespace-pre-wrap break-words pb-3 text-sm">{item.summary}</p>}</li>)}</ul>}
           {day.projectCount > day.projects.length && <p className="px-4 pb-3 text-xs text-muted-foreground">Showing {day.projects.length} of {day.projectCount} projects</p>}
         </article>)}
         {view === "projects" && report.projects.map(item => <article key={item.path} className="rounded-lg border border-border bg-card p-4">

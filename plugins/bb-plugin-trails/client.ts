@@ -106,6 +106,12 @@ export function buildReport(value: unknown, query: Query, source: Report["source
   const dayRows = [...days].sort(([a], [b]) => b.localeCompare(a));
   const projectRows = [...projects].map(([path, sessions]) => ({ path, sessions: sessions.sort((a, b) => b.end.localeCompare(a.end)) }))
     .sort((a, b) => b.sessions[0].end.localeCompare(a.sessions[0].end) || a.path.localeCompare(b.path));
+  const sessionRow = (session: Session) => ({
+    id: clip(session.id), source: clip(session.source), machine: clip(session.machine.name), branch: nullable(session.branch),
+    start: clip(session.start), end: clip(session.end), firstPrompt: nullable(session.firstPrompt),
+    summary: nullable(bootstrap.summaries.sessions[session.id]),
+  });
+  const scopedSessions = repoPaths ? projectRows.flatMap(project => project.sessions).sort((a, b) => b.end.localeCompare(a.end)) : [];
   const total = query.view === "days" ? dayRows.length : projectRows.length;
   const report = emptyReport(source, now);
   report.revision = bootstrap.revision;
@@ -113,22 +119,20 @@ export function buildReport(value: unknown, query: Query, source: Report["source
   report.total = total;
   report.nextOffset = query.offset + query.limit < total ? query.offset + query.limit : null;
   if (query.view === "days") report.days = dayRows.slice(query.offset, query.offset + query.limit).map(([date, map]) => ({
-    date, summary: repoPaths ? null : nullable(bootstrap.summaries.days[date]),
+    date,
     focusMinutes: focusMinutes(new Set([...map.values()].flatMap(activity => [...activity.minutes])), halo),
     sessionCount: new Set([...map.values()].flatMap(activity => [...activity.sessions])).size,
+    sessions: scopedSessions.filter(session => map.get(projectPath(session.cwd))?.sessions.has(session.id)).slice(0, 10).map(sessionRow),
     projectCount: map.size,
     projects: [...map].map(([path, activity]) => ({ path: clip(path), name: name(path),
+      summary: nullable(bootstrap.summaries.days[`${date}|${path}`]),
       focusMinutes: focusMinutes(activity.minutes, halo), sessionCount: activity.sessions.size,
     })).sort((a, b) => b.focusMinutes - a.focusMinutes || a.path.localeCompare(b.path)).slice(0, 30),
   }));
   if (query.view === "projects") report.projects = projectRows.slice(query.offset, query.offset + query.limit).map(({ path, sessions }) => ({
     path: clip(path), name: name(path), sessionCount: sessions.length, latestAt: clip(sessions[0].end),
     focusMinutes: [...days.values()].reduce((sum, map) => sum + focusMinutes(map.get(path)?.minutes ?? new Set(), halo), 0),
-    sessions: sessions.slice(0, 10).map(session => ({
-      id: clip(session.id), source: clip(session.source), machine: clip(session.machine.name), branch: nullable(session.branch),
-      start: clip(session.start), end: clip(session.end), firstPrompt: nullable(session.firstPrompt),
-      summary: nullable(bootstrap.summaries.sessions[session.id]),
-    })),
+    sessions: sessions.slice(0, 10).map(sessionRow),
   }));
   return report;
 }

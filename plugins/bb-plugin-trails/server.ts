@@ -35,8 +35,7 @@ const duration = (minutes: number) => `${Math.floor(minutes / 60)}h ${minutes % 
 export function formatReport(report: Report, view: Query["view"]) {
   const lines = [`Trails · ${report.source} · fetched ${report.fetchedAt}`];
   if (view === "days") for (const day of report.days) {
-    lines.push(`${day.date}  ${duration(day.focusMinutes)}  ${day.sessionCount} sessions`, ...day.projects.map(project => `  ${project.name}  ${duration(project.focusMinutes)}  ${project.path}`));
-    if (day.summary) lines.push(`  ${day.summary}`);
+    lines.push(`${day.date}  ${duration(day.focusMinutes)}  ${day.sessionCount} sessions`, ...day.projects.map(project => `  ${project.name}  ${duration(project.focusMinutes)}  ${project.path}${project.summary ? `\n  ${project.summary}` : ""}`));
     if (day.projectCount > day.projects.length) lines.push(`  Showing ${day.projects.length} of ${day.projectCount} projects`);
   }
   if (view === "projects") for (const project of report.projects) {

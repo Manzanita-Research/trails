@@ -24,8 +24,9 @@ export const reportSchema = z.object({
   fetchedAt: z.string(), timezone: text.nullable(), revision: z.number().nullable(),
   total: z.number(), nextOffset: z.number().nullable(), warnings: z.array(text).max(10),
   days: z.array(z.object({
-    date: text, focusMinutes: z.number(), sessionCount: z.number(), summary: text.nullable(),
-    projects: z.array(projectSchema).max(30), projectCount: z.number(),
+    date: text, focusMinutes: z.number(), sessionCount: z.number(),
+    sessions: z.array(sessionSchema).max(10),
+    projects: z.array(projectSchema.extend({ summary: text.nullable() })).max(30), projectCount: z.number(),
   })).max(20),
   projects: z.array(projectSchema.extend({
     latestAt: text, sessions: z.array(sessionSchema).max(10),
@@ -46,7 +47,7 @@ export const rpcContract = defineRpcContract({
   query: { input: requestSchema, output: reportSchema },
   threadQuery: {
     input: querySchema.omit({ project: true }).extend({
-      threadId: z.string().min(1), view: z.enum(["days", "projects"]).default("projects"),
+      threadId: z.string().min(1), view: z.enum(["days", "projects"]).default("days"),
     }).strict(),
     output: z.object({ repository: text, report: reportSchema }),
   },

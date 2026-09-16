@@ -27,7 +27,7 @@
     "herdr:fixture": "bun plugins/herdr-trails/dev/server.ts",
     "bb:build": "bb plugin build plugins/bb-plugin-trails",
     "bb:check": "bun run --cwd plugins/bb-plugin-trails check",
-    "bb:test": "bun test plugins/bb-plugin-trails"
+    "bb:test": "bun test plugins/bb-plugin-trails test/bb-plugin-contract.test.ts"
   },
   "dependencies": {
     "effect": "^3.22.0",
