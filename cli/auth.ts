@@ -1,3 +1,4 @@
+import { terminalText } from "../shared/terminal"
 import { writeFileSync } from "node:fs"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { initializeOwner, issueCredential, ownerTokenPath, readPrivateFile, revokeCredential, rotateOwner } from "../server/auth"
@@ -35,7 +36,7 @@ export function runAuthCommand(args: string[]): void {
           : { server: normalized, token: credential.token }
         // Refuse to overwrite another credential/config file.
         writeFileSync(output, JSON.stringify(config, null, 2) + "\n", { flag: "wx", mode: 0o600 })
-        console.log(`Created ${credential.role} credential ${credential.id}. Transfer ${output} privately.`)
+        console.log(terminalText(`Created ${credential.role} credential ${credential.id}. Transfer ${output} privately.`))
       })()
     } else {
       throw new Error("auth requires owner | rotate-owner | list | revoke ID | pair --server URL --output FILE [--device-id ID] [--name NAME] | read --server URL --output FILE")
