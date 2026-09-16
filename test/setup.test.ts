@@ -63,6 +63,16 @@ describe("one-command setup", () => {
     expect(events).toContain("advertise:https://hub.example.ts.net/")
   })
 
+  test("does not advertise loopback or continue setup when exposure removal fails", async () => {
+    const events: string[] = []
+    const actions = {
+      ...recordingActions(events),
+      install: async () => { throw new Error("Tailscale exposure verification failed") },
+    }
+    await expect(runSetup({ mode: "hub" }, actions)).rejects.toThrow("exposure verification failed")
+    expect(events).toEqual(["configure:http://127.0.0.1:7412/:default"])
+  })
+
   test("checks a remote hub before changing collector state", async () => {
     const events: string[] = []
     const server = "https://hub.example.ts.net/"

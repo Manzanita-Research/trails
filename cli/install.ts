@@ -15,6 +15,7 @@ import { constants } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { COLLECTOR_CONFIG_PATH, isLegacyProviderHubConfig, loadCollectorConfig, loadHubConfig, writeHubConfig } from "./config"
+import { exposureMessage, parseExposureState, prepareExposure, type ExposureState } from "./exposure"
 export type InstallKind = "server" | "collector"
 
 export interface InstallOptions {
@@ -36,7 +37,7 @@ interface LaunchDefinition {
 const destination = join(homedir(), ".local/bin/trails")
 const stateDirectory = join(homedir(), ".local/state/trails")
 const launchAgentDirectory = join(homedir(), "Library/LaunchAgents")
-const tailscaleProxy = "http://127.0.0.1:7412"
+const exposurePath = join(stateDirectory, "exposure.json")
 const legacyAuthPath = join(homedir(), ".config/trails/auth.json")
 const legacyProviders = new Set(["openrouter", "chatgpt", "openai-api"])
 
@@ -106,23 +107,6 @@ function definitions(kind: InstallKind): LaunchDefinition[] {
       calendarHour: 3,
     },
   ]
-}
-
-function findRootProxy(value: unknown): string | null {
-  if (typeof value !== "object" || value === null) return null
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "/") {
-      if (typeof child === "string") return child
-      if (typeof child === "object" && child !== null) {
-        for (const field of ["Proxy", "proxy", "Target", "target"]) {
-          if (field in child && typeof child[field] === "string") return child[field]
-        }
-      }
-    }
-    const nested = findRootProxy(child)
-    if (nested) return nested
-  }
-  return null
 }
 
 function run(executable: string, args: ReadonlyArray<string>): { readonly exitCode: number; readonly stdout: string; readonly stderr: string } {
@@ -321,25 +305,26 @@ export async function install(options: InstallOptions): Promise<void> {
   }
   const service = options.kind === "server" ? normalizeTailscaleService(options.service) : undefined
   const exposeThroughTailscale = options.kind === "server" && (options.tailscale === true || service !== undefined)
-  const tailscale = exposeThroughTailscale ? tailscalePath() : null
-  if (exposeThroughTailscale && !tailscale) throw new Error("Tailscale is required for private network access")
+  let previousExposure: ExposureState | null = null
+  if (options.kind === "server") {
+    try {
+      previousExposure = parseExposureState(JSON.parse(await readFile(exposurePath, "utf8")))
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+    }
+  }
+  const tailscale = options.kind === "server" ? tailscalePath() : null
+  const exposure = options.kind === "server" ? prepareExposure(
+    exposeThroughTailscale ? { mode: "tailscale", service } : { mode: "local" },
+    tailscale ? {
+      run: (args) => run(tailscale, args),
+      host: (service) => new URL(currentTailnetUrl(service)).hostname,
+    } : null,
+    previousExposure,
+  ) : null
   await writableAncestor(destination)
   await writableAncestor(launchAgentDirectory)
   await writableAncestor(stateDirectory)
-
-  if (tailscale && !service) {
-    const status = run(tailscale, ["serve", "status", "--json"])
-    if (status.exitCode !== 0) throw new Error("unable to inspect Tailscale Serve status")
-    let rootProxy: string | null
-    try {
-      rootProxy = findRootProxy(JSON.parse(status.stdout) as unknown)
-    } catch {
-      throw new Error("Tailscale Serve returned invalid status")
-    }
-    if (rootProxy && rootProxy !== tailscaleProxy) {
-      throw new Error(`Tailscale Serve root already points to ${rootProxy}`)
-    }
-  }
 
   const planned = definitions(options.kind)
   console.log(`Executable: ${process.execPath} -> ${destination}`)
@@ -347,11 +332,8 @@ export async function install(options: InstallOptions): Promise<void> {
     console.log(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`)
   }
   if (options.kind === "server") {
-    if (exposeThroughTailscale) {
-      console.log(`Tailscale preflight: ${service ? `${service} https:443` : "node root"} -> ${tailscaleProxy}`)
-    } else {
-      console.log("Access: local only at http://127.0.0.1:7412/")
-    }
+    if (previousExposure) console.log(`Previous access mode: ${previousExposure.mode}${previousExposure.mode === "tailscale" && previousExposure.service ? ` ${previousExposure.service}` : ""}`)
+    console.log(exposure!.description)
     if (!aiConfig) console.warn("Summaries are off; run `trails summaries use auto` on the hub to enable them")
   }
   if (options.dryRun) return
@@ -392,13 +374,9 @@ export async function install(options: InstallOptions): Promise<void> {
     const kickstart = run(launchctl, ["kickstart", "-k", service])
     if (kickstart.exitCode !== 0) throw new Error(`failed to start ${definition.label}`)
   }
-  if (tailscale) {
-    const args = service
-      ? ["serve", `--service=${service}`, "--https=443", "--yes", tailscaleProxy]
-      : ["serve", "--bg", "--yes", tailscaleProxy]
-    const applied = run(tailscale, args)
-    if (applied.exitCode !== 0) {
-      throw new Error(`failed to configure Tailscale Serve: ${applied.stderr.trim()}`)
-    }
+  if (exposure) {
+    const verified = exposure.apply()
+    await atomicText(exposurePath, `${JSON.stringify(verified)}\n`)
+    console.log(exposureMessage(verified))
   }
 }
