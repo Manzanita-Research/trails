@@ -40,10 +40,16 @@ export const reportSchema = z.object({
 });
 export type Report = z.infer<typeof reportSchema>;
 export const hostContract = defineRpcContract({
-  query: { input: querySchema.extend({ serverUrl: z.string().max(2048) }), output: reportSchema },
+  query: { input: querySchema.extend({ serverUrl: z.string().max(2048), repoPaths: z.array(z.string().min(1).max(2048)).min(1).max(1000).optional() }), output: reportSchema },
 });
 export const rpcContract = defineRpcContract({
   query: { input: requestSchema, output: reportSchema },
+  threadQuery: {
+    input: querySchema.omit({ project: true }).extend({
+      threadId: z.string().min(1), view: z.enum(["days", "projects"]).default("projects"),
+    }).strict(),
+    output: z.object({ repository: text, report: reportSchema }),
+  },
   hosts: { input: z.null(), output: z.object({
     hosts: z.array(z.object({ id: z.string(), name: z.string() })), defaultHostId: z.string().nullable(),
   }) },

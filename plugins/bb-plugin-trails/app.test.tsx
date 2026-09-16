@@ -63,3 +63,28 @@ test("failed manual refresh preserves the last result and recovery clears the er
     expect(slot.queryByText("Built the plugin")).not.toBeNull();
   } finally { slot.lifecycle.unmount(); }
 });
+
+test("thread tab queries its own thread, ignores persisted scope, and keeps both views repository-scoped", async () => {
+  const queries: Record<string, unknown>[] = [];
+  const app = await loadPluginApp(() => import("./app"));
+  const slot = renderSlot(app.threadPanelActions[0]!, {
+    threadId: "project-thread", params: { hostId: "wrong", project: "other" },
+  }, { rpc: {
+    threadQuery: input => {
+      const query = input as Record<string, unknown>;
+      queries.push(query);
+      const { threadId, ...fields } = query;
+      return { repository: "Trails repository", report: buildReport(fixture, querySchema.parse(fields), "local hub", new Date(), ["/Users/example/code/trails"]) };
+    },
+  } });
+  try {
+    await slot.findByText("Connected Trails to BB");
+    expect(slot.queryByRole("combobox", { name: "Machine" })).toBeNull();
+    expect(slot.queryByRole("button", { name: "Status" })).toBeNull();
+    expect(queries[0]).toEqual({ threadId: "project-thread", view: "projects", offset: 0, limit: 7 });
+    fireEvent.click(slot.getByRole("button", { name: "Days" }));
+    await waitFor(() => expect(queries.at(-1)?.view).toBe("days"));
+    expect(queries.every(query => query.threadId === "project-thread" && !("project" in query) && !("hostId" in query))).toBe(true);
+    expect(slot.queryByText("Built the plugin")).toBeNull();
+  } finally { slot.lifecycle.unmount(); }
+});

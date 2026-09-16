@@ -52,3 +52,37 @@ test("uses only public SDK and package-local imports", () => {
   const scan = experimental_scanPublicSdkOnly(import.meta.dir, { allow: [/^bun:test$/, /^react$/, /^@radix-ui\/react-slot$/, /^class-variance-authority$/, /^clsx$/, /^tailwind-merge$/, /^@testing-library\/react$/, /^@happy-dom\/global-registrator$/] });
   expect(scan.violations).toEqual([]); expect(scan.privateDependencies).toEqual([]);
 });
+
+test("thread queries resolve repository checkouts and machine on the server and reject scope overrides", async () => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "trails", settings: { machine: "wrong-default" }, sdk: {
+    threads: { get: async () => makeThreadResponse({ projectId: "repo", environmentId: "worktree" }) },
+    projects: { get: async () => ({ id: "repo", kind: "standard", name: "Trails", sources: [{ path: "/Users/example/code/trails" }] }) as never },
+    environments: {
+      get: async () => ({ projectId: "repo", hostId: "thread-host", path: "/worktrees/feature" }) as never,
+      list: async () => [{ projectId: "repo", path: "/worktrees/other" }, { projectId: "unrelated", path: "/private/other" }] as never,
+    },
+  }, experimental_callHostRpc: async () => report });
+  plugin(bb);
+  try {
+    expect(await harness.behavior.callRpc("threadQuery", { threadId: "thread" })).toEqual({ repository: "Trails", report });
+    const call = harness.experimental_hostRpcCalls.at(-1)!;
+    expect(call.hostId).toBe("thread-host");
+    expect(call.input).toMatchObject({ view: "projects", repoPaths: ["/Users/example/code/trails", "/worktrees/other", "/worktrees/feature"] });
+    for (const override of [{ hostId: "elsewhere" }, { project: "other" }, { repoPaths: ["/"] }, { view: "status" }]) {
+      await expect(harness.behavior.callRpc("threadQuery", { threadId: "thread", ...override })).rejects.toThrow();
+    }
+    expect(harness.experimental_hostRpcCalls).toHaveLength(1);
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+test("projectless threads cannot fetch global activity through the repository panel", async () => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "trails", sdk: {
+    threads: { get: async () => makeThreadResponse({ projectId: "personal" }) },
+    projects: { get: async () => ({ id: "personal", kind: "personal" }) as never },
+  } });
+  plugin(bb);
+  try {
+    await expect(harness.behavior.callRpc("threadQuery", { threadId: "thread" })).rejects.toThrow("project thread");
+    expect(harness.experimental_hostRpcCalls).toHaveLength(0);
+  } finally { await harness.lifecycle.dispose(); }
+});

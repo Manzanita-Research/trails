@@ -76,3 +76,16 @@ test("reads a real loopback server, rejects redirects, and propagates cancellati
     await expect(queryTrails(querySchema.parse({}), base, controller.signal)).rejects.toThrow();
   } finally { server.stop(true); }
 });
+
+test("repository scope includes checkout subdirectories and known worktrees, excluding neighboring repos and whole-day summaries", () => {
+  const data = structuredClone(fixture);
+  data.sessions.push({ ...data.sessions[0], id: "subdir", cwd: "/Users/example/code/trails/packages/ui" });
+  data.sessions.push({ ...data.sessions[0], id: "neighbor", cwd: "/Users/example/code/trails-other" });
+  data.sessions.push({ ...data.sessions[0], id: "worktree", cwd: "/Users/example/worktrees/feature" });
+  const paths = ["/Users/example/code/trails/", "/Users/example/worktrees/feature"];
+  const report = buildReport(data, querySchema.parse({ view: "projects" }), "local hub", new Date(), paths);
+  expect(report.projects.flatMap(project => project.sessions.map(session => session.id)).sort()).toEqual(["s1", "subdir", "worktree"]);
+  const days = buildReport(data, querySchema.parse({ view: "days" }), "local hub", new Date(), paths);
+  expect(days.days.every(day => day.summary === null)).toBe(true);
+  expect(days.days[0].sessionCount).toBe(3);
+});

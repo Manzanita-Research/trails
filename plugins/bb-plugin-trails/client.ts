@@ -73,13 +73,15 @@ export function focusMinutes(minutes: Set<number>, halo: number): number {
   }
   return total;
 }
-export function buildReport(value: unknown, query: Query, source: Report["source"], now = new Date()): Report {
+export function buildReport(value: unknown, query: Query, source: Report["source"], now = new Date(), repoPaths?: string[]): Report {
   const bootstrap = bootstrapSchema.parse(value);
+  const repositoryPaths = repoPaths?.map(path => projectPath(path.replace(/\/+$/, "")));
   type Activity = { minutes: Set<number>; sessions: Set<string> };
   const days = new Map<string, Map<string, Activity>>();
   const projects = new Map<string, Session[]>();
   for (const session of bootstrap.sessions) {
     const path = projectPath(session.cwd);
+    if (repositoryPaths && !repositoryPaths.some(root => path === root || path.startsWith(`${root}/`))) continue;
     if (query.project && path !== query.project) continue;
     let included = !query.date;
     for (const [date, minute, , userEvents] of session.activity) {
@@ -111,7 +113,7 @@ export function buildReport(value: unknown, query: Query, source: Report["source
   report.total = total;
   report.nextOffset = query.offset + query.limit < total ? query.offset + query.limit : null;
   if (query.view === "days") report.days = dayRows.slice(query.offset, query.offset + query.limit).map(([date, map]) => ({
-    date, summary: nullable(bootstrap.summaries.days[date]),
+    date, summary: repoPaths ? null : nullable(bootstrap.summaries.days[date]),
     focusMinutes: focusMinutes(new Set([...map.values()].flatMap(activity => [...activity.minutes])), halo),
     sessionCount: new Set([...map.values()].flatMap(activity => [...activity.sessions])).size,
     projectCount: map.size,
@@ -155,7 +157,7 @@ export async function requestJson(base: string, path: string, signal: AbortSigna
   } finally { await reader.cancel(); reader.releaseLock(); }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
-export async function queryTrails(query: Query, serverUrl: string, signal: AbortSignal, options: { home?: string; fetch?: typeof fetch } = {}): Promise<Report> {
+export async function queryTrails(query: Query, serverUrl: string, signal: AbortSignal, options: { home?: string; fetch?: typeof fetch; repoPaths?: string[] } = {}): Promise<Report> {
   signal.throwIfAborted();
   const connection = await resolveServer(serverUrl, options.home);
   const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(8000)]);
@@ -164,7 +166,7 @@ export async function queryTrails(query: Query, serverUrl: string, signal: Abort
     if (query.view !== "status") {
       const value = await read("/api/bootstrap");
       signal.throwIfAborted();
-      return buildReport(value, query, connection.source);
+      return buildReport(value, query, connection.source, new Date(), options.repoPaths);
     }
     const report = emptyReport(connection.source);
     const results = await Promise.allSettled([read("/api/machines").then(value => machinesSchema.parse(value)), read("/api/harnesses").then(value => harnessSchema.parse(value))]);

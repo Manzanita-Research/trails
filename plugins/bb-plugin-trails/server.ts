@@ -69,7 +69,7 @@ export default function plugin(bb: BbPluginApi) {
     const list = machines.map(machine => ({ id: machine.id, name: machine.name }));
     return { hosts: list, defaultHostId: list.find(machine => machine.id === config.machine)?.id ?? (list.length === 1 ? list[0].id : null) };
   }
-  async function query(input: z.infer<typeof requestSchema>, threadId?: string, signal?: AbortSignal): Promise<Report> {
+  async function query(input: z.infer<typeof requestSchema>, threadId?: string, signal?: AbortSignal, repoPaths?: string[]): Promise<Report> {
     const { hostId: requested, ...query } = input;
     const config = await settings.get();
     let hostId = requested;
@@ -79,13 +79,34 @@ export default function plugin(bb: BbPluginApi) {
     }
     hostId ||= config.machine || (await hosts()).defaultHostId || undefined;
     if (!hostId) throw new Error("Choose a machine in Trails, or run bb trails hosts and pass --machine HOST_ID.");
-    const result = await host.call("query", { ...query, serverUrl: config.serverUrl }, {
+    const result = await host.call("query", { ...query, serverUrl: config.serverUrl, ...(repoPaths ? { repoPaths } : {}) }, {
       hostId, signal: signal ? AbortSignal.any([signal, lifecycle.signal]) : lifecycle.signal,
     });
     if (Buffer.byteLength(JSON.stringify(result)) > 800_000) throw new Error("Trails result is too large. Use a smaller --limit or a specific --date or --project.");
     return result;
   }
-  bb.rpc.register(rpcContract, { hosts, query: input => query(input) });
+  bb.rpc.register(rpcContract, {
+    hosts,
+    query: input => query(input),
+    async threadQuery({ threadId, ...input }) {
+      const thread = await bb.sdk.threads.get({ threadId });
+      if (!thread.projectId) throw new Error("Open Trails in a project thread to see repository activity.");
+      const project = await bb.sdk.projects.get({ projectId: thread.projectId });
+      if (project.kind !== "standard") throw new Error("Open Trails in a project thread to see repository activity.");
+      if (!thread.environmentId) throw new Error("This thread does not have a checkout yet.");
+      const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
+      if (environment.projectId !== project.id) throw new Error("The thread checkout no longer belongs to this project.");
+      const environments = await bb.sdk.environments.list({ projectId: project.id });
+      const repoPaths = [...new Set([
+        ...project.sources.map(source => source.path),
+        ...environments.filter(item => item.projectId === project.id).map(item => item.path),
+        environment.path,
+      ].filter((path): path is string => Boolean(path)))];
+      if (!repoPaths.length) throw new Error("This project has no checkout path to match in Trails.");
+      const report = await query({ ...input, hostId: environment.hostId }, undefined, undefined, repoPaths);
+      return { repository: project.name, report };
+    },
+  });
   bb.cli.register({
     name: "trails", summary: "Read Trails working days, project activity, and collector health",
     commands: [

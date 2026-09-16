@@ -5,7 +5,7 @@ import { queryTrails } from "./client";
 export default experimental_defineHostEntry({
   contract: hostContract,
   handlers: {
-    query: ({ serverUrl, ...query }, context) => queryTrails(query, serverUrl,
-      AbortSignal.any([context.signal, context.lifecycle.signal])),
+    query: ({ serverUrl, repoPaths, ...query }, context) => queryTrails(query, serverUrl,
+      AbortSignal.any([context.signal, context.lifecycle.signal]), { repoPaths }),
   },
 });

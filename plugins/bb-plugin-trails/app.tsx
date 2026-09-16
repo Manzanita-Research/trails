@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, useRpc, type PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import { Button } from "./components/ui/button";
 import type { rpcContract, Report } from "./contract";
 
 const duration = (minutes: number) => minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 const timestamp = (value: string | null) => value ? new Date(value).toLocaleString() : "Never";
-export function TrailsPage() {
+export function TrailsPage({ threadId }: { threadId?: string } = {}) {
   const rpc = useRpc<typeof rpcContract>();
   const [hosts, setHosts] = useState<{ id: string; name: string }[]>([]);
   const [hostId, setHostId] = useState("");
-  const [view, setView] = useState<"days" | "projects" | "status">("days");
+  const [view, setView] = useState<"days" | "projects" | "status">(threadId ? "projects" : "days");
   const [offset, setOffset] = useState(0);
   const [project, setProject] = useState<string | undefined>();
   const [date, setDate] = useState("");
@@ -18,55 +18,65 @@ export function TrailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hostsReady, setHostsReady] = useState(false);
+  const [repository, setRepository] = useState("Repository activity");
   useEffect(() => {
+    if (threadId) return;
     let active = true;
     rpc.call("hosts").then(result => {
       if (!active) return;
       setHosts(result.hosts); setHostId(current => current || result.defaultHostId || ""); setHostsReady(true);
     }, cause => { if (active) { setError(cause instanceof Error ? cause.message : "Cannot load machines"); setHostsReady(true); } });
     return () => { active = false; };
-  }, [rpc, refresh]);
-  useEffect(() => { setReport(null); setError(null); }, [hostId, view, offset, project, date]);
+  }, [rpc, refresh, threadId]);
+  useEffect(() => { setReport(null); setError(null); }, [hostId, view, offset, project, date, threadId]);
   useEffect(() => {
-    if (!hostId) { setReport(null); setLoading(false); return; }
+    if (!hostId && !threadId) { setReport(null); setLoading(false); return; }
     let active = true, busy = false;
     const load = async () => {
       if (busy) return;
       busy = true; setLoading(true);
       try {
-        const result = await rpc.call("query", { hostId, view, offset, limit: 7,
-          ...(view !== "status" && project ? { project } : {}),
-          ...(view !== "status" && date ? { date } : {}) });
-        if (active) { setReport(result); setError(null); }
+        if (threadId) {
+          const result = await rpc.call("threadQuery", {
+            threadId, view: view === "days" ? "days" : "projects", offset, limit: 7,
+            ...(date ? { date } : {}),
+          });
+          if (active) { setRepository(result.repository); setReport(result.report); setError(null); }
+        } else {
+          const result = await rpc.call("query", { hostId, view, offset, limit: 7,
+            ...(view !== "status" && project ? { project } : {}),
+            ...(view !== "status" && date ? { date } : {}) });
+          if (active) { setReport(result); setError(null); }
+        }
       } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : "Trails is unavailable"); }
       finally { busy = false; if (active) setLoading(false); }
     };
     void load();
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
     return () => { active = false; clearInterval(timer); };
-  }, [rpc, hostId, view, offset, project, date, refresh]);
+  }, [rpc, hostId, view, offset, project, date, refresh, threadId]);
   function changeView(next: typeof view) { setView(next); setOffset(0); setProject(undefined); }
   return <div className="h-full min-h-0 flex-1 overflow-y-auto text-foreground">
     <div className="mx-auto w-full max-w-4xl space-y-5 px-4 py-5 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 className="text-xl font-semibold">Trails</h1><p className="text-sm text-muted-foreground">Where your days actually went.</p></div>
+        <div><h1 className="break-words text-xl font-semibold">{threadId ? repository : "Trails"}</h1>{!threadId && <p className="text-sm text-muted-foreground">Where your days actually went.</p>}</div>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <select aria-label="Machine" value={hostId} onChange={event => { setHostId(event.target.value); setOffset(0); }} className="h-9 max-w-full rounded-md border border-input bg-background px-2 text-sm">
+          {!threadId && <select aria-label="Machine" value={hostId} onChange={event => { setHostId(event.target.value); setOffset(0); }} className="h-9 max-w-full rounded-md border border-input bg-background px-2 text-sm">
             <option value="">Choose a machine</option>{hosts.map(host => <option key={host.id} value={host.id}>{host.name}</option>)}
-          </select>
+          </select>}
           <Button variant="outline" size="sm" disabled={loading} onClick={() => setRefresh(value => value + 1)}>Refresh</Button>
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav aria-label="Trails views" className="flex gap-1">
-          {(["days", "projects", "status"] as const).map(tab => <Button key={tab} variant="ghost" size="sm" aria-pressed={view === tab} onClick={() => changeView(tab)}>{tab === "days" ? "Days" : tab === "projects" ? "Projects" : "Status"}</Button>)}
+          {(["days", "projects", "status"] as const).filter(tab => !threadId || tab !== "status").map(tab => <Button key={tab} variant="ghost" size="sm" aria-pressed={view === tab} onClick={() => changeView(tab)}>{tab === "days" ? "Days" : tab === "projects" ? (threadId ? "Sessions" : "Projects") : "Status"}</Button>)}
         </nav>
         {view !== "status" && <div className="flex items-center gap-2"><input type="date" aria-label="Work date" value={date} onChange={event => { setDate(event.target.value); setOffset(0); }} className="max-w-full rounded border border-input bg-background px-2 py-1 text-sm" />{date && <Button variant="ghost" size="sm" onClick={() => { setDate(""); setOffset(0); }}>All dates</Button>}</div>}
       </div>
-      {project && <div className="flex min-w-0 items-center gap-2 text-sm"><span className="min-w-0 break-all text-muted-foreground">{project}</span><Button size="sm" variant="ghost" onClick={() => { setProject(undefined); setOffset(0); }}>Clear</Button></div>}
+      {project && !threadId && <div className="flex min-w-0 items-center gap-2 text-sm"><span className="min-w-0 break-all text-muted-foreground">{project}</span><Button size="sm" variant="ghost" onClick={() => { setProject(undefined); setOffset(0); }}>Clear</Button></div>}
       {error && <div role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">{error}{report && <p className="mt-1">Showing the last successful refresh.</p>}</div>}
-      {!hostId && <p role="status" className="py-10 text-center text-sm text-muted-foreground">{!hostsReady ? "Loading machines…" : hosts.length ? "Choose the machine with your Trails connection." : "Enroll a machine in BB to connect to Trails."}</p>}
-      {hostId && loading && !report && <p role="status" className="py-10 text-center text-sm text-muted-foreground">Loading Trails…</p>}
+      {!hostId && !threadId && <p role="status" className="py-10 text-center text-sm text-muted-foreground">{!hostsReady ? "Loading machines…" : hosts.length ? "Choose the machine with your Trails connection." : "Enroll a machine in BB to connect to Trails."}</p>}
+      {(hostId || threadId) && loading && !report && <p role="status" className="py-10 text-center text-sm text-muted-foreground">Loading Trails…</p>}
       {report && <>
         {report.warnings.map(warning => <p role="status" key={warning} className="text-sm text-muted-foreground">{warning}</p>)}
         {view === "days" && report.days.map(day => <article key={day.date} className="overflow-hidden rounded-lg border border-border bg-card">
@@ -92,6 +102,12 @@ export function TrailsPage() {
     </div>
   </div>;
 }
+export function TrailsThreadPanel({ threadId }: PluginThreadPanelProps) {
+  return <TrailsPage key={threadId} threadId={threadId} />;
+}
 export default definePluginApp(app => {
-  app.slots.navPanel({ id: "activity", title: "Trails", icon: "Clock", path: "activity", component: TrailsPage });
+  app.slots.threadPanelAction({
+    id: "repository", title: "Trails", icon: "Clock", layout: "flush", component: TrailsThreadPanel,
+  });
+  app.slots.navPanel({ id: "activity", title: "Trails", icon: "Clock", path: "activity", component: () => <TrailsPage /> });
 });

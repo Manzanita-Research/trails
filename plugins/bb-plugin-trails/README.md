@@ -32,6 +32,12 @@ bb plugin config trails set serverUrl https://your-hub.example.ts.net/
 
 Leave `serverUrl` blank for discovery. Settings apply to the next query without reload. The override is accessed from the selected machine. Credentials, query strings, URL fragments, non-root paths, and remote plain HTTP are rejected.
 
+## Repository activity beside a thread
+
+In a project thread, open the right panel's new-tab launcher and choose **Trails**. The tab opens on **Sessions**, with a **Days** view and work-date filter. BB resolves the thread's project and machine on every request, matching the project's source checkouts, their subdirectories, and known worktrees. The tab persists across reloads and does not expose a machine picker or a way to clear repository scope. Whole-day summaries are omitted because they may describe unrelated repositories.
+
+The current BB SDK lists thread-panel actions in all existing threads. In a projectless thread, this tab displays a project-thread message and does not query Trails. It is not registered on the New thread screen.
+
 ## Behavior and privacy
 
 Days honor the hub's workday boundary and timezone. Attention minutes merge overlapping user activity using the configured halo. Click a project to inspect its sessions for that work date. Projects include their latest ten sessions; use the date filter for older activity. Pagination covers days and projects. Status shows collector timestamps and the summary harness's state. Visible pages refresh every 30 seconds; failed refreshes retain and label the last successful data.
