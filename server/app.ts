@@ -1,6 +1,9 @@
 import { createAuthentication, credentialFor, type Credential } from "./auth"
 import { Effect, Schema } from "effect"
-import { basename, join, resolve, sep } from "node:path"
+import { Blob as NodeBlob } from "node:buffer"
+import { constants } from "node:fs"
+import { lstat, open, realpath } from "node:fs/promises"
+import { basename, join, relative, resolve, sep } from "node:path"
 import { localActivityOf, orgOf, type LocalActivityTuple, type UtcActivityTuple } from "../shared/domain"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
 import type { HarnessId, HarnessSelection } from "../shared/harnesses"
@@ -782,6 +785,42 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
   throw new ApiError("not_found", "API route not found", 404)
 }
 
+async function readStaticFile(root: string, requested: string): Promise<Blob | null> {
+  try {
+    // The configured root may use host aliases (e.g. /var on macOS), but no
+    // component beneath that canonical root may be a symlink.
+    const canonicalRoot = await realpath(root)
+    const candidate = resolve(canonicalRoot, requested)
+    const parts = relative(canonicalRoot, candidate).split(sep).filter(Boolean)
+    let path = canonicalRoot
+    let info = await lstat(path)
+    for (const part of parts) {
+      if (!info.isDirectory()) throw new ApiError("not_found", "static file not found", 404)
+      path = join(path, part)
+      info = await lstat(path)
+      if (info.isSymbolicLink()) throw new ApiError("not_found", "static file not found", 404)
+    }
+    if (!info.isFile()) throw new ApiError("not_found", "static file not found", 404)
+
+    // Refuse a replaced leaf or special file, and read the checked descriptor
+    // now: a lazy Bun.file(path) would reopen an attacker-replaceable path later.
+    const file = await open(candidate, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const opened = await file.stat()
+      if (!opened.isFile() || opened.dev !== info.dev || opened.ino !== info.ino || await realpath(candidate) !== candidate) {
+        throw new ApiError("not_found", "static file not found", 404)
+      }
+      return new NodeBlob([await file.readFile()], { type: Bun.file(candidate).type })
+    } finally {
+      await file.close()
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+    throw new ApiError("not_found", "static file not found", 404)
+  }
+}
+
 async function staticResponse(options: AppOptions, request: Request, url: URL): Promise<Response> {
   if (!options.staticRoot) throw new ApiError("not_found", "static serving is disabled", 404)
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -805,18 +844,20 @@ async function staticResponse(options: AppOptions, request: Request, url: URL): 
   }
   let body: Blob
   let selectedName = requested
-  const diskFile = Bun.file(candidate)
-  if (await diskFile.exists()) {
-    body = diskFile
+  if (options.staticAssets) {
+    // Bun's embedded filesystem is not a host filesystem; do not apply disk
+    // realpath/open checks to it or consult host files in embedded mode.
+    const embedded = options.staticAssets.find((asset) => basename(asset.name) === basename(requested))
+      ?? options.staticAssets.find((asset) => basename(asset.name) === "index.html")
+    if (!embedded) throw new ApiError("not_found", "static file not found", 404)
+    body = embedded
+    selectedName = basename(embedded.name)
   } else {
-    const embedded = options.staticAssets?.find((asset) => basename(asset.name) === basename(requested))
-      ?? options.staticAssets?.find((asset) => basename(asset.name) === "index.html")
-    if (embedded) {
-      body = embedded
-      selectedName = basename(embedded.name)
-    } else {
-      const index = Bun.file(join(root, "index.html"))
-      if (!(await index.exists())) throw new ApiError("not_found", "static file not found", 404)
+    const diskFile = await readStaticFile(root, relative(root, candidate))
+    if (diskFile) body = diskFile
+    else {
+      const index = await readStaticFile(root, "index.html")
+      if (!index) throw new ApiError("not_found", "static file not found", 404)
       body = index
       selectedName = "index.html"
     }
