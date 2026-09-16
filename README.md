@@ -185,6 +185,10 @@ Transcript parsing happens on the Mac where each session was created. Trails sen
 
 Trails does **not** send transcript paths or transcript bodies to the hub. The web app receives neither source session identifiers nor digests. The hub service listens only on loopback; optional Tailscale Serve access exposes it privately to the tailnet rather than the LAN or public internet.
 
+The hub rejects HTTP authorities outside its configured allowlist before serving any API or web content. Local access allows `127.0.0.1`, `localhost`, and `[::1]` at the selected port. Tailscale setup records the exact node or service HTTPS origin in the server LaunchAgent. Rerun setup with the same exposure options after upgrading an older installation or changing its Tailscale name. For manual source-mode serving, repeat `--trusted-origin https://hub.example.ts.net` for each public origin; wildcard hosts are not supported. Proxies must preserve Host; forwarding headers do not establish trust.
+
+Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; they do not authenticate local processes or tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
+
 When you explicitly activate a summary harness, the provider already configured in that harness receives only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, collector traffic, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
 
 Harness selection lives in owner-only `~/.config/trails/server.json`. Harness credentials remain owned by the harness and never enter Trails configuration, SQLite, collector traffic, browser responses, feedback, or logs. Browser-visible status is limited to harness availability, selection, attempt/success timestamps, and a closed actionable error class.

@@ -27,6 +27,7 @@ import type { TrailsDb } from "./db"
 import { ingestCaptures } from "./captures"
 import { ingestSessions } from "./ingest"
 import { rebuildDaySummaryJobs } from "./day-jobs"
+import { createRequestBoundary, localOrigins } from "./request-boundary"
 
 import type { HarnessControl } from "./harnesses/control"
 
@@ -42,6 +43,7 @@ const SummarizerSelectionBodySchema = Schema.NullOr(
 
 export interface AppOptions {
   readonly db: TrailsDb
+  readonly trustedOrigins?: readonly string[]
   readonly staticRoot?: string
   readonly staticAssets?: ReadonlyArray<Blob & { readonly name: string }>
   readonly summarization?: SummarizationDescriber
@@ -50,6 +52,8 @@ export interface AppOptions {
 }
 
 type ErrorCode =
+  | "untrusted_host"
+  | "untrusted_origin"
   | "invalid_json"
   | "invalid_request"
   | "unsupported_protocol"
@@ -827,9 +831,12 @@ async function staticResponse(options: AppOptions, request: Request, url: URL): 
 }
 
 export function createApp(options: AppOptions): (request: Request) => Promise<Response> {
+  const requestBoundary = createRequestBoundary(options.trustedOrigins ?? localOrigins(7412))
   return async (request) => {
     try {
       const url = new URL(request.url)
+      const rejection = requestBoundary(request, url)
+      if (rejection) throw new ApiError(rejection, "request origin or host is not trusted", 403)
       const now = (options.now ?? Date.now)()
       return url.pathname.startsWith("/api/")
         ? await apiResponse(options, request, url, now)

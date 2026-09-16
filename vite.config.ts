@@ -6,7 +6,9 @@ export default defineConfig({
   publicDir: "static",
   build: { outDir: "dist/client" },
   server: {
+    host: "127.0.0.1",
     port: 7412,
-    proxy: { "/api": "http://127.0.0.1:7413" },
+    strictPort: true,
+    proxy: { "/api": { target: "http://127.0.0.1:7413", changeOrigin: false } },
   },
 })
