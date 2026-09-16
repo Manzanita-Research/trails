@@ -199,7 +199,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -207,10 +207,10 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(7)
+    expect(userVersion.user_version).toBe(8)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
-    expect(Object.values(busyTimeout)[0]).toBe(5000)
+    expect(Object.values(busyTimeout)[0]).toBe(100)
     expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "0" })
     expect(
       database.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
@@ -250,7 +250,7 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(7)
+    expect(reopenedVersion.user_version).toBe(8)
     expect(
       reopened.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
@@ -271,7 +271,7 @@ describe("database opening and ordered migrations", () => {
     const database = openDatabase(path, { defaultTimezone: "Europe/Rome", now: migrationNow })
     databases.add(database)
 
-    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
+    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 8 })
     expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
       timezone: "Europe/Rome",
     })
@@ -396,7 +396,7 @@ describe("database opening and ordered migrations", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 8 })
     expect(migrated.sqlite.query("SELECT halo FROM settings WHERE id = 1").get()).toEqual({ halo: 15 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM sessions").get()).toEqual({ count: 1 })

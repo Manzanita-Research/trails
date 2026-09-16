@@ -357,4 +357,17 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
       );
     `,
   },
+  {
+    version: 8,
+    sql: `
+      CREATE TABLE resource_budgets(
+        scope TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        used INTEGER NOT NULL,
+        PRIMARY KEY(scope, kind)
+      );
+      CREATE INDEX captures_machine ON captures(machine_id);
+    `,
+  },
 ]

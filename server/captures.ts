@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { createHash } from "node:crypto"
 import { normalizeCwd } from "../shared/domain"
 import type { IngestCaptureV1, IngestCapturesRequestV1 } from "../shared/protocol"
+import { checkDisk, checkQueue, checkStorage } from "./resources"
 import type { TrailsDb } from "./db"
 import type { IngestResult } from "./ingest"
 
@@ -105,6 +106,8 @@ export function ingestCaptures(
             continue
           }
 
+          if (accepted === 0) checkDisk(db)
+
           const payloadJson = JSON.stringify(providerPayload(capture))
           let captureId: number
           if (existing) {
@@ -172,6 +175,11 @@ export function ingestCaptures(
           }
           accepted++
           changed = true
+        }
+
+        if (accepted > 0) {
+          checkStorage(db, input.device.id)
+          checkQueue(db, input.device.id)
         }
 
         const revisionRow = sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get() as {

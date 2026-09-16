@@ -253,6 +253,33 @@ describe("collection synchronization", () => {
     })
   })
 
+  test("splits uploads at the tuple budget even below fifty sessions", async () => {
+    const directory = await temporaryDirectory()
+    const root = join(directory, "source")
+    for (let file = 0; file < 3; file++) {
+      const path = await writeClaudeSession(root, `large-${file}`)
+      const lines = Array.from({ length: 1500 }, (_, index) => JSON.stringify({
+        type: index % 2 === 0 ? "user" : "assistant",
+        timestamp: new Date(Date.parse("2026-07-01T17:00:00Z") + index * 60_000).toISOString(),
+        cwd: "/tmp/work/project",
+        message: { content: "Synthetic event" },
+      }))
+      await writeFile(path, lines.join("\n") + "\n")
+    }
+    const sizes: number[] = []
+    const server = startIngestServer(async request => {
+      const input = decodeExact(IngestRequestV2Schema, await request.json())
+      sizes.push(input.sessions.reduce((sum, session) => sum + session.activity.length, 0))
+      return Response.json({ accepted: input.sessions.length, unchanged: 0, revision: sizes.length })
+    })
+    const result = await Effect.runPromise(runCollection({
+      server: serverBase(server), deviceId: "test", deviceName: "Test",
+      roots: [liveClaudeRoot(root)], statePath: join(directory, "state.json"),
+    }))
+    expect(result.uploaded).toBe(3)
+    expect(sizes).toEqual([3000, 1500])
+  })
+
   test("replays every file when server or device identity changes and skips exact fingerprints", async () => {
     const directory = await temporaryDirectory()
     const root = join(directory, "source")

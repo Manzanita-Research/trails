@@ -2,6 +2,7 @@ import { createAuthentication, credentialFor, type Credential } from "./auth"
 import { Effect, Schema } from "effect"
 import { basename, join, resolve, sep } from "node:path"
 import { localActivityOf, orgOf, type LocalActivityTuple, type UtcActivityTuple } from "../shared/domain"
+import { INGEST_LIMITS } from "../shared/limits"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
 import type { HarnessId, HarnessSelection } from "../shared/harnesses"
 import {
@@ -25,6 +26,7 @@ import {
   type MachinesV1,
 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
+import { admitRequest, checkStorage, checkQueue, ResourceError } from "./resources"
 import { ingestCaptures } from "./captures"
 import { ingestSessions } from "./ingest"
 import { rebuildDaySummaryJobs } from "./day-jobs"
@@ -53,6 +55,9 @@ export interface AppOptions {
 }
 
 type ErrorCode =
+  | "rate_limited"
+  | "storage_full"
+  | "summary_capacity"
   | "unauthorized"
   | "forbidden"
   | "untrusted_host"
@@ -83,7 +88,9 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 function errorResponse(error: ApiError): Response {
-  return jsonResponse({ error: { code: error.code, message: error.message } }, error.status)
+  const response = jsonResponse({ error: { code: error.code, message: error.message } }, error.status)
+  if (error.status === 429) response.headers.set("Retry-After", "60")
+  return response
 }
 
 function revisionOf(db: TrailsDb): number {
@@ -117,12 +124,22 @@ async function readJson(request: Request, maximumBytes: number): Promise<unknown
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let length = 0
+  const deadline = Date.now() + 10_000
   while (true) {
-    const result = await reader.read()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new ApiError("invalid_request", "request body timed out", 408))
+          void reader.cancel().catch(() => {})
+        }, Math.max(1, deadline - Date.now()))
+      }),
+    ]).finally(() => clearTimeout(timer))
     if (result.done) break
     length += result.value.byteLength
     if (length > maximumBytes) {
-      await reader.cancel()
+      void reader.cancel().catch(() => {})
       throw new ApiError("payload_too_large", "request body is too large", 413)
     }
     chunks.push(result.value)
@@ -233,6 +250,7 @@ function imagesByCapture(db: TrailsDb): Map<number, CaptureImageMetadata[]> {
 }
 
 export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
+  checkStorage(db)
   const timezone = (
     db.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get() as { timezone: string }
   ).timezone
@@ -536,6 +554,29 @@ function summarizationOf(options: AppOptions): unknown {
   })
 }
 
+// Reject oversized arrays before the schema walks individual tuples.
+function checkTupleCounts(input: unknown, key: string, activityKey: string, maximum: number): void {
+  if (typeof input !== "object" || input === null) return
+  const records = (input as Record<string, unknown>)[key]
+  if (!Array.isArray(records)) return
+  let tuples = 0
+  if (records.length > maximum) throw new ApiError("invalid_request", "request body failed validation", 400)
+  for (const record of records) {
+    const activity = record?.[activityKey]
+    if (!Array.isArray(activity)) continue
+    tuples += activity.length
+    if (activity.length > INGEST_LIMITS.sessionTuples || tuples > INGEST_LIMITS.batchTuples) {
+      throw new ApiError("invalid_request", "activity tuple limit exceeded", 400)
+    }
+  }
+}
+
+async function runIngest<A>(effect: Effect.Effect<A, { readonly cause: unknown }>): Promise<A> {
+  const result = await Effect.runPromise(Effect.either(effect))
+  if (result._tag === "Left") throw result.left.cause
+  return result.right
+}
+
 async function apiResponse(options: AppOptions, request: Request, url: URL, now: number, credential: Credential): Promise<Response> {
   const { db } = options
   if (url.pathname === "/api/bootstrap") {
@@ -558,13 +599,10 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     ) {
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
+    checkTupleCounts(input, "captures", "attentionMinutes", 20)
     const body = decodeBody(IngestCapturesRequestV1Schema, input)
     requireDevice(credential, body.device.id)
-    try {
-      return jsonResponse(await Effect.runPromise(ingestCaptures(db, body, now)))
-    } catch {
-      throw new ApiError("internal_error", "internal server error", 500)
-    }
+    return jsonResponse(await runIngest(ingestCaptures(db, body, now)))
   }
   if (url.pathname.startsWith("/api/capture-images/")) {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -604,13 +642,10 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     ) {
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
+    checkTupleCounts(input, "sessions", "activity", 50)
     const body = decodeBody(IngestRequestV2Schema, input)
     requireDevice(credential, body.device.id)
-    try {
-      return jsonResponse(await Effect.runPromise(ingestSessions(db, body, now)))
-    } catch {
-      throw new ApiError("internal_error", "internal server error", 500)
-    }
+    return jsonResponse(await runIngest(ingestSessions(db, body, now)))
   }
   if (url.pathname === "/api/collector-status") {
     if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
@@ -688,6 +723,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
           clearSummaries: timezone !== current.timezone,
         })
       }
+      checkQueue(db)
       return incrementRevision(db)
     })()
     return jsonResponse({ revision })
@@ -874,10 +910,21 @@ export function createApp(options: AppOptions): (request: Request) => Promise<Re
       const permitted = ingest ? credential.role === "collector"
         : ["GET", "HEAD"].includes(request.method) ? credential.role !== "collector" : credential.role === "owner"
       if (!permitted) throw new ApiError("forbidden", "credential does not grant this permission", 403)
-      const response = await apiResponse(options, request, url, now, credential)
-      response.headers.set("Cache-Control", "no-store")
-      return response
+      const release = ingest ? admitRequest(options.db, credential.deviceId!, now) : () => {}
+      try {
+        const response = await apiResponse(options, request, url, now, credential)
+        response.headers.set("Cache-Control", "no-store")
+        return response
+      } finally {
+        release()
+      }
     } catch (error) {
+      if (error instanceof ResourceError) {
+        return errorResponse(new ApiError(error.code, error.message, error.code === "storage_full" ? 507 : 429))
+      }
+      if (error instanceof Error && "code" in error && ["SQLITE_FULL", "SQLITE_IOERR_WRITE", "SQLITE_IOERR_FSYNC"].includes(String(error.code))) {
+        return errorResponse(new ApiError("storage_full", "storage is unavailable; free disk space before retrying", 507))
+      }
       return errorResponse(error instanceof ApiError ? error : new ApiError("internal_error", "internal server error", 500))
     }
   }

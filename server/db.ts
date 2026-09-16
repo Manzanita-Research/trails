@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { chmodSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { RESOURCE_LIMITS } from "./resources"
 import { MIGRATIONS } from "./migrations"
 
 export interface TrailsDb {
@@ -54,7 +55,10 @@ export function openDatabase(
   try {
     sqlite.exec("PRAGMA journal_mode=WAL")
     sqlite.exec("PRAGMA foreign_keys=ON")
-    sqlite.exec("PRAGMA busy_timeout=5000")
+    sqlite.exec("PRAGMA busy_timeout=100")
+    const { page_size } = sqlite.query("PRAGMA page_size").get() as { page_size: number }
+    sqlite.exec(`PRAGMA max_page_count=${Math.floor(RESOURCE_LIMITS.databaseBytes / page_size)}`)
+    sqlite.exec("PRAGMA journal_size_limit=16777216")
     applyMigrations(sqlite, {
       defaultTimezone: validTimezone(
         options.defaultTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
