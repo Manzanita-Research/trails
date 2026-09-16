@@ -822,10 +822,10 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     expect(childBootstrap.payload.parentCaptureId).toBe(bootstrap.captures[0]?.id)
     expect(childBootstrap.payload).not.toHaveProperty("parentSourceRecordId")
     expect(bootstrap.captures[0]?.images.map((image) => image.url)).toEqual([
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/0\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/1\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/2\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/3\?v=[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/0\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/1\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/2\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/3\?v=2-[0-9a-f]{64}$/),
     ])
 
     const imageUrl = bootstrap.captures[0]!.images[0]!.url

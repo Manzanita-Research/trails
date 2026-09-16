@@ -228,6 +228,16 @@ Sending beta feedback is explicit. The browser sends only the feedback kind, mes
 
 Feedback goes directly from the browser to a separate public-write Cloudflare Worker and D1 database with no public read route. It expires after 90 days and is deleted by the next daily cleanup. Cloudflare does not provide Trails inference; canonical session and organization state remains in SQLite on the hub Mac.
 
+### HTTP cache policy
+
+All API JSON, status responses (including unchanged-bootstrap 204s), authentication responses, and errors use `Cache-Control: no-store`. Private capture images use the same zero-retention policy on GET, HEAD, and conditional 304 responses. Browsers and proxies must not store these responses for reuse; images are deliberately fetched again instead of receiving a freshness window or offline fallback. Authentication and image existence are checked before evaluating an ETag, so the next request after session/credential revocation or image removal returns an error even with a matching validator.
+
+Bootstrap image URLs use a `v=2-` prefix to bypass entries stored under the former one-year immutable image policy. Updating the server cannot purge those older entries from browsers that already have them; clear the site's cached data on previously used clients when upgrading. HTTP cache policy also cannot erase downloaded files, screenshots, or content already rendered in an open page. Revocation governs subsequent requests, not copies already delivered.
+
+Only nonprivate, fingerprinted static assets receive `public, max-age=31536000, immutable`. The HTML shell and SPA fallbacks use `no-store`; other static assets use `no-cache` and must revalidate.
+
+Run the HTTP regressions with `bun test test/cache-policy.test.ts test/server.test.ts test/auth.test.ts`. The standalone browser probe, `bun --no-install scripts/check-cache-policy-browser.ts`, uses an existing Playwright installation (set `PLAYWRIGHT_MODULE` to its module path if it is outside this checkout). It starts only a temporary loopback fixture, uses a fresh browser profile with caching enabled, and removes its temporary files. It checks repeated requests, conditional requests, logout, deletion, offline behavior, legacy URL migration, and public asset caching without accessing an installed hub.
+
 ## Alpha release
 
 Current version: `0.1.0-alpha.11`
