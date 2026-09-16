@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { initializeOwner, issueCredential, ownerTokenPath, readPrivateFile, revokeCredential, rotateOwner } from "../server/auth"
+import { assignCaptureAccount, reconcileCaptureAccount } from "../server/capture-accounts"
 import { normalizeCollectorServer } from "./config"
 
 export function runAuthCommand(args: string[]): void {
@@ -19,6 +20,22 @@ export function runAuthCommand(args: string[]): void {
       if (!args[1]) throw new Error("auth revoke requires the credential ID from auth list")
       revokeCredential(db, args[1])
       console.log("Credential revoked. Stored timeline data is retained.")
+    } else if (args[0] === "capture-account") {
+      const source = value("--source"), deviceId = value("--device-id"), account = value("--account")
+      const revoke = args.includes("--revoke")
+      if (!source || !deviceId || (revoke ? account !== undefined : !account)) {
+        throw new Error("capture-account requires --source SOURCE --device-id ID and either --account ID or --revoke")
+      }
+      assignCaptureAccount(db, source, deviceId, revoke ? null : account!)
+      console.log("Capture account assignment updated. Stored captures are retained.")
+    } else if (args[0] === "capture-reconcile") {
+      const source = value("--source"), owner = value("--owner-device-id"), account = value("--account")
+      const captureId = value("--capture-id")
+      if (!source || !owner || !account || !captureId) {
+        throw new Error("capture-reconcile requires --source SOURCE --capture-id ID --owner-device-id ID --account ID")
+      }
+      reconcileCaptureAccount(db, Number(captureId), owner, source, account)
+      console.log("Legacy capture reconciled into the account. Content and original ownership are retained.")
     } else if (args[0] === "pair" || args[0] === "read") {
       const output = value("--output")
       const server = value("--server")
@@ -38,7 +55,7 @@ export function runAuthCommand(args: string[]): void {
         console.log(`Created ${credential.role} credential ${credential.id}. Transfer ${output} privately.`)
       })()
     } else {
-      throw new Error("auth requires owner | rotate-owner | list | revoke ID | pair --server URL --output FILE [--device-id ID] [--name NAME] | read --server URL --output FILE")
+      throw new Error("auth requires owner | rotate-owner | list | revoke ID | capture-account | capture-reconcile | pair --server URL --output FILE [--device-id ID] [--name NAME] | read --server URL --output FILE")
     }
   } finally { db.close() }
 }

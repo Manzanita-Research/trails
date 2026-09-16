@@ -103,6 +103,27 @@ Pairing files are long-lived credentials until revoked, not one-time public invi
 
 Existing anonymous collectors stop uploading after upgrade until paired. Preserve their existing device IDs and rerun hub setup with the same exposure options. See [the authentication migration](README.md#authentication-and-upgrading-an-existing-hub) for local, tailnet, and read-integration steps. No live installation is changed by building this source. The trust boundary is the single owner account, not other local accounts or every reachable tailnet peer.
 
+### Capture ownership and provider accounts
+
+Pairing a collector does not grant access to another device's captures. Without an explicit account assignment, capture V1 uses a legacy namespace per provider: the first submitting device owns each provider record. Replays from another device return HTTP 403, including identical replays. The whole batch rolls back, including machine metadata, images, attention, project attribution, and the state revision. Upgrading preserves the stored machine as the original owner; it cannot reconstruct ownership already overwritten before this fix.
+
+For the same provider account collected on multiple devices, the hub's owning OS account must assign each paired device to the same opaque account ID. Deduplication then uses `(account ID, provider, provider record ID)`. Devices assigned to different accounts can store identical provider record IDs independently. Account IDs are local labels, not provider credentials, and Trails does not verify provider login identity. Only assign devices after confirming they collect the same account. Each device has one account assignment per provider; ingest payloads cannot select or change it.
+
+```sh
+trails auth capture-account --source midjourney --device-id DEVICE_A --account personal-art
+trails auth capture-account --source midjourney --device-id DEVICE_B --account personal-art
+```
+
+Assignments authorize future writes in that account; they do not move existing history. To reconcile a legacy capture, explicitly select its numeric capture ID and expected original owner after assigning that owner device to the target account:
+
+```sh
+trails auth capture-reconcile --source midjourney --capture-id 42 --owner-device-id DEVICE_A --account personal-art
+```
+
+Reconciliation preserves the capture ID, content, images, attribution, and original owner. It refuses a mismatched owner/source, an already scoped capture, or an existing record with the same key in the destination account. There is no automatic merge, cross-account transfer, or collector-controlled transfer. Authorized subsequent replays may update content and the last-uploading machine, while the original owner remains recorded. Null project attribution on replay preserves existing attribution. Parent-capture links resolve only within the same account (or the same legacy owner).
+
+Use `--source granola` for Granola. All commands accept `--db PATH`. Inspect assignments locally with `SELECT * FROM capture_device_accounts` and legacy IDs with `SELECT id, source, owner_machine_id FROM captures WHERE account_id = ''` in the hub database. Remove an assignment with `trails auth capture-account --source midjourney --device-id DEVICE_B --revoke`; this removes access to that account and returns future uploads to legacy ownership rules, without deleting history. Revoke the collector credential with `trails auth revoke ID` to stop all uploads. Reassigning a device to a different account leaves its previous account's history intact.
+
 ## Periodic collectors
 
 `com.manzanita.trails.collector` runs `trails collect --once` at load and every 60 seconds. It is not a resident daemon and has no KeepAlive loop.
