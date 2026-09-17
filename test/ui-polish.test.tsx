@@ -32,7 +32,7 @@ const sessions: IngestRequestV2 = {
       source: "omp",
       cwd: "/Users/tester/code/acme/very-long-project-name",
       branch: "feat/clarity",
-      start: "2026-07-01T15:55:00.000Z",
+      start: "2026-07-01T15:00:00.000Z",
       end: "2026-07-01T16:10:00.000Z",
       events: 8,
       userEvents: 4,

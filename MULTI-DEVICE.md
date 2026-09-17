@@ -22,6 +22,8 @@ The hub process always binds only to `127.0.0.1:7412`. In the default one-Mac mo
 
 Multi-Mac setup adds Tailscale as the private network and HTTPS access boundary. `--tailscale` uses the hub machine's MagicDNS URL. `--service svc:trails` instead advertises through a pre-defined Tailscale Service and reports the stable `https://trails.<tailnet>.ts.net/` URL. Named services are opt-in because they require a tag-authenticated host, tailnet administrator configuration, and service-host approval. Tailscale does not run or store Trails, and Trails never opens a LAN socket.
 
+Server installation persists that exact HTTPS origin as a `--trusted-origin` LaunchAgent argument. The hub accepts only configured Host authorities (plus loopback names at its listening port), ignoring forwarding headers. Browser mutation origins must match the addressed authority and configured public scheme; Fetch Metadata must indicate same-origin when present. Requests carrying browser metadata without Origin are rejected. Native collectors may omit both. Existing installations must rerun setup with their exposure options to populate this allowlist; a Tailscale hostname change likewise requires setup again. These boundary checks are separate from client authentication.
+
 ## Standalone distribution
 
 `bun run build` creates `dist/trails-darwin-arm64` and `dist/trails-darwin-x64`. Each executable embeds:
@@ -86,6 +88,10 @@ Remove `--dry-run` after review. Selecting an older version rolls back without d
 - durable, guarded inference jobs
 
 Every bootstrap-visible change increments one monotonic revision. Replayed ingestion, last-seen timestamps, duplicate engagement creation, and exact preference no-ops do not. Browsers poll `/api/bootstrap?after=<revision>` while visible and retain the last snapshot through temporary failures.
+
+Session and capture timestamps must be canonical UTC milliseconds from `1970-01-01T00:00:00.000Z` through `9999-12-30T23:59:59.999Z`. UTC activity/attention minutes must be integers in that range and fall within the record's start/end minute buckets (inclusive); a null capture end leaves the upper interval open. The final UTC day of year 9999 is reserved so timezone conversion stays within the four-digit calendar. Invalid batches are rejected before any writes.
+
+Migration 7 recovers existing invalid session/capture timing by moving each affected record and its children into local `timestamp_quarantine_*` tables in the same database. These tables preserve original data, including image bytes, digests, summaries, and jobs, but are excluded from bootstrap and processing. Session recovery also clears derived day summaries and rebuilds day jobs; any recovery increments the revision once. The migration is transactional and runs once. Corrected records can be ingested again; archived copies remain available for manual inspection through SQLite and are included in database backups. Treat them as private data, just like the active tables.
 
 There is no scan-blob or localStorage compatibility path. Transcript history is re-ingested from source logs.
 

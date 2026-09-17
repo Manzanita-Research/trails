@@ -1,8 +1,10 @@
-export {}
+import { localOrigins } from "../server/request-boundary"
 
 const children = [
   Bun.spawn(["bun", "x", "vite"], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "--watch", "cli/main.ts", "serve", "--port", "7413", "--api-only"], {
+  Bun.spawn(["bun", "--watch", "cli/main.ts", "serve", "--port", "7413", "--api-only",
+    ...localOrigins(7412).flatMap((origin) => ["--trusted-origin", origin]),
+  ], {
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

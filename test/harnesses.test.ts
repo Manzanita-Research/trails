@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadHubConfig } from "../cli/config"
@@ -53,6 +53,88 @@ describe("harness discovery", () => {
 })
 
 describe("harness invocation", () => {
+  for (const id of HARNESS_IDS) {
+    test(`${id} starts a real child in the private directory without project context`, async () => {
+      const root = mkdtempSync(join(tmpdir(), "trails-harness-cwd-"))
+      roots.push(root)
+      const project = join(root, "project")
+      const serverDirectory = join(project, "server")
+      mkdirSync(serverDirectory, { recursive: true })
+      const contextFiles = ["AGENTS.md", "CLAUDE.md", ".claude/settings.json", ".pi/settings.json", "opencode.json"]
+      for (const name of contextFiles) {
+        const path = join(project, name)
+        mkdirSync(join(path, ".."), { recursive: true })
+        writeFileSync(path, "PARENT_PROJECT_CONTEXT")
+      }
+      const executable = join(root, id)
+      // Observe startup before any adapter-specific --cwd/--cd/--dir handling.
+      // Simulate ancestor discovery without loading any real harness or model.
+      writeFileSync(executable, `#!${process.execPath}
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+const args = process.argv.slice(2)
+const consumed = []
+for (let directory = process.cwd();;) {
+  for (const name of ${JSON.stringify(contextFiles)}) {
+    const path = join(directory, name)
+    if (existsSync(path)) consumed.push(readFileSync(path, "utf8"))
+  }
+  const parent = dirname(directory)
+  if (parent === directory) break
+  directory = parent
+}
+const promptFile = args.find((arg) => arg.startsWith("@"))
+const prompt = promptFile ? readFileSync(promptFile.slice(1), "utf8") : await Bun.stdin.text()
+const text = JSON.stringify({
+  cwd: process.cwd(), temporary: realpathSync(process.env.TMPDIR), consumed, prompt, args,
+  environment: process.env,
+})
+switch (${JSON.stringify(id)}) {
+  case "claude": console.log(JSON.stringify({ result: text })); break
+  case "opencode": console.log(JSON.stringify({ part: { type: "text", text } })); break
+  case "codex": writeFileSync(args[args.indexOf("--output-last-message") + 1], text); break
+  default: console.log(text)
+}
+`, { mode: 0o700 })
+      chmodSync(executable, 0o700)
+      const privateDigest = "PRIVATE_DIGEST_CWD_REGRESSION"
+      const driver = join(root, "driver.ts")
+      writeFileSync(driver, `
+import { Effect } from ${JSON.stringify(import.meta.resolve("effect"))}
+import { createHarnessSummarizer } from ${JSON.stringify(import.meta.resolve("../server/harnesses/runtime"))}
+const summarizer = createHarnessSummarizer({ id: ${JSON.stringify(id)}, executable: ${JSON.stringify(executable)}, timeoutMs: 5000 })
+console.log(JSON.stringify(await Effect.runPromise(summarizer.summarize("session", ${JSON.stringify(privateDigest)}))))
+`)
+      // A separate server process avoids changing cwd/environment in the test runner.
+      const child = Bun.spawn([process.execPath, driver], {
+        cwd: serverDirectory,
+        env: { ...process.env, PRIVATE_PARENT_SECRET: "must-not-leak", OPENCODE_CONFIG_CONTENT: "parent-config" },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
+      ])
+      expect(stderr).toBe("")
+      expect(exitCode).toBe(0)
+      const result = JSON.parse(stdout)
+      expect(result.model).toBe(`harness:${id}`)
+      const observed = JSON.parse(result.text)
+      expect(observed.cwd).toBe(observed.temporary)
+      expect(observed.cwd).not.toBe(realpathSync(serverDirectory))
+      expect(observed.cwd).toContain("trails-summary-")
+      expect(observed.consumed).toEqual([])
+      expect(observed.prompt).toContain(privateDigest)
+      expect(JSON.stringify(observed.args)).not.toContain(privateDigest)
+      expect(JSON.stringify(observed.environment)).not.toContain(privateDigest)
+      expect(observed.environment.PRIVATE_PARENT_SECRET).toBeUndefined()
+      expect(observed.environment.OPENCODE_CONFIG_CONTENT).toBe(
+        id === "opencode" ? '{"permission":{"*":"deny"}}' : undefined,
+      )
+      expect(existsSync(observed.cwd)).toBe(false)
+    })
+  }
+
   test("uses noninteractive, ephemeral contracts and returns only bounded final text", async () => {
     const privateDigest = "PRIVATE_DIGEST"
     for (const id of HARNESS_IDS) {

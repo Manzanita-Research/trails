@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { isMissingLaunchdService, normalizeTailscaleService, retireLegacyProviderConfig } from "../cli/install"
+import { launchDefinitions, isMissingLaunchdService, normalizeTailscaleService, retireLegacyProviderConfig } from "../cli/install"
 
 const roots: string[] = []
 
@@ -11,6 +11,17 @@ afterEach(() => {
 })
 
 describe("launchd installation", () => {
+  test("persists only the configured node or service origin in server arguments", () => {
+    expect(launchDefinitions("server")[0].arguments.slice(1)).toEqual(["serve", "--port", "7412"])
+    for (const origin of ["https://hub.example.ts.net", "https://trails.example.ts.net"]) {
+      const planned = launchDefinitions("server", origin + "/")
+      expect(planned[0].arguments.slice(1)).toEqual(["serve", "--port", "7412", "--trusted-origin", origin])
+      expect(planned[1].arguments).not.toContain("--trusted-origin")
+    }
+    expect(launchDefinitions("collector", "https://hub.example.ts.net")[0].arguments).not.toContain("--trusted-origin")
+    expect(() => launchDefinitions("server", "https://*.ts.net")).toThrow()
+  })
+
   test("treats absent services as an idempotent bootout", () => {
     expect(isMissingLaunchdService("Boot-out failed: 3: No such process\n")).toBe(true)
     expect(isMissingLaunchdService('Could not find service "com.manzanita.trails.server"')).toBe(true)

@@ -16,6 +16,7 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { COLLECTOR_CONFIG_PATH, isLegacyProviderHubConfig, loadCollectorConfig, loadHubConfig, writeHubConfig } from "./config"
 import { exposureMessage, parseExposureState, prepareExposure, type ExposureState } from "./exposure"
+import { normalizeTrustedOrigin } from "../server/request-boundary"
 export type InstallKind = "server" | "collector"
 
 export interface InstallOptions {
@@ -76,7 +77,7 @@ ${argumentsXml}
 `
 }
 
-function definitions(kind: InstallKind): LaunchDefinition[] {
+export function launchDefinitions(kind: InstallKind, trustedOrigin?: string): LaunchDefinition[] {
   if (kind === "collector") {
     return [
       {
@@ -90,7 +91,10 @@ function definitions(kind: InstallKind): LaunchDefinition[] {
   return [
     {
       label: "com.manzanita.trails.server",
-      arguments: [destination, "serve", "--port", "7412"],
+      arguments: [
+        destination, "serve", "--port", "7412",
+        ...(trustedOrigin ? ["--trusted-origin", normalizeTrustedOrigin(trustedOrigin)] : []),
+      ],
       runAtLoad: true,
       keepAliveOnFailure: true,
     },
@@ -326,7 +330,7 @@ export async function install(options: InstallOptions): Promise<void> {
   await writableAncestor(launchAgentDirectory)
   await writableAncestor(stateDirectory)
 
-  const planned = definitions(options.kind)
+  const planned = launchDefinitions(options.kind, exposeThroughTailscale ? currentTailnetUrl(service) : undefined)
   console.log(`Executable: ${process.execPath} -> ${destination}`)
   for (const definition of planned) {
     console.log(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`)
