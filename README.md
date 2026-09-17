@@ -151,7 +151,7 @@ trails summaries use codex
 trails summaries off
 ```
 
-The harness owns its login, provider, model, and billing. Trails never reads, copies, refreshes, or stores harness credentials. Authentication failures, quota limits, malformed responses, timeouts, and harness failures never stop collection. Jobs remain durable and retry with backoff; a failed request is never resent through a different harness automatically. Upgrading from alpha.7 removes the retired Trails-owned credential file after validating it; revoke the former OpenRouter, OpenAI, or ChatGPT grant in that provider account because deleting the local copy cannot revoke a remote credential.
+The harness owns its login, provider, model, and billing. Trails never reads, copies, refreshes, or stores harness credentials. Harness authentication failures, provider quota limits, malformed responses, timeouts, and harness failures leave jobs durable. Eligible jobs retry with backoff up to five failed attempts; a failed request is never resent through a different harness automatically. The resource limits below apply backpressure to collection when storage, queue, or admission budgets are exhausted. Upgrading from alpha.7 removes the retired Trails-owned credential file after validating it; revoke the former OpenRouter, OpenAI, or ChatGPT grant in that provider account because deleting the local copy cannot revoke a remote credential.
 
 ## Update
 
@@ -313,3 +313,54 @@ bun run promote -- \
 ```
 
 Remove `--dry-run` after review. Selecting an older version performs a rollback; versioned artifacts are never mutated or deleted.
+
+### Resource limits and full-storage recovery
+
+The hub bounds each ingest request to 5 MiB, 50 sessions or 20 captures, 2,048
+activity/attention tuples per record and 4,096 tuples per batch. Session and
+capture intervals and their activity spans may cover at most 31 days. The
+collector splits uploads by both session count and tuple count; an individually
+oversized session remains uncheckpointed and requires correction at the source.
+Authenticated ingest, capture and collector-status requests share a device limit
+of 30 requests per minute and one active request. The hub allows 120 such
+requests per minute, four active readers, and ten seconds to receive a body.
+Health requests do not consume these limits. Rate windows reset on hub restart.
+
+Storage admission is atomic across a batch, with these combined session/capture
+ceilings:
+
+| Resource | Per device | Whole hub |
+| --- | ---: | ---: |
+| Records | 5,000 | 10,000 |
+| Activity and attention tuples | 50,000 | 100,000 |
+| Decoded image bytes | 128 MiB | 512 MiB |
+| Pending session and day summary jobs | 200 | 1,000 |
+| Changed sessions admitted per 24 hours | 200 | 1,000 |
+| Paid summary attempts per 24 hours | 100 | 300 |
+
+A project's pending day jobs count against every device contributing sessions to
+that project. Paid day summaries charge each contributing device, as well as the
+hub. Admission and attempt budgets persist across restarts in 24-hour windows
+starting at first use; retries and failed provider calls consume attempts.
+These are call budgets, not currency guarantees: pricing remains controlled by
+the selected harness/provider. Jobs stop retrying after five failed attempts;
+a new digest or day generation can replace that failed job within the same
+admission limits. Single-session day summaries are copied without a paid call.
+The derived day-summary cache retains its newest 10,000 entries.
+
+Changed ingests check a 256 MiB free-disk reserve. SQLite is limited to 1 GiB
+(or its existing size if already larger); WAL checkpointing remains enabled,
+with a 16 MiB retained-journal target. These are application limits, not a
+filesystem quota: WAL readers, backups and other processes can consume additional
+disk space. Backups still need an operator retention policy.
+
+A quota or disk failure rolls back the entire batch. HTTP 429 with `Retry-After`
+indicates rate, queue or summary-budget pressure; HTTP 507 indicates storage
+pressure. Exact content replays skip activity/image replacement, storage scans,
+and summary admission charges, but still obey request limits. Collected history
+is never automatically evicted. If a legacy database exceeds the storage
+ceilings, bootstrap returns 507 before loading activity into memory; it does not
+silently truncate history. Stop collection, back up the database, and archive or
+move history before retrying. There is currently no automatic archive command or
+UI for quota overrides. Limits are centralized in `shared/limits.ts` and
+`server/resources.ts`. Changing them requires a reviewed build.

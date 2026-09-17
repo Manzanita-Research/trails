@@ -213,7 +213,7 @@ describe("database opening and ordered migrations", () => {
     expect(userVersion.user_version).toBe(8)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
-    expect(Object.values(busyTimeout)[0]).toBe(5000)
+    expect(Object.values(busyTimeout)[0]).toBe(100)
     expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "0" })
     expect(
       database.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
