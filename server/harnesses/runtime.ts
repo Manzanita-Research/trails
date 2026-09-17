@@ -106,6 +106,7 @@ async function readLimited(stream: ReadableStream<Uint8Array>, maximumBytes: num
 
 export const runHarnessProcess: HarnessProcessRunner = async (request) => {
   const process = Bun.spawn([request.executable, ...request.args], {
+    cwd: request.cwd,
     env: {
       HOME: homedir(),
       PATH: HARNESS_PATH,
