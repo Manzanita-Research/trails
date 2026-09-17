@@ -1,6 +1,7 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { createHash } from "node:crypto"
 import { normalizeCwd, workdaysOfUtc, type UtcActivityTuple } from "../shared/domain"
+import { IngestRequestV2Schema } from "../shared/protocol"
 import type { IngestRequestV2, IngestSessionV2 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
 
@@ -87,6 +88,7 @@ export function ingestSessions(
   return Effect.try({
     try: () => {
       const sqlite = db.sqlite
+      Schema.decodeUnknownSync(IngestRequestV2Schema)(input)
       return sqlite.transaction(() => {
         let accepted = 0
         let unchanged = 0

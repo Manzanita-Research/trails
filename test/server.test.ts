@@ -199,7 +199,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -207,7 +207,7 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(6)
+    expect(userVersion.user_version).toBe(7)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
     expect(Object.values(busyTimeout)[0]).toBe(5000)
@@ -250,7 +250,7 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(6)
+    expect(reopenedVersion.user_version).toBe(7)
     expect(
       reopened.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
@@ -271,7 +271,7 @@ describe("database opening and ordered migrations", () => {
     const database = openDatabase(path, { defaultTimezone: "Europe/Rome", now: migrationNow })
     databases.add(database)
 
-    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
       timezone: "Europe/Rome",
     })
@@ -338,6 +338,7 @@ describe("database opening and ordered migrations", () => {
         [
           {
             ...migratedSession,
+            start: "2026-11-01T08:30:00.000Z",
             activity: [
               [Math.floor(Date.parse("2026-11-01T08:30:00.000Z") / 60_000), 1, 1],
               [repeatedMinute, 1, 0],
@@ -396,7 +397,7 @@ describe("database opening and ordered migrations", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(migrated.sqlite.query("SELECT halo FROM settings WHERE id = 1").get()).toEqual({ halo: 15 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM sessions").get()).toEqual({ count: 1 })
@@ -778,8 +779,12 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
     const valid = capture("job-valid")
-    const duplicateImages = capture("job-invalid").images.map((image) => ({ ...image, index: 0 }))
-    const invalid = capture("job-invalid", { images: duplicateImages })
+    database.sqlite.exec(`
+      CREATE TRIGGER fail_capture_image BEFORE INSERT ON capture_images
+      WHEN NEW.capture_id = 2
+      BEGIN SELECT RAISE(ABORT, 'injected image failure'); END
+    `)
+    const invalid = capture("job-invalid")
 
     await expect(Effect.runPromise(ingestCaptures(database, captureBody([valid, invalid])))).rejects.toThrow(
       "capture ingestion failed",

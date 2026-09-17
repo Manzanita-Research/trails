@@ -204,11 +204,14 @@ describe("onboarding bootstrap contract", () => {
         "legacy-content",
         Date.parse("2026-06-30T17:01:00.000Z"),
       )
+    legacy.query(
+      "INSERT INTO session_activity(session_id, local_date, minute, event_count, user_event_count) VALUES (1, ?, ?, 2, 1)",
+    ).run("2026-06-30", 600)
     legacy.exec("PRAGMA user_version = 1")
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(
       migrated.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
