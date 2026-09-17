@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { createBackup, isTrailsBackupName } from "../server/backup"
+import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { ingestSessions } from "../server/ingest"
@@ -101,7 +102,7 @@ describe("SQLite backups", () => {
       unchanged: 0,
       revision: 1,
     })
-    expect(await Effect.runPromise(ingestCaptures(writer, committedCaptureInput, 1_700_000_000_001))).toEqual({
+    expect(await Effect.runPromise(ingestCaptures(writer, committedCaptureInput, issueCredential(writer, "collector", committedCaptureInput.device.id), 1_700_000_000_001))).toEqual({
       accepted: 1,
       unchanged: 0,
       revision: 2,

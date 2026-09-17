@@ -260,13 +260,15 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
   }>
   const captureRows = db.sqlite
     .query(
-      `SELECT id, source, source_record_id, project, project_hint, title, started_at, ended_at,
+      `SELECT id, account_id, owner_machine_id, source, source_record_id, project, project_hint, title, started_at, ended_at,
          summary_input, provider_payload, updated_at FROM captures ORDER BY started_at, id`,
     )
     .all() as Array<{
     id: number
     source: BootstrapCaptureV1["source"]
     source_record_id: string
+    account_id: string
+    owner_machine_id: string
     project: string | null
     project_hint: string | null
     title: string
@@ -276,7 +278,9 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     provider_payload: string
     updated_at: number
   }>
-  const captureIdBySourceRecord = new Map(captureRows.map((row) => [row.source_record_id, row.id]))
+  const captureKey = (row: typeof captureRows[number], recordId: string) =>
+    JSON.stringify([row.account_id, row.account_id === "" ? row.owner_machine_id : "", row.source, recordId])
+  const captureIdBySourceRecord = new Map(captureRows.map((row) => [captureKey(row, row.source_record_id), row.id]))
   const settings = db.sqlite
     .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
     .get() as {
@@ -372,7 +376,7 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
             parentCaptureId:
               parentSourceRecordId === null
                 ? null
-                : String(captureIdBySourceRecord.get(parentSourceRecordId) ?? "") || null,
+                : String(captureIdBySourceRecord.get(captureKey(row, parentSourceRecordId)) ?? "") || null,
           },
         }
       }
@@ -560,11 +564,14 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     }
     const body = decodeBody(IngestCapturesRequestV1Schema, input)
     requireDevice(credential, body.device.id)
-    try {
-      return jsonResponse(await Effect.runPromise(ingestCaptures(db, body, now)))
-    } catch {
+    const result = await Effect.runPromise(Effect.either(ingestCaptures(db, body, credential, now)))
+    if (result._tag === "Left") {
+      if (result.left._tag === "CaptureOwnershipError") {
+        throw new ApiError("forbidden", "capture ownership does not permit this write", 403)
+      }
       throw new ApiError("internal_error", "internal server error", 500)
     }
+    return jsonResponse(result.right)
   }
   if (url.pathname.startsWith("/api/capture-images/")) {
     if (request.method !== "GET" && request.method !== "HEAD") {
