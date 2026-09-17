@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "n
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { CollectorError, runCollection as collectWithAuth } from "../collector/sync"
+import { MAX_ACKNOWLEDGMENT_BYTES } from "../collector/http"
 import {
   CollectorBusyError,
   loadCollectorState,
@@ -519,5 +520,209 @@ describe("collection synchronization", () => {
     if (collectionFailure._tag === "Left") {
       expect(collectionFailure.left).toBeInstanceOf(CollectorError)
     }
+  })
+})
+
+describe("collector HTTP bounds", () => {
+  async function fixture() {
+    const directory = await temporaryDirectory()
+    const root = join(directory, "source")
+    const filePath = await writeClaudeSession(root, "bounded")
+    return {
+      filePath,
+      options: {
+        server: "http://127.0.0.1:7412/",
+        deviceId: "device-1",
+        deviceName: "Laptop",
+        statePath: join(directory, "state.json"),
+        roots: [liveClaudeRoot(root)],
+        requestTimeoutMs: 30,
+        cycleTimeoutMs: 2_000,
+        sleep: async () => {},
+      },
+    }
+  }
+
+  function transport(upload: () => Response | Promise<Response>, signals: AbortSignal[] = []): typeof fetch {
+    return (async (input, init) => {
+      signals.push(init!.signal!)
+      return String(input).endsWith("collector-status") ? new Response(null, { status: 204 }) : upload()
+    }) as typeof fetch
+  }
+
+  async function expectReplay(options: Awaited<ReturnType<typeof fixture>>["options"], filePath: string) {
+    expect(await Bun.file(`${options.statePath}.lock`).exists()).toBe(false)
+    expect((await Effect.runPromise(loadCollectorState(options.statePath)))?.files[filePath]).toBeUndefined()
+    const result = await Effect.runPromise(runCollection({
+      ...options,
+      fetch: transport(() => Response.json({ accepted: 0, unchanged: 1, revision: 7 })),
+    }))
+    expect(result).toMatchObject({ uploaded: 1, revision: 7, errors: [] })
+    expect((await Effect.runPromise(loadCollectorState(options.statePath)))!.files[filePath]).toBeDefined()
+    expect(await Bun.file(`${options.statePath}.lock`).exists()).toBe(false)
+  }
+
+  test("times out missing headers, aborts every attempt, releases the lock, and replays", async () => {
+    const { options, filePath } = await fixture()
+    const signals: AbortSignal[] = []
+    const started = performance.now()
+    await expect(Effect.runPromise(runCollection({
+      ...options,
+      fetch: transport(() => new Promise<Response>(() => {}), signals),
+    }))).rejects.toThrow("collector request timed out")
+    expect(performance.now() - started).toBeLessThan(1_500)
+    expect(signals).toHaveLength(5) // Four uploads and one failure status.
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
+    await expectReplay(options, filePath)
+  })
+
+  test("bounds a real HTTP response that never sends headers", async () => {
+    const { options, filePath } = await fixture()
+    const releaseRequests: Array<() => void> = []
+    const server = startIngestServer(() => new Promise<Response>((resolve) => {
+      releaseRequests.push(() => resolve(new Response(null, { status: 204 })))
+    }))
+    options.server = serverBase(server)
+    try {
+      await expect(Effect.runPromise(runCollection(options))).rejects.toThrow("collector request timed out")
+      await expectReplay(options, filePath)
+    } finally {
+      for (const release of releaseRequests) release()
+    }
+  })
+
+  test("times out a real HTTP JSON stream that never finishes", async () => {
+    const { options, filePath } = await fixture()
+    const server = startIngestServer(() => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('{"accepted":')) },
+    })))
+    options.server = serverBase(server)
+    await expect(Effect.runPromise(runCollection(options))).rejects.toThrow("collector request timed out")
+    await expectReplay(options, filePath)
+  })
+
+  for (const declared of [true, false]) {
+    test(`rejects oversized acknowledgments ${declared ? "by declared length" : "while streaming"} and cancels them`, async () => {
+      const { options, filePath } = await fixture()
+      let cancellations = 0
+      let pulls = 0
+      const fetch = transport(() => new Response(new ReadableStream({
+        pull(controller) {
+          pulls++
+          controller.enqueue(new Uint8Array(1024))
+        },
+        cancel() { cancellations++ },
+      }, { highWaterMark: 0 }), {
+        headers: declared ? { "content-length": String(MAX_ACKNOWLEDGMENT_BYTES + 1) } : {},
+      }))
+      await expect(Effect.runPromise(runCollection({ ...options, fetch }))).rejects.toThrow("ingest response too large")
+      expect(cancellations).toBe(4)
+      expect(pulls).toBe(declared ? 0 : 4 * (MAX_ACKNOWLEDGMENT_BYTES / 1024 + 1))
+      await expectReplay(options, filePath)
+    })
+  }
+
+  for (const body of [
+    { revision: 1 },
+    { accepted: 0, unchanged: 0, revision: 1 },
+    { accepted: 2, unchanged: 0, revision: 1 },
+    { accepted: -1, unchanged: 2, revision: 1 },
+    { accepted: 0.5, unchanged: 0.5, revision: 1 },
+    { accepted: "1", unchanged: 0, revision: 1 },
+    { accepted: 1, unchanged: 0, revision: -1 },
+    { accepted: 1, unchanged: 0, revision: 1.5 },
+    { accepted: 1, unchanged: 0, revision: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    test(`does not checkpoint an invalid acknowledgment ${JSON.stringify(body)}`, async () => {
+      const { options, filePath } = await fixture()
+      await expect(Effect.runPromise(runCollection({
+        ...options, fetch: transport(() => Response.json(body)),
+      }))).rejects.toThrow("invalid ingest response")
+      await expectReplay(options, filePath)
+    })
+  }
+
+  test("cancels HTTP error bodies without waiting for a stuck cancel operation", async () => {
+    const { options, filePath } = await fixture()
+    let cancellations = 0
+    const fetch = transport(() => new Response(new ReadableStream({
+      cancel() {
+        cancellations++
+        return new Promise<void>(() => {})
+      },
+    }), { status: 503 }))
+    await expect(Effect.runPromise(runCollection({ ...options, fetch }))).rejects.toThrow("http_503")
+    expect(cancellations).toBe(4)
+    await expectReplay(options, filePath)
+  })
+
+  test("whole-cycle deadline interrupts retry backoff and prevents late retries", async () => {
+    const { options, filePath } = await fixture()
+    let attempts = 0
+    let resume!: () => void
+    const sleeping = new Promise<void>((resolve) => { resume = resolve })
+    await expect(Effect.runPromise(runCollection({
+      ...options,
+      cycleTimeoutMs: 100,
+      sleep: () => sleeping,
+      fetch: transport(() => { attempts++; return new Response(null, { status: 503 }) }),
+    }))).rejects.toThrow("collector cycle timed out")
+    resume()
+    await expectReplay(options, filePath)
+    expect(attempts).toBe(1)
+  })
+
+  test("whole-cycle deadline aborts an active request before its attempt deadline", async () => {
+    const { options, filePath } = await fixture()
+    const signals: AbortSignal[] = []
+    await expect(Effect.runPromise(runCollection({
+      ...options,
+      cycleTimeoutMs: 100,
+      requestTimeoutMs: 2_000,
+      fetch: transport(() => new Promise<Response>(() => {}), signals),
+    }))).rejects.toThrow("collector cycle timed out")
+    expect(signals).toHaveLength(1)
+    expect(signals[0].aborted).toBe(true)
+    await expectReplay(options, filePath)
+  })
+
+  for (const wholeCycle of [false, true]) {
+    test(`bounds hanging status writes with the ${wholeCycle ? "cycle" : "request"} deadline`, async () => {
+      const { options, filePath } = await fixture()
+      const signals: AbortSignal[] = []
+      const fetch = (async (input, init) => {
+        signals.push(init!.signal!)
+        if (String(input).endsWith("collector-status")) return new Promise<Response>(() => {})
+        return Response.json({ accepted: 1, unchanged: 0, revision: 1 })
+      }) as typeof globalThis.fetch
+      await expect(Effect.runPromise(runCollection({
+        ...options,
+        cycleTimeoutMs: wholeCycle ? 100 : 2_000,
+        requestTimeoutMs: wholeCycle ? 2_000 : 30,
+        fetch,
+      }))).rejects.toThrow(wholeCycle ? "collector cycle timed out" : "collector request timed out")
+      expect(signals.every((signal) => signal.aborted)).toBe(true)
+      expect(await Bun.file(`${options.statePath}.lock`).exists()).toBe(false)
+      expect((await Effect.runPromise(loadCollectorState(options.statePath)))!.files[filePath]).toBeDefined()
+      // Acknowledged work stays checkpointed even if status reporting fails.
+      expect(await Effect.runPromise(runCollection({
+        ...options,
+        fetch: transport(() => { throw new Error("unexpected replay") }),
+      }))).toMatchObject({ uploaded: 0, unchanged: 1, errors: [] })
+    })
+  }
+
+  test("discards successful status bodies instead of reading an endless stream", async () => {
+    const { options } = await fixture()
+    let cancellations = 0
+    const fetch = (async (input) => {
+      if (String(input).endsWith("collector-status")) return new Response(new ReadableStream({
+        cancel() { cancellations++; return new Promise<void>(() => {}) },
+      }))
+      return Response.json({ accepted: 1, unchanged: 0, revision: 1 })
+    }) as typeof globalThis.fetch
+    expect(await Effect.runPromise(runCollection({ ...options, fetch }))).toMatchObject({ uploaded: 1 })
+    expect(cancellations).toBe(1)
+    expect(await Bun.file(`${options.statePath}.lock`).exists()).toBe(false)
   })
 })

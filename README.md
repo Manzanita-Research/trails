@@ -187,6 +187,8 @@ Rerun the same command once. If it still fails, send the command output and the 
 
 Only the hub has server and backup logs.
 
+Collector HTTP requests have a 15-second deadline, including response reads, and each collection cycle has a two-minute deadline covering parsing, uploads, retry waits, and status reporting. Upload acknowledgments are limited to 8 KiB and must account for every session in the batch before it is checkpointed. A timeout releases the collector lock so the next scheduled cycle can retry uncheckpointed work; an atomic checkpoint already being written finishes before the lock is released.
+
 ## Privacy
 
 Transcript parsing happens on the Mac where each session was created. Trails sends the hub only normalized observations: source, session identifier, working directory, branch, timestamps, event counts, first prompt, minute activity, and a bounded digest.
