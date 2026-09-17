@@ -199,6 +199,8 @@ The hub rejects HTTP authorities outside its configured allowlist before serving
 
 Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; the application credentials below authenticate local processes and tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
 
+Capture uploads accept static JPEG, PNG and WebP images only. The hub inspects and fully decodes the bytes before writing any part of the request, checks that format and dimensions match the supplied metadata, and rejects damaged or animated images. Limits are 500 KiB compressed bytes and 4,000,000 pixels per image, 16,384 pixels per side, and 32,000,000 image pixels per request. The embedded ImageMagick WebAssembly decoder restricts formats and memory allocations, with a 64 MiB pixel cache and no disk spill or external delegates. Image responses require authentication and use `no-store`, `nosniff`, same-origin resource policy and a sandbox CSP. Previously stored images are not retroactively decoded or removed.
+
 The private web UI prohibits framing, including by the same origin, with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. This applies to disk and embedded static responses and the Vite development server. Open Trails as a top-level page on loopback or its trusted tailnet origin. The BB integration renders its own UI through authenticated JSON API reads and requires no framing exception.
 
 ### Authentication and upgrading an existing hub

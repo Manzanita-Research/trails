@@ -618,6 +618,9 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
       if (result.left._tag === "CaptureOwnershipError") {
         throw new ApiError("forbidden", "capture ownership does not permit this write", 403)
       }
+      if (result.left._tag === "CaptureImageValidationError") {
+        throw new ApiError("invalid_request", result.left.message, 400)
+      }
       throw new ApiError("internal_error", "internal server error", 500)
     }
     return jsonResponse(result.right)
@@ -644,6 +647,9 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
       "Content-Type": row.mime,
       "Content-Length": String(row.byte_length),
       "Cache-Control": privateCacheControl,
+      "X-Content-Type-Options": "nosniff",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Content-Security-Policy": "default-src 'none'; sandbox"
       ETag: etag,
     })
     if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers })

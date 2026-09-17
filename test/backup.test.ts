@@ -58,7 +58,7 @@ const committedInput: IngestRequestV2 = {
   ],
 }
 
-const captureBytes = Buffer.from("offline capture bytes")
+const captureBytes = await readFile(new URL("./fixtures/capture-images/static.webp", import.meta.url))
 const committedCaptureInput: IngestCapturesRequestV1 = {
   protocolVersion: 1,
   device: { id: "backup-device", name: "Backup Mac" },
@@ -82,8 +82,8 @@ const committedCaptureInput: IngestCapturesRequestV1 = {
       images: Array.from({ length: 4 }, (_, index) => ({
         index,
         mime: "image/webp" as const,
-        width: 640,
-        height: 640,
+        width: 2,
+        height: 3,
         bytes: captureBytes.toString("base64"),
       })),
     },

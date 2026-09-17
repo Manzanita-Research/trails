@@ -8,6 +8,7 @@ import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "./authenticated-app"
 import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
+import { fixtureImage } from "./capture-image-fixtures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
 import { MIGRATIONS } from "../server/migrations"
@@ -138,7 +139,7 @@ function ingestBody(
   return { protocolVersion: 2, device, sessions }
 }
 
-const syntheticWebp = Buffer.from("RIFF\\x08\\x00\\x00\\x00WEBPsynthetic")
+const syntheticWebp = await readFile(new URL("./fixtures/capture-images/static.webp", import.meta.url))
 
 function capture(
   sourceRecordId: string,
@@ -163,8 +164,8 @@ function capture(
     images: Array.from({ length: 4 }, (_, index) => ({
       index,
       mime: "image/webp" as const,
-      width: 640,
-      height: 640,
+      width: 2,
+      height: 3,
       bytes: syntheticWebp.toString("base64"),
     })),
     ...overrides,
@@ -745,6 +746,51 @@ describe("ingest and bootstrap", () => {
 })
 
 describe("capture ingest, bootstrap privacy, and image API", () => {
+  test("returns 400 for invalid media and preserves the entire existing state", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
+    const original = capture("existing")
+    expect((await request(app, "POST", "/api/captures", captureBody([original]))).status).toBe(200)
+    const snapshot = () => ["machines", "captures", "capture_images", "capture_attention", "meta"].map(
+      (table) => database.sqlite.query(`SELECT * FROM ${table}`).all(),
+    )
+    const before = snapshot()
+    for (const image of [
+      fixtureImage("static.png", { bytes: Buffer.from("ordinary text").toString("base64") }),
+      fixtureImage("static.jpg", { mime: "image/png" }),
+      fixtureImage("static.webp", { width: 1 }),
+      fixtureImage("static.png", { bytes: fixtureImage().bytes.slice(0, 40) }),
+      fixtureImage("over-pixel-limit.png", { width: 1, height: 1 }),
+      fixtureImage("animated.png"),
+      fixtureImage("animated.webp"),
+    ]) {
+      const invalid = capture("invalid", { images: [image, ...original.images.slice(1)] })
+      const response = await request(app, "POST", "/api/captures", captureBody([
+        { ...original, title: "Must not persist" }, invalid,
+      ], { id: "new-device", name: "Must not persist" }))
+      expect(response.status).toBe(400)
+      expect(await json(response)).toMatchObject({ error: { code: "invalid_request" } })
+      expect(snapshot()).toEqual(before)
+      await expect(Effect.runPromise(ingestCaptures(database, captureBody([invalid])))).rejects.toThrow("capture images must be valid")
+      expect(snapshot()).toEqual(before)
+    }
+  })
+
+  test("persists validated PNG, JPEG and WebP with their verified dimensions", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
+    const images = ["static.png", "static.jpg", "static.webp", "static.png"].map(
+      (name, index) => fixtureImage(name, { index }),
+    )
+    expect((await request(app, "POST", "/api/captures", captureBody([capture("formats", { images })]))).status).toBe(200)
+    const rows = database.sqlite.query("SELECT mime, width, height, bytes FROM capture_images ORDER BY image_index").all()
+    expect(rows).toEqual(images.map((image) => ({
+      mime: image.mime, width: 2, height: 3, bytes: Buffer.from(image.bytes, "base64"),
+    })))
+  })
+
   test("is idempotent, preserves null reconciliation attribution, and replaces children atomically", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
@@ -837,17 +883,24 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     expect(imageResponse.headers.get("content-type")).toBe("image/webp")
     expect(imageResponse.headers.get("content-length")).toBe(String(syntheticWebp.byteLength))
     expect(imageResponse.headers.get("cache-control")).toBe("no-store")
+    expect(imageResponse.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(imageResponse.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+    expect(imageResponse.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox")
     expect(Buffer.from(await imageResponse.arrayBuffer())).toEqual(syntheticWebp)
     const etag = imageResponse.headers.get("etag")
     expect(etag).toMatch(/^"[0-9a-f]{64}"$/)
 
     imageResponse = await app(new Request(`http://trails.test${imageUrl}`, { headers: { "If-None-Match": etag! } }))
     expect(imageResponse.status).toBe(304)
+    expect(imageResponse.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(imageResponse.headers.get("cross-origin-resource-policy")).toBe("same-origin")
     expect((await imageResponse.arrayBuffer()).byteLength).toBe(0)
 
     imageResponse = await request(app, "HEAD", imageUrl)
     expect(imageResponse.status).toBe(200)
     expect(imageResponse.headers.get("content-length")).toBe(String(syntheticWebp.byteLength))
+    expect(imageResponse.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(imageResponse.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox")
     expect((await imageResponse.arrayBuffer()).byteLength).toBe(0)
     expect((await request(app, "GET", "/api/capture-images/999/0")).status).toBe(404)
     expect((await request(app, "GET", "/api/capture-images/not-an-id/0")).status).toBe(400)

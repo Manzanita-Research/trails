@@ -6,6 +6,7 @@ import type { Credential } from "./auth"
 import { checkDisk, checkQueue, checkStorage } from "./resources"
 import type { TrailsDb } from "./db"
 import type { IngestResult } from "./ingest"
+import { CaptureImageValidationError, validateCaptureImages } from "./capture-images"
 
 export class CaptureIngestError extends Error {
   readonly _tag = "CaptureIngestError"
@@ -63,8 +64,11 @@ export function ingestCaptures(
   input: IngestCapturesRequestV1,
   credential: Credential,
   now = Date.now(),
-): Effect.Effect<IngestResult, CaptureIngestError | CaptureOwnershipError> {
-  return Effect.try({
+): Effect.Effect<IngestResult, CaptureIngestError | CaptureOwnershipError | CaptureImageValidationError> {
+  return Effect.tryPromise({
+    try: () => validateCaptureImages(input),
+    catch: (cause) => cause instanceof CaptureImageValidationError ? cause : new CaptureIngestError(cause),
+  }).pipe(Effect.flatMap((images) => Effect.try({
     try: () =>
       db.sqlite.transaction(() => {
         const sqlite = db.sqlite
@@ -188,7 +192,7 @@ export function ingestCaptures(
           if (!existing || contentChanged) {
             for (const utcMinute of capture.attentionMinutes) insertAttention.run(captureId, utcMinute)
             for (const image of capture.images) {
-              const bytes = Buffer.from(image.bytes, "base64")
+              const bytes = images.get(image.bytes)!
               insertImage.run(
                 captureId,
                 image.index,
@@ -220,5 +224,5 @@ export function ingestCaptures(
         return { accepted, unchanged, revision }
       }).immediate(),
     catch: (cause) => cause instanceof CaptureOwnershipError ? cause : new CaptureIngestError(cause),
-  })
+  })))
 }

@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import type { LocalActivityTuple, Source, UtcActivityTuple } from "./domain"
 import { INGEST_LIMITS } from "./limits"
 import { HARNESS_IDS } from "./harnesses"
+import { CAPTURE_IMAGE_MAX_BYTES, CAPTURE_IMAGE_MAX_DIMENSION, CAPTURE_IMAGE_MAX_PIXELS } from "./capture-image-limits"
 
 const boundedString = (minimum: number, maximum: number) =>
   Schema.String.pipe(Schema.minLength(minimum), Schema.maxLength(maximum))
@@ -111,6 +112,7 @@ const CaptureUtcAttentionV1Schema = Schema.Array(
 
 const strictBase64 = Schema.String.pipe(
   Schema.minLength(4),
+  Schema.maxLength(Math.ceil(CAPTURE_IMAGE_MAX_BYTES / 3) * 4),
   Schema.filter((value) => {
     if (
       value.startsWith("data:") ||
@@ -120,17 +122,17 @@ const strictBase64 = Schema.String.pipe(
       return "must be raw canonical base64"
     }
     const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0
-    return (value.length / 4) * 3 - padding <= 500 * 1024 || "decoded image exceeds 500 KiB"
+    return (value.length / 4) * 3 - padding <= CAPTURE_IMAGE_MAX_BYTES || "decoded image exceeds 500 KiB"
   }),
 )
 
 export const CaptureImageV1Schema = Schema.Struct({
   index: Schema.Number.pipe(Schema.int(), Schema.between(0, 3)),
   mime: Schema.Literal("image/jpeg", "image/png", "image/webp"),
-  width: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
-  height: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
+  width: Schema.Number.pipe(Schema.int(), Schema.between(1, CAPTURE_IMAGE_MAX_DIMENSION)),
+  height: Schema.Number.pipe(Schema.int(), Schema.between(1, CAPTURE_IMAGE_MAX_DIMENSION)),
   bytes: strictBase64,
-})
+}).pipe(Schema.filter((image) => image.width * image.height <= CAPTURE_IMAGE_MAX_PIXELS || "image exceeds pixel limit"))
 
 const MidjourneyImagesV1Schema = Schema.Array(CaptureImageV1Schema).pipe(
   Schema.itemsCount(4),
