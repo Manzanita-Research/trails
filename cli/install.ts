@@ -1,18 +1,16 @@
 import { terminalText } from "../shared/terminal"
 import {
   access,
-  chmod,
   copyFile,
   lstat,
-  mkdir,
   open,
-  readFile,
   realpath,
   rename,
   stat,
   unlink,
 } from "node:fs/promises"
-import { constants } from "node:fs"
+import { closeSync, constants } from "node:fs"
+import { atomicWritePrivateFile, inspectPrivateFile, openPrivateFile, readPrivateFile, secureDirectory, UnsafePathError } from "../shared/private-fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { COLLECTOR_CONFIG_PATH, isLegacyProviderHubConfig, loadCollectorConfig, loadHubConfig, writeHubConfig } from "./config"
@@ -163,32 +161,40 @@ async function writableAncestor(path: string): Promise<void> {
 }
 
 async function atomicCopy(source: string, target: string): Promise<void> {
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+  secureDirectory(dirname(target), true, false)
+  inspectPrivateFile(target, false)
   try {
     if ((await realpath(source)) === (await realpath(target))) return
   } catch {}
   const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`
-  await copyFile(source, temporary)
-  await chmod(temporary, 0o700)
-  const handle = await open(temporary, "r")
+  await copyFile(source, temporary, constants.COPYFILE_EXCL)
   try {
-    await handle.sync()
+    const handle = await open(temporary, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const info = await handle.stat()
+      if (!info.isFile() || info.uid !== process.getuid?.() || info.nlink !== 1) {
+        throw new UnsafePathError(temporary, "invalid executable temporary file")
+      }
+      await handle.chmod(0o700)
+      const current = inspectPrivateFile(temporary, false)
+      if (!current || current.dev !== info.dev || current.ino !== info.ino) {
+        throw new UnsafePathError(temporary, "executable changed while opening")
+      }
+      await handle.sync()
+      inspectPrivateFile(target, false)
+      await rename(temporary, target)
+    } finally {
+      await handle.close()
+    }
   } finally {
-    await handle.close()
+    try { await unlink(temporary) } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+    }
   }
-  await rename(temporary, target)
 }
 
 async function atomicText(path: string, content: string): Promise<void> {
-  const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
-  const handle = await open(temporary, "wx", 0o600)
-  try {
-    await handle.writeFile(content)
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await rename(temporary, path)
+  atomicWritePrivateFile(path, content, false)
 }
 
 function tailscalePath(): string | null {
@@ -259,8 +265,9 @@ async function validatedLegacyFile(path: string, validate: (value: unknown) => b
   }
   let value: unknown
   try {
-    value = JSON.parse(await readFile(path, "utf8"))
-  } catch {
+    value = JSON.parse(readPrivateFile(path))
+  } catch (error) {
+    if (error instanceof UnsafePathError) throw error
     throw new Error(`legacy Trails file requires manual removal: ${path}`)
   }
   if (!validate(value)) throw new Error(`legacy Trails file requires manual removal: ${path}`)
@@ -279,6 +286,7 @@ function isLegacyAuth(value: unknown): boolean {
 }
 
 async function removeValidatedLegacyFile(path: string, expected: { readonly dev: number; readonly ino: number }): Promise<void> {
+  inspectPrivateFile(path)
   const current = await lstat(path)
   if (!current.isFile() || current.isSymbolicLink() || current.dev !== expected.dev || current.ino !== expected.ino) {
     throw new Error(`legacy Trails file changed during upgrade: ${path}`)
@@ -371,13 +379,11 @@ export async function install(options: InstallOptions): Promise<void> {
   }
 
   await atomicCopy(process.execPath, destination)
-  await mkdir(stateDirectory, { recursive: true, mode: 0o700 })
-  await mkdir(launchAgentDirectory, { recursive: true, mode: 0o700 })
+  secureDirectory(stateDirectory, true)
+  secureDirectory(launchAgentDirectory, true, false)
   for (const definition of planned) {
     for (const suffix of [".log", ".error.log"]) {
-      const handle = await open(join(stateDirectory, `${definition.label}${suffix}`), "a", 0o600)
-      await handle.close()
-      await chmod(join(stateDirectory, `${definition.label}${suffix}`), 0o600)
+      closeSync(openPrivateFile(join(stateDirectory, `${definition.label}${suffix}`), "append"))
     }
     const plistPath = join(launchAgentDirectory, `${definition.label}.plist`)
     await atomicText(plistPath, renderPlist(definition))

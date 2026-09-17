@@ -1,8 +1,10 @@
 import { Effect } from "effect"
 import { accessSync, constants, realpathSync } from "node:fs"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { delimiter, join } from "node:path"
+import { Readable } from "node:stream"
+import type { ReadableStream as NodeReadableStream } from "node:stream/web"
 import { HARNESS_AUTO_ORDER, HARNESSES, type HarnessId } from "../../shared/harnesses"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../../shared/prompts"
 import {
@@ -81,19 +83,30 @@ export interface HarnessProcessResult {
 export type HarnessProcessRunner = (request: HarnessProcessRequest) => Promise<HarnessProcessResult>
 export type HarnessResolver = (id: HarnessId) => string | null
 
-async function readLimited(stream: ReadableStream<Uint8Array>, maximumBytes: number): Promise<string> {
+async function readLimited(
+  stream: ReadableStream<Uint8Array> | NodeReadableStream<Uint8Array>,
+  maximumBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
   const reader = stream.getReader()
   const chunks: Uint8Array[] = []
   let length = 0
-  while (true) {
-    const result = await reader.read()
-    if (result.done) break
-    length += result.value.byteLength
-    if (length > maximumBytes) {
-      await reader.cancel()
-      throw new SummarizeError("protocol")
+  const cancel = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener("abort", cancel, { once: true })
+  try {
+    while (true) {
+      signal.throwIfAborted()
+      const result = await reader.read()
+      signal.throwIfAborted()
+      if (result.done) break
+      length += result.value.byteLength
+      if (length > maximumBytes) throw new SummarizeError("protocol")
+      chunks.push(result.value)
     }
-    chunks.push(result.value)
+  } finally {
+    signal.removeEventListener("abort", cancel)
+    cancel()
+    reader.releaseLock()
   }
   const bytes = new Uint8Array(length)
   let offset = 0
@@ -104,7 +117,26 @@ async function readLimited(stream: ReadableStream<Uint8Array>, maximumBytes: num
   return new TextDecoder().decode(bytes)
 }
 
+async function readOutputFile(path: string, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted()
+  // NOFOLLOW rejects symlinks atomically; NONBLOCK prevents a FIFO open from
+  // waiting for a writer before we can check the descriptor's file type.
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    signal.throwIfAborted()
+    const info = await file.stat()
+    signal.throwIfAborted()
+    if (!info.isFile() || info.size > MAX_PROCESS_OUTPUT_BYTES) throw new SummarizeError("protocol")
+    // Read at most the cap plus one byte, even if the file grows after stat.
+    const stream = file.createReadStream({ highWaterMark: 64 * 1024, end: MAX_PROCESS_OUTPUT_BYTES, signal })
+    return await readLimited(Readable.toWeb(stream), MAX_PROCESS_OUTPUT_BYTES, signal)
+  } finally {
+    await file.close()
+  }
+}
+
 export const runHarnessProcess: HarnessProcessRunner = async (request) => {
+  request.signal?.throwIfAborted()
   const process = Bun.spawn([request.executable, ...request.args], {
     env: {
       HOME: homedir(),
@@ -120,8 +152,7 @@ export const runHarnessProcess: HarnessProcessRunner = async (request) => {
     stdout: "pipe",
     stderr: "pipe",
   })
-  if (request.stdin !== null) process.stdin.write(request.stdin)
-  process.stdin.end()
+  const controller = new AbortController()
   let timedOut = false
   let termination: Promise<void> | null = null
   const terminate = (): Promise<void> => {
@@ -137,40 +168,42 @@ export const runHarnessProcess: HarnessProcessRunner = async (request) => {
     })()
     return termination
   }
-  const abort = () => { void terminate() }
+  const abort = () => { controller.abort(request.signal?.reason) }
   request.signal?.addEventListener("abort", abort, { once: true })
+  const interrupted = new Promise<never>((_, reject) => {
+    controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true })
+  })
   const timer = setTimeout(() => {
     timedOut = true
-    void terminate()
+    controller.abort(new SummarizeError("timeout"))
   }, request.timeoutMs)
   try {
-    const [exitCode, stdoutResult, stderrResult] = await Promise.all([
-      process.exited,
-      readLimited(process.stdout, MAX_PROCESS_OUTPUT_BYTES).then(
-        (value) => ({ value, error: null }),
-        (error: unknown) => ({ value: "", error }),
-      ),
-      readLimited(process.stderr, MAX_PROCESS_OUTPUT_BYTES).then(
-        (value) => ({ value, error: null }),
-        (error: unknown) => ({ value: "", error }),
-      ),
-    ])
-    if (stdoutResult.error !== null || stderrResult.error !== null) {
-      throw stdoutResult.error ?? stderrResult.error
-    }
-    let output: string | null = null
-    if (request.outputPath !== null) {
-      try {
-        const value = await readFile(request.outputPath, "utf8")
-        if (Buffer.byteLength(value, "utf8") > MAX_PROCESS_OUTPUT_BYTES) throw new SummarizeError("protocol")
-        output = value
-      } catch (error) {
-        if (exitCode === 0) throw error
+    const collect = async (): Promise<HarnessProcessResult> => {
+      if (request.stdin !== null) process.stdin.write(request.stdin)
+      process.stdin.end()
+      const [exitCode, stdout, stderr] = await Promise.all([
+        process.exited,
+        readLimited(process.stdout, MAX_PROCESS_OUTPUT_BYTES, controller.signal),
+        readLimited(process.stderr, MAX_PROCESS_OUTPUT_BYTES, controller.signal),
+      ])
+      controller.signal.throwIfAborted()
+      let output: string | null = null
+      if (request.outputPath !== null) {
+        try {
+          output = await readOutputFile(request.outputPath, controller.signal)
+        } catch (error) {
+          if (exitCode === 0) throw error
+        }
       }
+      controller.signal.throwIfAborted()
+      return { exitCode, stdout, stderr, output, timedOut }
     }
-    return { exitCode, stdout: stdoutResult.value, stderr: stderrResult.value, output, timedOut }
+    return await Promise.race([collect(), interrupted])
   } catch (error) {
+    clearTimeout(timer)
+    controller.abort(error)
     await terminate()
+    if (timedOut) return { exitCode: await process.exited, stdout: "", stderr: "", output: null, timedOut }
     throw error
   } finally {
     clearTimeout(timer)

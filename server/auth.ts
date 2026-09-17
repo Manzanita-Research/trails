@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
-import { constants, closeSync, fstatSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { atomicWritePrivateFile, createPrivateFile, readPrivateFile } from "../shared/private-fs"
+export { readPrivateFile } from "../shared/private-fs"
 import type { TrailsDb } from "./db"
 
 export type Credential = { id: string; role: "owner" | "read" | "collector"; deviceId: string | null }
@@ -29,17 +30,6 @@ export function revokeCredential(db: TrailsDb, id: string): void {
   if (!removed) throw new Error("credential not found; use auth rotate-owner to revoke owner access")
 }
 
-export function readPrivateFile(path: string): string {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-  try {
-    const info = fstatSync(fd)
-    if (!info.isFile() || (info.mode & 0o077) !== 0 || (process.getuid && info.uid !== process.getuid())) {
-      throw new Error("credential file must be owned by the current user with mode 600")
-    }
-    return readFileSync(fd, "utf8")
-  } finally { closeSync(fd) }
-}
-
 export function ownerTokenPath(db: TrailsDb): string { return `${db.path}.owner-token` }
 
 // Bootstrap only from the owning OS account, never from a first network caller.
@@ -52,7 +42,7 @@ export function initializeOwner(db: TrailsDb): void {
     catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
       token = secret()
-      writeFileSync(ownerTokenPath(db), `${token}\n`, { flag: "wx", mode: 0o600 })
+      createPrivateFile(ownerTokenPath(db), `${token}\n`)
     }
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("invalid owner credential file")
     db.sqlite.query("INSERT INTO hub_credentials(id, token_hash, role, device_id) VALUES (?, ?, 'owner', NULL)")
@@ -67,9 +57,7 @@ export function rotateOwner(db: TrailsDb): void {
     try { readPrivateFile(path) } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
     }
-    const temporary = `${path}.${crypto.randomUUID()}.tmp`
-    writeFileSync(temporary, `${token}\n`, { flag: "wx", mode: 0o600 })
-    renameSync(temporary, path)
+    atomicWritePrivateFile(path, `${token}\n`)
     db.sqlite.query("DELETE FROM hub_credentials WHERE role = 'owner'").run()
     db.sqlite.query("INSERT INTO hub_credentials(id, token_hash, role, device_id) VALUES (?, ?, 'owner', NULL)")
       .run(crypto.randomUUID(), digest(token))
