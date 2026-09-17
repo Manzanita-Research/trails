@@ -16,9 +16,13 @@ export interface FileFingerprint {
 }
 
 export interface CollectorState {
-  readonly protocolVersion: 2
+  readonly protocolVersion: 3
   readonly target: CollectorTarget
   readonly files: Record<string, FileFingerprint>
+  readonly captureCursors: {
+    readonly midjourney: string | null
+    readonly granola: string | null
+  }
 }
 
 const TargetSchema = Schema.Struct({
@@ -30,7 +34,7 @@ const FingerprintSchema = Schema.Struct({
   size: Schema.Number.pipe(Schema.nonNegative()),
   mtimeMs: Schema.Number.pipe(Schema.nonNegative()),
 })
-const CollectorStateSchema = Schema.Struct({
+const CollectorStateV2Schema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   target: TargetSchema,
   files: Schema.Record({ key: Schema.String, value: FingerprintSchema }),
@@ -39,6 +43,15 @@ const LegacyCollectorStateSchema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   target: TargetSchema,
   files: Schema.Record({ key: Schema.String, value: FingerprintSchema }),
+})
+const CollectorStateSchema = Schema.Struct({
+  protocolVersion: Schema.Literal(3),
+  target: TargetSchema,
+  files: Schema.Record({ key: Schema.String, value: FingerprintSchema }),
+  captureCursors: Schema.Struct({
+    midjourney: Schema.NullOr(Schema.String),
+    granola: Schema.NullOr(Schema.String),
+  }),
 })
 
 export const DEFAULT_STATE_PATH = join(homedir(), ".local/state/trails/collector-state.json")
@@ -62,12 +75,19 @@ export function loadCollectorState(path: string): Effect.Effect<CollectorState |
         const input: unknown = JSON.parse(await readFile(path, "utf8"))
         try {
           return decodeExact(CollectorStateSchema, input) as CollectorState
-        } catch (error) {
+        } catch {
           try {
             decodeExact(LegacyCollectorStateSchema, input)
             return null
           } catch {
-            throw error
+            // Version two already contains canonical UTC fingerprints and can be upgraded in place.
+          }
+          const previous = decodeExact(CollectorStateV2Schema, input)
+          return {
+            protocolVersion: 3,
+            target: previous.target,
+            files: previous.files,
+            captureCursors: { midjourney: null, granola: null },
           }
         }
       } catch (error) {
@@ -87,7 +107,7 @@ export function saveCollectorState(path: string, state: CollectorState): Effect.
       const temporary = `${absolute}.${process.pid}.${crypto.randomUUID()}.tmp`
       const handle = await open(temporary, "wx", 0o600)
       try {
-        await handle.writeFile(JSON.stringify(state))
+        await handle.writeFile(JSON.stringify(decodeExact(CollectorStateSchema, state)))
         await handle.sync()
       } finally {
         await handle.close()

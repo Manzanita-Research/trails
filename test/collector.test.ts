@@ -3,6 +3,12 @@ import { Effect } from "effect"
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import {
+  CaptureCollectionError,
+  packCaptureBatches,
+  runCaptureCollection,
+  type CaptureAdapter,
+} from "../collector/captures"
 import { CollectorError, runCollection } from "../collector/sync"
 import {
   CollectorBusyError,
@@ -12,7 +18,14 @@ import {
   type CollectorState,
 } from "../collector/state"
 import { discoverSourceFiles, parseSourceRoot, type SourceRoot } from "../collector/sources"
-import { CollectorStatusV1Schema, IngestRequestV2Schema, decodeExact } from "../shared/protocol"
+import {
+  CollectorStatusV1Schema,
+  IngestCapturesRequestV1Schema,
+  IngestRequestV2Schema,
+  decodeExact,
+  type IngestCaptureV1,
+  type MidjourneyCaptureV1,
+} from "../shared/protocol"
 
 const temporaryDirectories: string[] = []
 const servers: Bun.Server<undefined>[] = []
@@ -81,6 +94,41 @@ function serverBase(server: Bun.Server<undefined>): string {
   return server.url.toString()
 }
 
+function ambientCapture(sourceRecordId: string, imageBytes = 16): MidjourneyCaptureV1 {
+  const bytes = Buffer.alloc(imageBytes, sourceRecordId.charCodeAt(0) || 1).toString("base64")
+  return {
+    source: "midjourney",
+    sourceRecordId,
+    project: null,
+    projectHint: null,
+    title: `Synthetic ${sourceRecordId}`,
+    startedAt: "2026-08-03T17:00:00.000Z",
+    endedAt: null,
+    summaryInput: "Synthetic capture for collector tests",
+    attentionMinutes: [Math.floor(Date.parse("2026-08-03T17:00:00.000Z") / 60_000)],
+    payload: {
+      eventType: "imagine",
+      jobType: "generation",
+      parentSourceRecordId: null,
+      parentGrid: null,
+    },
+    images: Array.from({ length: 4 }, (_, index) => ({
+      index,
+      mime: "image/webp" as const,
+      width: 640,
+      height: 640,
+      bytes,
+    })),
+  }
+}
+
+function fakeAdapter(
+  collect: CaptureAdapter["collect"],
+  source: CaptureAdapter["source"] = "midjourney",
+): CaptureAdapter {
+  return { source, collect }
+}
+
 describe("source discovery", () => {
   test("lets live transcripts win over restored copies and excludes probes and subagents", async () => {
     const directory = await temporaryDirectory()
@@ -128,9 +176,10 @@ describe("collector state and locking", () => {
     const directory = await temporaryDirectory()
     const statePath = join(directory, "nested", "collector.json")
     const state: CollectorState = {
-      protocolVersion: 2,
+      protocolVersion: 3,
       target: { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" },
       files: { "/tmp/fixture.jsonl": { size: 20, mtimeMs: 1234 } },
+      captureCursors: { midjourney: "mj-cursor", granola: null },
     }
     await Effect.runPromise(saveCollectorState(statePath, state))
 
@@ -146,7 +195,7 @@ describe("collector state and locking", () => {
     await writeFile(
       statePath,
       JSON.stringify({
-        protocolVersion: 3,
+        protocolVersion: 4,
         target: { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" },
         files: {},
       }),
@@ -154,6 +203,28 @@ describe("collector state and locking", () => {
     await expect(Effect.runPromise(loadCollectorState(statePath))).rejects.toBeInstanceOf(Error)
     await writeFile(statePath, "{broken")
     await expect(Effect.runPromise(loadCollectorState(statePath))).rejects.toBeInstanceOf(Error)
+  })
+
+  test("upgrades canonical version-two checkpoints and resets pre-UTC version one", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector.json")
+    const target = { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" }
+    const files = { "/tmp/canonical.jsonl": { size: 10, mtimeMs: 20 } }
+    await writeFile(statePath, JSON.stringify({ protocolVersion: 2, target, files }), { mode: 0o600 })
+
+    const migrated = await Effect.runPromise(loadCollectorState(statePath))
+    expect(migrated).toEqual({
+      protocolVersion: 3,
+      target,
+      files,
+      captureCursors: { midjourney: null, granola: null },
+    })
+    if (migrated === null) throw new Error("expected a migrated checkpoint")
+    await Effect.runPromise(saveCollectorState(statePath, migrated))
+    expect(JSON.parse(await readFile(statePath, "utf8")).protocolVersion).toBe(3)
+
+    await writeFile(statePath, JSON.stringify({ protocolVersion: 1, target, files }), { mode: 0o600 })
+    expect(await Effect.runPromise(loadCollectorState(statePath))).toBeNull()
   })
 
   test("rejects an overlapping live lock and recovers a dead-pid lock", async () => {
@@ -299,7 +370,7 @@ describe("collection synchronization", () => {
     ])
   })
 
-  test("treats a valid version-one checkpoint as stale and persists version two after replay", async () => {
+  test("treats a pre-UTC checkpoint as stale and persists version three after replay", async () => {
     const directory = await temporaryDirectory()
     const root = join(directory, "source")
     const statePath = join(directory, "collector-state.json")
@@ -333,7 +404,7 @@ describe("collection synchronization", () => {
         }),
       ),
     ).toMatchObject({ changed: 1, uploaded: 1, unchanged: 0 })
-    expect(JSON.parse(await readFile(statePath, "utf8")).protocolVersion).toBe(2)
+    expect(JSON.parse(await readFile(statePath, "utf8")).protocolVersion).toBe(3)
   })
 
   test("checkpoints accepted batches while leaving a terminally failed batch for the next run", async () => {
@@ -516,5 +587,290 @@ describe("collection synchronization", () => {
     if (collectionFailure._tag === "Left") {
       expect(collectionFailure.left).toBeInstanceOf(CollectorError)
     }
+  })
+})
+
+describe("ambient capture collection", () => {
+  test("keeps provider cursors separate, batches by count, and preserves session fingerprints", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    const captures = Array.from({ length: 21 }, (_, index) => ambientCapture(`job-${index}`))
+    const cursors: Array<string | null> = []
+    const requestSizes: number[] = []
+    const server = startIngestServer(async (request) => {
+      const body = decodeExact(IngestCapturesRequestV1Schema, await request.json())
+      requestSizes.push(body.captures.length)
+      return Response.json({ accepted: body.captures.length, unchanged: 0, revision: requestSizes.length })
+    })
+    const target = { server: serverBase(server), deviceId: "device-1", deviceName: "Laptop" }
+    await Effect.runPromise(
+      saveCollectorState(statePath, {
+        protocolVersion: 3,
+        target,
+        files: { "/tmp/session.jsonl": { size: 10, mtimeMs: 20 } },
+        captureCursors: { midjourney: null, granola: "granola-cursor" },
+      }),
+    )
+
+    const result = await Effect.runPromise(
+      runCaptureCollection({
+        ...target,
+        statePath,
+        adapter: fakeAdapter(async (cursor) => {
+          cursors.push(cursor)
+          return { captures, nextCursor: "midjourney-cursor" }
+        }),
+      }),
+    )
+    expect(result).toEqual({
+      source: "midjourney",
+      collected: 21,
+      uploaded: 21,
+      batches: 2,
+      revision: 2,
+      nextCursor: "midjourney-cursor",
+    })
+    expect(requestSizes).toEqual([20, 1])
+    expect(cursors).toEqual([null])
+    expect(await Effect.runPromise(loadCollectorState(statePath))).toEqual({
+      protocolVersion: 3,
+      target,
+      files: { "/tmp/session.jsonl": { size: 10, mtimeMs: 20 } },
+      captureCursors: { midjourney: "midjourney-cursor", granola: "granola-cursor" },
+    })
+  })
+
+  test("resets fingerprints and both cursors when the collector target changes", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    await Effect.runPromise(
+      saveCollectorState(statePath, {
+        protocolVersion: 3,
+        target: { server: "https://old.example/", deviceId: "old", deviceName: "Old" },
+        files: { "/tmp/session.jsonl": { size: 10, mtimeMs: 20 } },
+        captureCursors: { midjourney: "old-midjourney", granola: "old-granola" },
+      }),
+    )
+    const server = startIngestServer(() => Response.json({ accepted: 0, unchanged: 0, revision: 0 }))
+    let seenCursor: string | null = "not-called"
+    const target = { server: serverBase(server), deviceId: "new", deviceName: "New" }
+    await Effect.runPromise(
+      runCaptureCollection({
+        ...target,
+        statePath,
+        adapter: fakeAdapter(async (cursor) => {
+          seenCursor = cursor
+          return { captures: [], nextCursor: null }
+        }),
+      }),
+    )
+    expect(seenCursor).toBeNull()
+    expect(await Effect.runPromise(loadCollectorState(statePath))).toEqual({
+      protocolVersion: 3,
+      target,
+      files: {},
+      captureCursors: { midjourney: null, granola: null },
+    })
+  })
+
+  test("coding-session collection preserves both ambient cursors", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    const target = { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" }
+    await Effect.runPromise(
+      saveCollectorState(statePath, {
+        protocolVersion: 3,
+        target,
+        files: {},
+        captureCursors: { midjourney: "midjourney-cursor", granola: "granola-cursor" },
+      }),
+    )
+    await Effect.runPromise(
+      runCollection({
+        ...target,
+        statePath,
+        roots: [],
+        fetch: Object.assign(async (input: Parameters<typeof fetch>[0]) => {
+          expect(new URL(String(input)).pathname).toBe("/api/collector-status")
+          return new Response(null, { status: 204 })
+        }, { preconnect() {} }),
+      }),
+    )
+    expect((await Effect.runPromise(loadCollectorState(statePath)))!.captureCursors).toEqual({
+      midjourney: "midjourney-cursor",
+      granola: "granola-cursor",
+    })
+  })
+
+  test("checkpoints an empty successful pull without making a request", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    let fetches = 0
+    const result = await Effect.runPromise(
+      runCaptureCollection({
+        server: "https://hub.example/",
+        deviceId: "device-1",
+        deviceName: "Laptop",
+        statePath,
+        adapter: fakeAdapter(async () => ({ captures: [], nextCursor: "empty-cursor" })),
+        fetch: async () => {
+          fetches++
+          throw new Error("must not fetch")
+        },
+      }),
+    )
+    expect(result).toMatchObject({ collected: 0, uploaded: 0, batches: 0, revision: null })
+    expect(fetches).toBe(0)
+    expect((await Effect.runPromise(loadCollectorState(statePath)))!.captureCursors.midjourney).toBe("empty-cursor")
+  })
+
+  test("packs by serialized byte size and rejects a record that cannot fit alone", () => {
+    const target = { server: "https://hub.example/", deviceId: "device-1", deviceName: "Laptop" }
+    const large = [ambientCapture("large-a", 500 * 1024), ambientCapture("large-b", 500 * 1024)]
+    expect(packCaptureBatches(target, large)).toHaveLength(2)
+
+    const oversized = {
+      ...ambientCapture("oversized"),
+      images: [
+        {
+          ...ambientCapture("oversized").images[0]!,
+          bytes: Buffer.alloc(5 * 1024 * 1024).toString("base64"),
+        },
+      ],
+    } as unknown as IngestCaptureV1
+    expect(() => packCaptureBatches(target, [oversized])).toThrow("cannot fit")
+  })
+
+  test("retains the old cursor after a later batch fails and safely replays accepted batches", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    const captures = Array.from({ length: 21 }, (_, index) => ambientCapture(`replay-${index}`))
+    const seenCursors: Array<string | null> = []
+    let failLast = true
+    const requestSizes: number[] = []
+    const server = startIngestServer(async (request) => {
+      const body = decodeExact(IngestCapturesRequestV1Schema, await request.json())
+      requestSizes.push(body.captures.length)
+      if (failLast && body.captures.length === 1) return Response.json({ error: "no" }, { status: 400 })
+      return Response.json({ accepted: body.captures.length, unchanged: 0, revision: requestSizes.length })
+    })
+    const target = { server: serverBase(server), deviceId: "device-1", deviceName: "Laptop" }
+    await Effect.runPromise(
+      saveCollectorState(statePath, {
+        protocolVersion: 3,
+        target,
+        files: {},
+        captureCursors: { midjourney: "old-cursor", granola: null },
+      }),
+    )
+    const options = {
+      ...target,
+      statePath,
+      adapter: fakeAdapter(async (cursor) => {
+        seenCursors.push(cursor)
+        return { captures, nextCursor: "new-cursor" }
+      }),
+    }
+    const failed = await Effect.runPromise(Effect.either(runCaptureCollection(options)))
+    expect(failed._tag).toBe("Left")
+    if (failed._tag === "Left") expect(failed.left).toBeInstanceOf(CaptureCollectionError)
+    expect((await Effect.runPromise(loadCollectorState(statePath)))!.captureCursors.midjourney).toBe("old-cursor")
+
+    failLast = false
+    expect((await Effect.runPromise(runCaptureCollection(options))).uploaded).toBe(21)
+    expect(seenCursors).toEqual(["old-cursor", "old-cursor"])
+    expect(requestSizes).toEqual([20, 1, 20, 1])
+    expect((await Effect.runPromise(loadCollectorState(statePath)))!.captureCursors.midjourney).toBe("new-cursor")
+  })
+
+  test("exhausts retryable failures after three attempts without checkpointing", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    let requests = 0
+    const sleeps: number[] = []
+    const failed = await Effect.runPromise(
+      Effect.either(
+        runCaptureCollection({
+          server: "https://hub.example/",
+          deviceId: "device-1",
+          deviceName: "Laptop",
+          statePath,
+          adapter: fakeAdapter(async () => ({ captures: [ambientCapture("retry")], nextCursor: "next" })),
+          fetch: async () => {
+            requests++
+            return Response.json({ error: "settling" }, { status: 503 })
+          },
+          sleep: async (milliseconds) => {
+            sleeps.push(milliseconds)
+          },
+        }),
+      ),
+    )
+    expect(failed._tag).toBe("Left")
+    expect(requests).toBe(3)
+    expect(sleeps).toEqual([2_000, 4_000])
+    expect(await Effect.runPromise(loadCollectorState(statePath))).toBeNull()
+  })
+
+  test("rejects malformed acknowledgements without advancing the cursor", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    let requests = 0
+    const failed = await Effect.runPromise(
+      Effect.either(
+        runCaptureCollection({
+          server: "https://hub.example/",
+          deviceId: "device-1",
+          deviceName: "Laptop",
+          statePath,
+          adapter: fakeAdapter(async () => ({ captures: [ambientCapture("bad-ack")], nextCursor: "next" })),
+          fetch: async () => {
+            requests++
+            return Response.json({ revision: 1 })
+          },
+        }),
+      ),
+    )
+    expect(failed._tag).toBe("Left")
+    expect(requests).toBe(1)
+    expect(await Effect.runPromise(loadCollectorState(statePath))).toBeNull()
+  })
+
+  test("shares the collector lock with legacy session collection", async () => {
+    const directory = await temporaryDirectory()
+    const statePath = join(directory, "collector-state.json")
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let acquired!: () => void
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve
+    })
+    const holder = Effect.runPromise(
+      withCollectorLock(
+        statePath,
+        Effect.promise(async () => {
+          acquired()
+          await gate
+        }),
+      ),
+    )
+    await ready
+    const overlap = await Effect.runPromise(
+      Effect.either(
+        runCaptureCollection({
+          server: "https://hub.example/",
+          deviceId: "device-1",
+          deviceName: "Laptop",
+          statePath,
+          adapter: fakeAdapter(async () => ({ captures: [], nextCursor: null })),
+        }),
+      ),
+    )
+    expect(overlap._tag).toBe("Left")
+    if (overlap._tag === "Left") expect(overlap.left).toBeInstanceOf(CollectorBusyError)
+    release()
+    await holder
   })
 })

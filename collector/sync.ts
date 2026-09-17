@@ -140,7 +140,11 @@ function collectionProgram(
   return Effect.gen(function* () {
     const statePath = resolve(options.statePath ?? DEFAULT_STATE_PATH)
     const previous = yield* loadCollectorState(statePath)
-    const previousFiles = previous && collectorTargetsMatch(previous.target, target) ? previous.files : {}
+    const sameTarget = previous !== null && collectorTargetsMatch(previous.target, target)
+    const previousFiles = sameTarget ? previous.files : {}
+    const captureCursors = sameTarget
+      ? previous.captureCursors
+      : { midjourney: null, granola: null }
     const files = yield* discoverSourceFiles(options.roots ?? DEFAULT_SOURCE_ROOTS)
     const changedFiles: SourceFile[] = []
     const nextFiles: Record<string, FileFingerprint> = {}
@@ -199,7 +203,7 @@ function collectionProgram(
       }
     }
 
-    const state: CollectorState = { protocolVersion: 2, target, files: nextFiles }
+    const state: CollectorState = { protocolVersion: 3, target, files: nextFiles, captureCursors }
     yield* saveCollectorState(statePath, state)
     const result: CollectionResult = {
       discovered: files.length,
