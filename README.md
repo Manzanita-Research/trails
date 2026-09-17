@@ -199,6 +199,8 @@ The hub rejects HTTP authorities outside its configured allowlist before serving
 
 Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; the application credentials below authenticate local processes and tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
 
+The private web UI prohibits framing, including by the same origin, with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. This applies to disk and embedded static responses and the Vite development server. Open Trails as a top-level page on loopback or its trusted tailnet origin. The BB integration renders its own UI through authenticated JSON API reads and requires no framing exception.
+
 ### Authentication and upgrading an existing hub
 
 Trails is a single-owner service on loopback or a private tailnet. Network reachability does not grant access. The public health response contains only `{ "ok": true }`; the sign-in page and its assets contain no timeline data. All timeline, machine, image, and harness reads require credentials.

@@ -874,6 +874,10 @@ async function staticResponse(options: AppOptions, request: Request, url: URL): 
     ? "public, max-age=31536000, immutable"
     : "no-cache"
   const headers = new Headers({ "Cache-Control": cacheControl, "Content-Type": body.type || "application/octet-stream" })
+  // The private UI must never be framed, including disk/embedded SPA fallbacks.
+  // BB renders its own UI using the JSON API and needs no embedding exception.
+  headers.set("Content-Security-Policy", "frame-ancestors 'none'")
+  headers.set("X-Frame-Options", "DENY")
   if (request.method === "HEAD") {
     headers.set("Content-Length", String(body.size))
     return new Response(null, { status: 200, headers })
