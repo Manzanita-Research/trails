@@ -22,6 +22,8 @@ The hub process always binds only to `127.0.0.1:7412`. In the default one-Mac mo
 
 Multi-Mac setup adds Tailscale as the private network and HTTPS access boundary. `--tailscale` uses the hub machine's MagicDNS URL. `--service svc:trails` instead advertises through a pre-defined Tailscale Service and reports the stable `https://trails.<tailnet>.ts.net/` URL. Named services are opt-in because they require a tag-authenticated host, tailnet administrator configuration, and service-host approval. Tailscale does not run or store Trails, and Trails never opens a LAN socket.
 
+Server installation persists that exact HTTPS origin as a `--trusted-origin` LaunchAgent argument. The hub accepts only configured Host authorities (plus loopback names at its listening port), ignoring forwarding headers. Browser mutation origins must match the addressed authority and configured public scheme; Fetch Metadata must indicate same-origin when present. Requests carrying browser metadata without Origin are rejected. Native collectors may omit both. Existing installations must rerun setup with their exposure options to populate this allowlist; a Tailscale hostname change likewise requires setup again. These boundary checks are separate from client authentication.
+
 ## Standalone distribution
 
 `bun run build` creates `dist/trails-darwin-arm64` and `dist/trails-darwin-x64`. Each executable embeds:
