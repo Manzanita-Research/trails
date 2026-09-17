@@ -43,6 +43,8 @@ The hub prints a private HTTPS URL similar to:
 https://your-hub.your-tailnet.ts.net/
 ```
 
+Keep `--tailscale` (or `--service`) when rerunning hub setup to retain remote access. Running `trails setup hub` or `trails install server` without either flag intentionally returns to local access: it removes recognized Trails Serve roots and verifies the result, preserving unrelated routes. Custom Trails routes or inspection/removal failures stop setup for manual review. If the Tailscale CLI is unavailable, setup reports exposure as unverified; a previously recorded Tailscale installation requires the CLI to reconcile access.
+
 Run the installer on each additional Mac—each a **spoke**—using that URL:
 
 ```bash
