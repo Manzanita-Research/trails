@@ -409,6 +409,7 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
       CREATE INDEX captures_started_at ON captures(started_at, id);
       CREATE INDEX captures_project ON captures(project);
       CREATE INDEX capture_attention_utc ON capture_attention(utc_minute, capture_id);
+      CREATE INDEX captures_machine ON captures(machine_id);
       INSERT INTO capture_attention SELECT * FROM saved_capture_attention;
       INSERT INTO capture_images SELECT * FROM saved_capture_images;
       DROP TABLE saved_capture_attention;
@@ -420,6 +421,14 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
         device_id TEXT NOT NULL,
         account_id TEXT NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
         PRIMARY KEY(source, device_id)
+      );
+
+      CREATE TABLE resource_budgets(
+        scope TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        used INTEGER NOT NULL,
+        PRIMARY KEY(scope, kind)
       );
     `,
   },

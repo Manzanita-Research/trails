@@ -1,3 +1,4 @@
+import { terminalText } from "../shared/terminal"
 import { runAuthCommand } from "./auth"
 import { initializeOwner, issueCredential, credentialFor, ownerTokenPath } from "../server/auth"
 import packageJson from "../package.json" with { type: "json" }
@@ -99,8 +100,8 @@ async function serve(args: string[]): Promise<void> {
   }
   process.once("SIGINT", shutdown)
   process.once("SIGTERM", shutdown)
-  console.log(`trails serving on http://${host}:${server.port}`)
-  console.log(`Owner sign-in: trails auth owner (credential file: ${ownerTokenPath(db)})`)
+  console.log(terminalText(`trails serving on http://${host}:${server.port}`))
+  console.log(terminalText(`Owner sign-in: trails auth owner (credential file: ${ownerTokenPath(db)})`))
 }
 
 async function collect(args: string[]): Promise<void> {
@@ -141,7 +142,7 @@ async function configure(args: string[]): Promise<void> {
       name: valueAfter(args, "--name"),
       resetDeviceId: args.includes("--reset-device-id"),
     })
-    console.log(`configured collector ${config.deviceName} (${config.deviceId}) for ${config.server}`)
+    console.log(terminalText(`configured collector ${config.deviceName} (${config.deviceId}) for ${config.server}`))
     return
   }
   throw new Error("configure requires collector")
@@ -162,7 +163,7 @@ async function backup(args: string[]): Promise<void> {
     outputDir,
     retain,
   })
-  console.log(`wrote backup ${path}`)
+  console.log(terminalText(`wrote backup ${path}`))
 }
 
 async function installCommand(args: string[]): Promise<void> {
@@ -222,7 +223,7 @@ async function setupCommand(args: string[]): Promise<void> {
           }
         } finally { database.close() }
       }
-      console.log(`configured ${config.deviceName} for ${config.server}`)
+      console.log(terminalText(`configured ${config.deviceName} for ${config.server}`))
     },
     install: (kind, options) => install({ kind, dryRun: false, ...options }),
     collect: () => collect(["--once"]),
@@ -239,8 +240,8 @@ async function setupCommand(args: string[]): Promise<void> {
   }
   if (mode === "hub") {
     const url = await runSetup({ mode, name, tailscale, service }, actions)
-    console.log(`Trails is ready at ${url}`)
-    if (tailscale) console.log(`Pair another Mac on this hub with: trails auth pair --server ${url} --output pairing.json`)
+    console.log(terminalText(`Trails is ready at ${url}`))
+    if (tailscale) console.log(terminalText(`Pair another Mac on this hub with: trails auth pair --server ${url} --output pairing.json`))
     else console.log("This Mac is both the hub and collector. Add --tailscale only when connecting other Macs.")
     return
   }
@@ -249,13 +250,13 @@ async function setupCommand(args: string[]): Promise<void> {
     const server = args[1]
     if (!server || server.startsWith("--")) throw new Error("setup join requires the hub URL")
     const url = await runSetup({ mode, server: normalizeCollectorServer(server), name }, actions)
-    console.log(`Trails is collecting this Mac for ${url}`)
+    console.log(terminalText(`Trails is collecting this Mac for ${url}`))
     return
   }
   throw new Error("setup requires hub or join")
 }
 
-export async function main(args = process.argv.slice(2)): Promise<void> {
+async function dispatch(args: string[]): Promise<void> {
   const command = args[0]
   if (command === "auth") return runAuthCommand(args.slice(1))
   if (command === "setup") return setupCommand(args.slice(1))
@@ -276,11 +277,14 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   throw new Error(`unknown command: ${command}`)
 }
 
-if (import.meta.main) {
+// Both source and compiled entrypoints must use the same safe diagnostic boundary.
+export async function main(args = process.argv.slice(2)): Promise<void> {
   try {
-    await main()
+    await dispatch(args)
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
+    console.error(terminalText(error instanceof Error ? error.message : String(error)))
     process.exitCode = 1
   }
 }
+
+if (import.meta.main) await main()

@@ -1,3 +1,4 @@
+import { terminalText } from "../shared/terminal"
 import { createPrivateFile } from "../shared/private-fs"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { initializeOwner, issueCredential, ownerTokenPath, readPrivateFile, revokeCredential, rotateOwner } from "../server/auth"
@@ -52,7 +53,7 @@ export function runAuthCommand(args: string[]): void {
           : { server: normalized, token: credential.token }
         // Refuse to overwrite another credential/config file.
         createPrivateFile(output, JSON.stringify(config, null, 2) + "\n")
-        console.log(`Created ${credential.role} credential ${credential.id}. Transfer ${output} privately.`)
+        console.log(terminalText(`Created ${credential.role} credential ${credential.id}. Transfer ${output} privately.`))
       })()
     } else {
       throw new Error("auth requires owner | rotate-owner | list | revoke ID | capture-account | capture-reconcile | pair --server URL --output FILE [--device-id ID] [--name NAME] | read --server URL --output FILE")

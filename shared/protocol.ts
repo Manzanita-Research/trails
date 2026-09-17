@@ -1,6 +1,8 @@
 import { Schema } from "effect"
 import type { LocalActivityTuple, Source, UtcActivityTuple } from "./domain"
+import { INGEST_LIMITS } from "./limits"
 import { HARNESS_IDS } from "./harnesses"
+import { CAPTURE_IMAGE_MAX_BYTES, CAPTURE_IMAGE_MAX_DIMENSION, CAPTURE_IMAGE_MAX_PIXELS } from "./capture-image-limits"
 
 const boundedString = (minimum: number, maximum: number) =>
   Schema.String.pipe(Schema.minLength(minimum), Schema.maxLength(maximum))
@@ -59,7 +61,9 @@ export const UtcActivityTupleSchema = Schema.Tuple(
 
 const UtcActivitySchema = Schema.Array(UtcActivityTupleSchema).pipe(
   Schema.minItems(1),
+  Schema.maxItems(INGEST_LIMITS.sessionTuples),
   Schema.filter((activity) => {
+    if (activity.at(-1)![0] - activity[0][0] > INGEST_LIMITS.spanMinutes) return "activity span exceeds 31 days"
     let previous = -1
     for (const [utcMinute] of activity) {
       if (utcMinute <= previous) return "activity tuples must be unique and sorted"
@@ -94,8 +98,9 @@ const CaptureUtcAttentionV1Schema = Schema.Array(
   Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
 ).pipe(
   Schema.minItems(1),
-  Schema.maxItems(10_080),
+  Schema.maxItems(INGEST_LIMITS.sessionTuples),
   Schema.filter((attention) => {
+    if (attention.at(-1)! - attention[0] > INGEST_LIMITS.spanMinutes) return "attention span exceeds 31 days"
     let previous = -1
     for (const utcMinute of attention) {
       if (utcMinute <= previous) return "attention minutes must be unique and sorted"
@@ -107,6 +112,7 @@ const CaptureUtcAttentionV1Schema = Schema.Array(
 
 const strictBase64 = Schema.String.pipe(
   Schema.minLength(4),
+  Schema.maxLength(Math.ceil(CAPTURE_IMAGE_MAX_BYTES / 3) * 4),
   Schema.filter((value) => {
     if (
       value.startsWith("data:") ||
@@ -116,17 +122,17 @@ const strictBase64 = Schema.String.pipe(
       return "must be raw canonical base64"
     }
     const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0
-    return (value.length / 4) * 3 - padding <= 500 * 1024 || "decoded image exceeds 500 KiB"
+    return (value.length / 4) * 3 - padding <= CAPTURE_IMAGE_MAX_BYTES || "decoded image exceeds 500 KiB"
   }),
 )
 
 export const CaptureImageV1Schema = Schema.Struct({
   index: Schema.Number.pipe(Schema.int(), Schema.between(0, 3)),
   mime: Schema.Literal("image/jpeg", "image/png", "image/webp"),
-  width: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
-  height: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
+  width: Schema.Number.pipe(Schema.int(), Schema.between(1, CAPTURE_IMAGE_MAX_DIMENSION)),
+  height: Schema.Number.pipe(Schema.int(), Schema.between(1, CAPTURE_IMAGE_MAX_DIMENSION)),
   bytes: strictBase64,
-})
+}).pipe(Schema.filter((image) => image.width * image.height <= CAPTURE_IMAGE_MAX_PIXELS || "image exceeds pixel limit"))
 
 const MidjourneyImagesV1Schema = Schema.Array(CaptureImageV1Schema).pipe(
   Schema.itemsCount(4),
@@ -183,7 +189,9 @@ const GranolaCapturePayloadV1Schema = Schema.Struct({
 const validCaptureInterval = <A extends { readonly startedAt: string; readonly endedAt: string | null }>(
   capture: A,
 ): boolean | string =>
-  capture.endedAt === null || capture.endedAt >= capture.startedAt || "endedAt must not be before startedAt"
+  capture.endedAt === null ||
+  (capture.endedAt >= capture.startedAt && Date.parse(capture.endedAt) - Date.parse(capture.startedAt) <= INGEST_LIMITS.spanMinutes * 60_000) ||
+  "capture interval must be ordered and at most 31 days"
 
 export const MidjourneyCaptureV1Schema = Schema.Struct({
   ...CaptureCommonV1Fields,
@@ -216,6 +224,7 @@ export const IngestSessionV2Schema = Schema.Struct({
   digest: nullableBoundedString(9000),
 }).pipe(
   Schema.filter((session) => {
+    if (Date.parse(session.end) - Date.parse(session.start) > INGEST_LIMITS.spanMinutes * 60_000) return "session span exceeds 31 days"
     if (session.start > session.end) return "start must not be after end"
     if (session.userEvents > session.events) return "userEvents exceeds events"
     let events = 0
@@ -237,7 +246,7 @@ export const IngestRequestV2Schema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   device: DeviceV1Schema,
   sessions: Schema.Array(IngestSessionV2Schema).pipe(Schema.minItems(1), Schema.maxItems(50)),
-})
+}).pipe(Schema.filter(body => body.sessions.reduce((sum, session) => sum + session.activity.length, 0) <= INGEST_LIMITS.batchTuples || "batch tuple limit exceeded"))
 export const CollectionMetricsV1Schema = Schema.Struct({
   discovered: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
   changed: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
@@ -273,7 +282,7 @@ export const IngestCapturesRequestV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   device: DeviceV1Schema,
   captures: Schema.Array(IngestCaptureV1Schema).pipe(Schema.minItems(1), Schema.maxItems(20)),
-})
+}).pipe(Schema.filter(body => body.captures.reduce((sum, capture) => sum + capture.attentionMinutes.length, 0) <= INGEST_LIMITS.batchTuples || "batch tuple limit exceeded"))
 
 export const MachineStatusV1Schema = Schema.Struct({
   id: trimmedString(1, 128),

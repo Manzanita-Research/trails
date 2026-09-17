@@ -1,3 +1,4 @@
+import { INGEST_LIMITS } from "../shared/limits"
 import { Effect } from "effect"
 import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
@@ -193,8 +194,16 @@ function collectionProgram(
     const sleep = options.sleep ?? ((milliseconds) => Bun.sleep(milliseconds))
     let uploaded = 0
     let revision: number | null = null
-    for (let index = 0; index < uploadable.length; index += 50) {
-      const batch = uploadable.slice(index, index + 50)
+    for (let index = 0; index < uploadable.length;) {
+      const batch: typeof uploadable = []
+      let tuples = 0
+      while (index < uploadable.length && batch.length < 50) {
+        const item = uploadable[index]
+        if (batch.length > 0 && tuples + item.session.activity.length > INGEST_LIMITS.batchTuples) break
+        batch.push(item)
+        tuples += item.session.activity.length
+        index++
+      }
       const sessions = batch.map((item) => decodeExact(IngestSessionV2Schema, item.session))
       const outcome = yield* Effect.either(
         Effect.tryPromise({

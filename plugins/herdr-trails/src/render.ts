@@ -1,3 +1,4 @@
+import { terminalText } from "../../../shared/terminal"
 import {
   buildModel,
   type DayRow,
@@ -62,6 +63,7 @@ function formatDateTime(value: string | null, now: number): string {
 }
 
 function fit(value: string, width: number): string {
+  value = terminalText(value)
   if (width <= 0) return ""
   if (value.length <= width) return value
   if (width === 1) return "…"
@@ -75,6 +77,7 @@ function pad(value: string, width: number): string {
 
 function wrap(value: string, width: number, limit: number): string[] {
   if (width < 1 || limit < 1) return []
+  value = terminalText(value)
   const words = value.trim().split(/\s+/).filter(Boolean)
   const lines: string[] = []
   let current = ""
@@ -134,8 +137,9 @@ function dayDetail(day: DayRow, width: number, bodyHeight: number): StyledLine[]
   for (const project of day.projects) {
     const span = `${formatClock(project.firstMinute)}–${formatClock(project.lastMinute)}`
     const right = `${formatDuration(project.focusMinutes)} · ${project.sessionCount} sessions · ${span}`
-    const gap = Math.max(2, width - project.name.length - right.length)
-    lines.push({ text: `${project.name}${" ".repeat(gap)}${right}` })
+    const name = terminalText(project.name)
+    const gap = Math.max(2, width - name.length - right.length)
+    lines.push({ text: `${name}${" ".repeat(gap)}${right}` })
   }
   return lines.slice(0, bodyHeight)
 }
@@ -172,7 +176,7 @@ function threadList(threads: ReadonlyArray<ThreadRow>, selected: number, width: 
 }
 
 function sessionLine(session: TrailsSession, summary: string | undefined, width: number): StyledLine[] {
-  const prefix = `${session.end.slice(0, 10)}  ${session.source.padEnd(6)}  ${session.machine.name}`
+  const prefix = `${session.end.slice(0, 10)}  ${terminalText(session.source).padEnd(6)}  ${session.machine.name}`
   const subject = summary ?? session.firstPrompt ?? "No prompt captured"
   return [
     { text: prefix, tone: "muted" },
@@ -211,9 +215,10 @@ function statusView(snapshot: TrailsSnapshot, resolution: ServerResolution, widt
   else if (machines.machines.length === 0) lines.push({ text: "No collectors have checked in.", tone: "muted" })
   else {
     for (const machine of machines.machines) {
-      const state = machine.lastError ? `error: ${machine.lastError}` : `checked ${formatDateTime(machine.lastCheckedAt, now)}`
-      const gap = Math.max(2, width - machine.name.length - state.length)
-      lines.push({ text: `${machine.name}${" ".repeat(gap)}${state}`, tone: machine.lastError ? "danger" : "good" })
+      const name = terminalText(machine.name)
+      const state = machine.lastError ? `error: ${terminalText(machine.lastError)}` : `checked ${formatDateTime(machine.lastCheckedAt, now)}`
+      const gap = Math.max(2, width - name.length - state.length)
+      lines.push({ text: `${name}${" ".repeat(gap)}${state}`, tone: machine.lastError ? "danger" : "good" })
     }
   }
   lines.push({ text: "" }, { text: "Summaries", tone: "accent" })

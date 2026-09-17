@@ -1,3 +1,4 @@
+import { terminalText } from "./terminal";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract, requestSchema, rpcContract, type Query, type Report } from "./contract";
@@ -35,7 +36,11 @@ const duration = (minutes: number) => `${Math.floor(minutes / 60)}h ${minutes % 
 export function formatReport(report: Report, view: Query["view"]) {
   const lines = [`Trails · ${report.source} · fetched ${report.fetchedAt}`];
   if (view === "days") for (const day of report.days) {
-    lines.push(`${day.date}  ${duration(day.focusMinutes)}  ${day.sessionCount} sessions`, ...day.projects.map(project => `  ${project.name}  ${duration(project.focusMinutes)}  ${project.path}${project.summary ? `\n  ${project.summary}` : ""}`));
+    lines.push(`${day.date}  ${duration(day.focusMinutes)}  ${day.sessionCount} sessions`);
+    for (const project of day.projects) {
+      lines.push(`  ${project.name}  ${duration(project.focusMinutes)}  ${project.path}`);
+      if (project.summary) lines.push(`  ${project.summary}`);
+    }
     if (day.projectCount > day.projects.length) lines.push(`  Showing ${day.projects.length} of ${day.projectCount} projects`);
   }
   if (view === "projects") for (const project of report.projects) {
@@ -51,7 +56,7 @@ export function formatReport(report: Report, view: Query["view"]) {
   }
   lines.push(...report.warnings);
   if (report.nextOffset !== null) lines.push(`More results: --offset ${report.nextOffset}`);
-  return lines.join("\n");
+  return lines.map(terminalText).join("\n");
 }
 
 export default function plugin(bb: BbPluginApi) {
@@ -118,12 +123,12 @@ export default function plugin(bb: BbPluginApi) {
         if (parsed.command === "help" || parsed.command === "--help") return { exitCode: 0, stdout: usage };
         if (parsed.command === "hosts") {
           const result = await hosts();
-          return { exitCode: 0, stdout: parsed.json ? JSON.stringify(result) : result.hosts.map(machine => `${machine.id}  ${machine.name}`).join("\n") || "No enrolled machines." };
+          return { exitCode: 0, stdout: parsed.json ? JSON.stringify(result) : result.hosts.map(machine => terminalText(`${machine.id}  ${machine.name}`)).join("\n") || "No enrolled machines." };
         }
         const result = await query(parsed.query!, context.threadId, context.signal);
         return { exitCode: 0, stdout: parsed.json ? JSON.stringify(result) : formatReport(result, parsed.query!.view) };
       } catch (error) {
-        return { exitCode: 1, stderr: error instanceof z.ZodError ? `Invalid Trails query.\n${usage}` : error instanceof Error ? error.message : "Trails query failed" };
+        return { exitCode: 1, stderr: error instanceof z.ZodError ? `Invalid Trails query.\n${usage}` : error instanceof Error ? terminalText(error.message) : "Trails query failed" };
       }
     },
   });

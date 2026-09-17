@@ -415,6 +415,10 @@ describe("capture ingest protocol v1", () => {
       changed(captureRequest(), (copy) => (copy.captures[0].images[0].bytes = `data:image/webp;base64,${imageBytes}`)),
       changed(captureRequest(), (copy) => (copy.captures[0].images[0].bytes = "not base64")),
       changed(captureRequest(), (copy) => {
+        copy.captures[0].images[0].width = 2001
+        copy.captures[0].images[0].height = 2000
+      }),
+      changed(captureRequest(), (copy) => {
         copy.captures[0].images[0].bytes = Buffer.alloc(500 * 1024 + 1).toString("base64")
       }),
     ]

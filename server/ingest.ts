@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { createHash } from "node:crypto"
 import { normalizeCwd, workdaysOfUtc, type UtcActivityTuple } from "../shared/domain"
 import type { IngestRequestV2, IngestSessionV2 } from "../shared/protocol"
+import { chargeBudget, checkDisk, checkQueue, checkStorage } from "./resources"
 import type { TrailsDb } from "./db"
 
 export interface IngestResult {
@@ -129,6 +130,9 @@ export function ingestSessions(
             continue
           }
 
+          if (accepted === 0) checkDisk(db)
+
+          chargeBudget(db, "admission", [input.device.id], now)
           const oldActivity = existing ? activityForSession(sqlite, existing.id) : []
           const oldDays = existing
             ? workdaysOfUtc(oldActivity, settings.boundary, settings.timezone)
@@ -221,6 +225,11 @@ export function ingestSessions(
           }
           accepted++
           changed = true
+        }
+
+        if (accepted > 0) {
+          checkStorage(db, input.device.id)
+          checkQueue(db, input.device.id)
         }
 
         const revisionRow = sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get() as {
