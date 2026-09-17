@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createApp } from "../server/app"
+import { createApp } from "./authenticated-app"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { MIGRATIONS } from "../server/migrations"
 import { localParts, workdayOf } from "../shared/domain"
@@ -74,7 +74,7 @@ describe("onboarding bootstrap contract", () => {
     const fixedTimestamp = "2026-07-01T12:30:00.000Z"
     const fixedNow = Date.parse(fixedTimestamp)
     const database = memoryDatabase()
-    const app = createApp({ db: database, now: () => fixedNow })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, now: () => fixedNow })
     const request = relativeRequest(app)
     let snapshot: BootstrapV1 | null = null
     const requester = createBootstrapRequester({
@@ -128,7 +128,7 @@ describe("onboarding bootstrap contract", () => {
 
   test("persists canonical onboarding completion and keeps it across a 204 refresh", async () => {
     const database = memoryDatabase()
-    const app = createApp({ db: database, now: () => Date.parse("2026-07-01T12:30:00.000Z") })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, now: () => Date.parse("2026-07-01T12:30:00.000Z") })
     const request = relativeRequest(app)
     let snapshot: BootstrapV1 | null = null
     const requester = createBootstrapRequester({
@@ -208,7 +208,7 @@ describe("onboarding bootstrap contract", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(
       migrated.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")

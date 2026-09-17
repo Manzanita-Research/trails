@@ -9,7 +9,7 @@ function clientSetupCommand(hubUrl: string): string | null {
   } catch {
     return null
   }
-  return `curl -fsSL ${ALPHA_INSTALLER_URL} | sh -s -- join ${hubUrl}`
+  return `curl -fsSL ${ALPHA_INSTALLER_URL} | sh -s -- join ${hubUrl} --pairing-file pairing.json`
 }
 
 export function WelcomeView({
@@ -62,14 +62,15 @@ export function WelcomeView({
         {command !== null && (
           <section className="welcome-join" aria-labelledby="welcome-join-title">
             <h2 id="welcome-join-title">Add another Mac</h2>
-            <p>On that Mac, paste this into Terminal:</p>
+            <p>On the hub, create a pairing file with <code>trails auth pair --server {hubUrl} --output pairing.json --name Laptop</code>.
+              Transfer it privately to the other Mac, then run this command there:</p>
             <div className="welcome-command-row">
               <code className="welcome-command">{command}</code>
               <button className="text-action welcome-copy-button" type="button" onClick={() => void copyCommand()}>
                 {copyState === "copied" ? "copied" : "copy"}
               </button>
             </div>
-            <p className="welcome-join-note">That Mac’s hostname will be its name in Trails.</p>
+            <p className="welcome-join-note">The pairing file gives this Mac permission to upload its own sessions.</p>
             {copyState === "failed" && <p role="alert">Couldn’t copy — select the command instead.</p>}
           </section>
         )}

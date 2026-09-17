@@ -1,3 +1,4 @@
+import { createAuthentication, credentialFor, type Credential } from "./auth"
 import { Effect, Schema } from "effect"
 import { basename, join, resolve, sep } from "node:path"
 import { localActivityOf, orgOf, type LocalActivityTuple, type UtcActivityTuple } from "../shared/domain"
@@ -52,6 +53,8 @@ export interface AppOptions {
 }
 
 type ErrorCode =
+  | "unauthorized"
+  | "forbidden"
   | "untrusted_host"
   | "untrusted_origin"
   | "invalid_json"
@@ -73,7 +76,7 @@ class ApiError extends Error {
   }
 }
 
-const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" }
+const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: jsonHeaders })
@@ -533,12 +536,8 @@ function summarizationOf(options: AppOptions): unknown {
   })
 }
 
-async function apiResponse(options: AppOptions, request: Request, url: URL, now: number): Promise<Response> {
+async function apiResponse(options: AppOptions, request: Request, url: URL, now: number, credential: Credential): Promise<Response> {
   const { db } = options
-  if (url.pathname === "/api/health") {
-    if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    return jsonResponse({ ok: true, revision: revisionOf(db) })
-  }
   if (url.pathname === "/api/bootstrap") {
     if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
     const afterValue = url.searchParams.get("after")
@@ -560,6 +559,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
     const body = decodeBody(IngestCapturesRequestV1Schema, input)
+    requireDevice(credential, body.device.id)
     try {
       return jsonResponse(await Effect.runPromise(ingestCaptures(db, body, now)))
     } catch {
@@ -587,7 +587,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     const headers = new Headers({
       "Content-Type": row.mime,
       "Content-Length": String(row.byte_length),
-      "Cache-Control": "private, max-age=31536000, immutable",
+      "Cache-Control": "no-store",
       ETag: etag,
     })
     if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers })
@@ -605,6 +605,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
     const body = decodeBody(IngestRequestV2Schema, input)
+    requireDevice(credential, body.device.id)
     try {
       return jsonResponse(await Effect.runPromise(ingestSessions(db, body, now)))
     } catch {
@@ -622,7 +623,9 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     ) {
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
-    recordCollectorStatus(db, decodeBody(CollectorStatusV1Schema, input), now)
+    const body = decodeBody(CollectorStatusV1Schema, input)
+    requireDevice(credential, body.device.id)
+    recordCollectorStatus(db, body, now)
     return new Response(null, { status: 204 })
   }
   if (url.pathname === "/api/machines") {
@@ -830,17 +833,50 @@ async function staticResponse(options: AppOptions, request: Request, url: URL): 
   return new Response(body, { headers })
 }
 
+function requireDevice(credential: Credential, deviceId: string): void {
+  if (credential.role !== "collector" || credential.deviceId !== deviceId) {
+    throw new ApiError("forbidden", "credential is not paired to this device", 403)
+  }
+}
+
 export function createApp(options: AppOptions): (request: Request) => Promise<Response> {
-  const requestBoundary = createRequestBoundary(options.trustedOrigins ?? localOrigins(7412))
+  const origins = options.trustedOrigins ?? localOrigins(7412)
+  const requestBoundary = createRequestBoundary(origins)
+  const secureAuthorities = new Set(origins.flatMap(origin => {
+    const url = new URL(origin)
+    return url.protocol === "https:" ? [url.host, `${url.hostname}:${url.port || "443"}`] : []
+  }))
+  const auth = createAuthentication(options.db, secureAuthorities)
   return async (request) => {
     try {
       const url = new URL(request.url)
       const rejection = requestBoundary(request, url)
       if (rejection) throw new ApiError(rejection, "request origin or host is not trusted", 403)
       const now = (options.now ?? Date.now)()
-      return url.pathname.startsWith("/api/")
-        ? await apiResponse(options, request, url, now)
-        : await staticResponse(options, request, url)
+      if (!url.pathname.startsWith("/api/")) return await staticResponse(options, request, url)
+      if (url.pathname === "/api/health") {
+        if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
+        return jsonResponse({ ok: true })
+      }
+      if (url.pathname === "/api/auth/login" && request.method === "POST") {
+        const body = decodeBody(Schema.Struct({ token: Schema.String }), await readJson(request, 1024))
+        const credential = credentialFor(options.db, body.token)
+        if (!credential || credential.role !== "owner") throw new ApiError("unauthorized", "owner credential required", 401)
+        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.login(credential, url, now), "Cache-Control": "no-store" } })
+      }
+      const credential = auth.authenticate(request, url, now)
+      if (!credential) throw new ApiError("unauthorized", "sign in to Trails", 401)
+      if (url.pathname === "/api/auth/session" && request.method === "GET") return jsonResponse({ role: credential.role })
+      if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.logout(request, url), "Cache-Control": "no-store" } })
+      }
+      const ingest = ["/api/ingest", "/api/captures", "/api/collector-status"].includes(url.pathname)
+      const permitted = ingest ? credential.role === "collector"
+        : ["GET", "HEAD"].includes(request.method) ? credential.role !== "collector" : credential.role === "owner"
+      if (!permitted) throw new ApiError("forbidden", "credential does not grant this permission", 403)
+      const response = await apiResponse(options, request, url, now, credential)
+      response.headers.set("Cache-Control", "no-store")
+      return response
     } catch (error) {
       return errorResponse(error instanceof ApiError ? error : new ApiError("internal_error", "internal server error", 500))
     }

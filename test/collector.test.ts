@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { CollectorError, runCollection } from "../collector/sync"
+import { CollectorError, runCollection as collectWithAuth } from "../collector/sync"
 import {
   CollectorBusyError,
   loadCollectorState,
@@ -13,6 +13,8 @@ import {
 } from "../collector/state"
 import { discoverSourceFiles, parseSourceRoot, type SourceRoot } from "../collector/sources"
 import { CollectorStatusV1Schema, IngestRequestV2Schema, decodeExact } from "../shared/protocol"
+
+const runCollection = (options: Omit<Parameters<typeof collectWithAuth>[0], "token">) => collectWithAuth({ ...options, token: "t".repeat(43) })
 
 const temporaryDirectories: string[] = []
 const servers: Bun.Server<undefined>[] = []

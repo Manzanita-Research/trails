@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createApp, bootstrapOf } from "../server/app"
+import { createApp, bootstrapOf } from "./authenticated-app"
 import { openDatabase } from "../server/db"
 import { buildReport } from "../plugins/bb-plugin-trails/client"
 import { querySchema, reportSchema } from "../plugins/bb-plugin-trails/contract"
@@ -13,7 +13,7 @@ test("BB repository days consume real server project summaries and group session
   try {
     const app = createApp({ db })
     const start = "2026-09-16T08:00:00.000Z" // 01:00 local, still the September 15 workday.
-    const response = await app(new Request("http://localhost/api/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+    const response = await app(new Request("http://localhost:7412/api/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
       protocolVersion: 2, device: { id: "fixture", name: "Fixture" },
       sessions: ["trails", "other"].map(project => ({
         sourceSessionId: project, source: "codex", cwd: `/Users/tester/code/${project}`, branch: "main",

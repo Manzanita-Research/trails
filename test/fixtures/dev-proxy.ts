@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createServer, type ViteDevServer } from "vite"
 import config from "../../vite.config"
-import { createApp } from "../../server/app"
+import { createApp } from "../authenticated-app"
 import { openDatabase } from "../../server/db"
 import { localOrigins } from "../../server/request-boundary"
 

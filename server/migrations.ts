@@ -345,4 +345,16 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
       CREATE INDEX capture_attention_utc ON capture_attention(utc_minute, capture_id);
     `,
   },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE hub_credentials(
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        role TEXT NOT NULL CHECK(role IN ('owner', 'read', 'collector')),
+        device_id TEXT,
+        CHECK((role = 'collector' AND device_id IS NOT NULL) OR (role != 'collector' AND device_id IS NULL))
+      );
+    `,
+  },
 ]

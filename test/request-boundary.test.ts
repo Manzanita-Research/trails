@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createApp } from "../server/app"
+import { createApp } from "./authenticated-app"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { localOrigins, normalizeTrustedOrigin } from "../server/request-boundary"
 
@@ -123,7 +123,7 @@ describe("HTTP request boundary", () => {
     }))).status).toBe(201)
   })
 
-  test("preserves native collector status requests with and without an Authorization header", async () => {
+  test("preserves authenticated native collector status requests through the origin boundary", async () => {
     const { app, db } = fixture()
     const nativeHeaders: Record<string, string>[] = [{}, { authorization: "Bearer synthetic-collector-token" }]
     for (const headers of nativeHeaders) {

@@ -28,6 +28,8 @@ Setup downloads the correct binary, verifies it, indexes existing sessions, and 
 
 **http://127.0.0.1:7412/**
 
+Run `trails auth owner` on the hub and paste the credential into the sign-in screen. The owner credential stays on the hub; each additional collector gets its own credential.
+
 ## Add other Macs (optional)
 
 Only multi-Mac setups need Tailscale: for example, you can use a Mac Mini as a hub with laptops as spokes. Install [Tailscale](https://tailscale.com/download/mac), connect every participating Mac to the same tailnet, then rerun hub setup with private network access enabled:
@@ -43,11 +45,17 @@ The hub prints a private HTTPS URL similar to:
 https://your-hub.your-tailnet.ts.net/
 ```
 
-Run the installer on each additional Mac—each a **spoke**—using that URL:
+On the hub, create a separate pairing file for each additional Mac:
+
+```bash
+trails auth pair --server https://your-hub.your-tailnet.ts.net/ --name "Laptop" --output pairing.json
+```
+
+Transfer that file privately to the additional Mac, then run the installer there using the same URL:
 
 ```bash
 curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
-  join https://your-hub.your-tailnet.ts.net/ --name "Laptop"
+  join https://your-hub.your-tailnet.ts.net/ --pairing-file pairing.json
 ```
 
 Each spoke parses its own sessions locally and sends normalized observations to the hub every minute. The hub continues collecting its own sessions too; clients and servers are roles within the same Trails binary, not separate products or required machines.
@@ -187,7 +195,30 @@ Trails does **not** send transcript paths or transcript bodies to the hub. The w
 
 The hub rejects HTTP authorities outside its configured allowlist before serving any API or web content. Local access allows `127.0.0.1`, `localhost`, and `[::1]` at the selected port. Tailscale setup records the exact node or service HTTPS origin in the server LaunchAgent. Rerun setup with the same exposure options after upgrading an older installation or changing its Tailscale name. For manual source-mode serving, repeat `--trusted-origin https://hub.example.ts.net` for each public origin; wildcard hosts are not supported. Proxies must preserve Host; forwarding headers do not establish trust.
 
-Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; they do not authenticate local processes or tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
+Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; the application credentials below authenticate local processes and tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
+
+### Authentication and upgrading an existing hub
+
+Trails is a single-owner service on loopback or a private tailnet. Network reachability does not grant access. The public health response contains only `{ "ok": true }`; the sign-in page and its assets contain no timeline data. All timeline, machine, image, and harness reads require credentials.
+
+| Credential | Permission |
+| --- | --- |
+| Owner | Read data and change settings, pocket state, projects, and summary harness selection |
+| Read | Read APIs only; intended for BB, Herdr, and other integrations |
+| Collector | Upload sessions/captures and report status for its paired device ID only |
+
+Owner and read credentials cannot ingest. Collectors cannot read the timeline, enumerate machines, change settings, or activate paid/provider-backed summaries. Native clients send `Authorization: Bearer TOKEN`; URL parameters are not credentials. Use HTTPS for tailnet traffic. HTTP is supported only on loopback.
+
+On first startup, the hub creates a random owner credential in `trails.sqlite.owner-token` beside its database, with mode 0600. No HTTP endpoint can claim ownership. `trails auth owner` prints the credential only when explicitly run from the hub account. Add `--db PATH` when using a custom database. The browser exchanges it for a 12-hour, HttpOnly, SameSite=Strict cookie, with Secure required for configured HTTPS authorities. Sign out removes that session; restarting the hub expires browser sessions. Credentials are hashed in SQLite and checked on every request.
+
+After updating an existing installation:
+
+1. Rerun `trails setup hub` on the hub, retaining its original `--tailscale` or `--service svc:NAME` option. This keeps its device ID and provisions its local collector. Existing data and summary selection remain intact. A manually started hub can use `trails serve` to initialize owner authentication without installing services.
+2. Sign in using `trails auth owner`. Unauthenticated requests now return 401; there is no legacy anonymous mode.
+3. For each remote collector, read its existing `deviceId` from `~/.config/trails/collector.json`. On the hub, run `trails auth pair --server HUB_URL --device-id EXISTING_ID --name NAME --output pairing.json`. Transfer the file privately and run `trails setup join HUB_URL --pairing-file pairing.json` on that collector. Using its existing ID preserves session history and progress. Pairing files are bearer credentials, not public invitation links; delete transferred copies after import. Use a fresh credential per device. Legacy collector configuration must be owned by the collector account and mode 0600 (`chmod 600 ~/.config/trails/collector.json`).
+4. For each read integration, run `trails auth read --server HUB_URL --output reader.json` on the hub. Transfer it privately to that integration's host account and install it at `~/.config/trails/reader.json` with mode 0600. Both BB and Herdr read this file, independently of collector credentials, and refuse to send it to a different hub URL. Use `http://127.0.0.1:7412/` for a local integration. Server URL changes require a matching reader configuration.
+
+Run `trails auth list` on the hub to see credential IDs and device bindings without exposing tokens. `trails auth revoke CREDENTIAL_ID` immediately revokes a collector or read credential without deleting history; revoke every credential listed for a device when unpairing it. To replace a revoked credential, issue and import a new pairing/read file. `trails auth rotate-owner` replaces the owner credential and revokes all browser sessions, including when the owner token file was lost. It does not revoke collectors or read integrations. These administrative commands require access to the hub account and database; keep credential files and database backups private. Processes running as that same OS account remain inside the owner trust boundary.
 
 When you explicitly activate a summary harness, the provider already configured in that harness receives only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, collector traffic, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
 

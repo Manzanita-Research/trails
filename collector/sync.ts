@@ -27,6 +27,7 @@ import { normalizeCollectorServer } from "../cli/config"
 export interface CollectionOptions {
   readonly server: string
   readonly deviceId: string
+  readonly token: string
   readonly deviceName: string
   readonly statePath?: string
   readonly roots?: ReadonlyArray<SourceRoot>
@@ -98,6 +99,7 @@ async function uploadBatch(
   sessions: ReadonlyArray<IngestSessionV2>,
   fetcher: typeof globalThis.fetch,
   sleep: (milliseconds: number) => Promise<void>,
+  token: string,
 ): Promise<number> {
   const endpoint = new URL("api/ingest", target.server)
   let lastError = "upload failed"
@@ -106,7 +108,7 @@ async function uploadBatch(
       const response = await fetcher(endpoint, {
         method: "POST",
         redirect: "error",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ protocolVersion: 2, device: { id: target.deviceId, name: target.deviceName }, sessions }),
       })
       if (response.ok) {
@@ -183,7 +185,7 @@ function collectionProgram(
       const sessions = batch.map((item) => decodeExact(IngestSessionV2Schema, item.session))
       const outcome = yield* Effect.either(
         Effect.tryPromise({
-          try: () => uploadBatch(target, sessions, fetcher, sleep),
+          try: () => uploadBatch(target, sessions, fetcher, sleep, options.token),
           catch: (cause) => (cause instanceof Error ? cause : new Error("upload_error")),
         }),
       )
@@ -216,6 +218,7 @@ function collectionProgram(
 }
 
 function collectorTarget(options: CollectionOptions): CollectorTarget {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(options.token)) throw new Error("collector is not paired; run setup join with --pairing-file")
   const server = normalizeCollectorServer(options.server)
   const deviceId = options.deviceId.trim()
   const deviceName = options.deviceName.trim()
@@ -243,6 +246,7 @@ function reportCollectorStatus(
   target: CollectorTarget,
   outcome: CollectorStatusV1["outcome"],
   fetcher: typeof globalThis.fetch,
+  token: string,
 ): Effect.Effect<void, Error> {
   return Effect.tryPromise({
     try: async () => {
@@ -254,7 +258,7 @@ function reportCollectorStatus(
       const response = await fetcher(new URL("api/collector-status", target.server), {
         method: "POST",
         redirect: "error",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       })
       if (!response.ok) throw new Error(`collector status http_${response.status}`)
@@ -275,6 +279,7 @@ function ownedCollectionProgram(
         target,
         { status: "processed", metrics: metricsOf(outcome.right), error: null },
         fetcher,
+        options.token,
       )
       return outcome.right
     }
@@ -287,6 +292,7 @@ function ownedCollectionProgram(
         error: collectorErrorCode(failure),
       },
       fetcher,
+      options.token,
     ).pipe(Effect.ignore)
     return yield* Effect.fail(failure)
   })

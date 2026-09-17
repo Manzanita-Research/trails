@@ -91,6 +91,18 @@ Every bootstrap-visible change increments one monotonic revision. Replayed inges
 
 There is no scan-blob or localStorage compatibility path. Transcript history is re-ingested from source logs.
 
+## Hub authentication and pairing
+
+Network access and the Host/Origin allowlist are followed by application authentication. The owning OS account initializes a random owner token beside the database (`<db-path>.owner-token`, mode 0600); HTTP callers cannot bootstrap an owner. `trails auth owner` retrieves it for browser sign-in. The database stores only SHA-256 token hashes. Browser sessions last at most 12 hours, end on server restart/sign-out, and recheck the owner's credential ID on every request so owner rotation invalidates them. HTTPS authorities use a Secure, host-only `__Host-` cookie; loopback uses a separate host-only cookie. Cookie writes also require a matching Origin.
+
+The owner controls reads and administrative writes, including summary activation. Read credentials have no write permissions. Collector credentials have only session/capture ingest and collector-status permission and must match the payload's device ID. An owner cannot accidentally use the owner credential as a collector token. Neither anonymous callers nor collectors can list registered machine IDs.
+
+`trails setup hub` provisions its local collector. For a spoke, the hub account issues a credential file using `trails auth pair --server HUB_URL --output pairing.json [--device-id EXISTING_ID] [--name NAME]`. Transfer it privately, then run `trails setup join HUB_URL --pairing-file pairing.json` on the spoke. The server URL must match, including the origin/port. Import stores the credential in the mode-0600 collector config; upload progress files never contain the token. Native uploads send a Bearer header and refuse redirects. Changing the hub or resetting the device ID clears the old credential and requires pairing again.
+
+Pairing files are long-lived credentials until revoked, not one-time public invitations. `trails auth list` lists IDs and scopes, and `trails auth revoke ID` removes a credential immediately without removing collected history. Multiple credentials can bind the same device during replacement; revoke old credentials explicitly. `trails auth rotate-owner` rotates owner access independently. BB and Herdr use separate, URL-bound mode-0600 `~/.config/trails/reader.json` credentials issued with `trails auth read --server HUB_URL --output reader.json`.
+
+Existing anonymous collectors stop uploading after upgrade until paired. Preserve their existing device IDs and rerun hub setup with the same exposure options. See [the authentication migration](README.md#authentication-and-upgrading-an-existing-hub) for local, tailnet, and read-integration steps. No live installation is changed by building this source. The trust boundary is the single owner account, not other local accounts or every reachable tailnet peer.
+
 ## Periodic collectors
 
 `com.manzanita.trails.collector` runs `trails collect --once` at load and every 60 seconds. It is not a resident daemon and has no KeepAlive loop.

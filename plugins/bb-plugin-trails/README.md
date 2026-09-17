@@ -51,3 +51,7 @@ HTTP calls use an eight-second timeout, reject redirects, and cap input at 32 Mi
 `bun test` covers configuration discovery, URL validation, workday rollover, overlapping attention, filters, pagination, response projection, failure isolation, cancellation, HTTP reads, host routing, live setting changes, RPC/tool/CLI boundaries, and disposal using BB's public SDK harness. From the repository root, `bun run bb:test` also exercises the plugin against the real server bootstrap to check project summary keys and workday grouping. `bun run check` validates all three entries; `bb plugin build` produces server, host, and app bundles.
 
 The package is self-contained: it uses public BB SDK APIs and declares runtime dependencies. Generated bundles and `node_modules` stay untracked. It can be installed from this repository using `--subdirectory plugins/bb-plugin-trails`; it has not been published to a marketplace.
+
+## Authenticated hubs
+
+The host worker reads a separate mode-0600 `~/.config/trails/reader.json` belonging to its OS account. On the hub, issue it with `trails auth read --server HUB_URL --output reader.json`, then transfer it privately to the selected BB machine. Its `server` must match the resolved hub URL exactly. Collector credentials cannot read; owner credentials should stay on the hub. This file is not exposed in RPC/tool results or browser settings. Revoke its ID with `trails auth revoke ID` on the hub. See the root README for the full migration.
