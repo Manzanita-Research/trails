@@ -285,7 +285,7 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
   const captureRows = db.sqlite
     .query(
       `SELECT id, account_id, owner_machine_id, source, source_record_id, project, project_hint, title, started_at, ended_at,
-         summary_input, provider_payload, updated_at FROM captures ORDER BY started_at, id`,
+         provider_payload, updated_at FROM captures ORDER BY started_at, id`
     )
     .all() as Array<{
     id: number
@@ -298,7 +298,6 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
     title: string
     started_at: string
     ended_at: string | null
-    summary_input: string
     provider_payload: string
     updated_at: number
   }>
@@ -374,7 +373,6 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
         title: row.title,
         startedAt: row.started_at,
         endedAt: row.ended_at,
-        summaryInput: row.summary_input,
         attentionMinutes: captureAttention.get(row.id) ?? [],
         updatedAt: new Date(row.updated_at).toISOString(),
         images: (captureImages.get(row.id) ?? []).map((image) => ({

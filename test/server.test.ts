@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "./authenticated-app"
+import { createApp as productionApp } from "../server/app"
 import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
 import { fixtureImage } from "./capture-image-fixtures"
@@ -746,6 +747,48 @@ describe("ingest and bootstrap", () => {
 })
 
 describe("capture ingest, bootstrap privacy, and image API", () => {
+  test.each(["midjourney", "granola"] as const)("keeps %s summary input internal for every bootstrap reader", async (source) => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const options = { trustedOrigins: ["http://trails.test"], db: database }
+    const summaryInput = `SYNTHETIC_PRIVATE_${source.toUpperCase()}_DIGEST`
+    const base = capture("private-record", { summaryInput })
+    const input: IngestCaptureV1 = source === "midjourney" ? base : {
+      ...base,
+      source,
+      payload: { attendeeCount: 2, folders: ["Planning"], webUrl: null },
+      images: [],
+    }
+    expect((await request(createApp(options), "POST", "/api/captures", captureBody([input]))).status).toBe(200)
+    expect(database.sqlite.query("SELECT summary_input FROM captures").get()).toEqual({ summary_input: summaryInput })
+
+    const app = productionApp(options)
+    for (const role of ["owner", "read"] as const) {
+      const credential = issueCredential(database, role)
+      for (const path of ["/api/bootstrap", "/api/bootstrap?after=0"]) {
+        const response = await app(new Request(`http://trails.test${path}`, {
+          headers: { Authorization: `Bearer ${credential.token}` },
+        }))
+        expect(response.status).toBe(200)
+        const body = await response.text()
+        expect(body).not.toContain(summaryInput)
+        expect(body).not.toContain("summaryInput")
+        expect(body).not.toContain("summary_input")
+        const bootstrap = JSON.parse(body) as BootstrapV1
+        expect(bootstrap.captures).toHaveLength(1)
+        expect(bootstrap.captures[0]).toMatchObject({
+          source,
+          title: input.title,
+          projectHint: input.projectHint,
+          startedAt: input.startedAt,
+          attentionMinutes: [["2026-08-03", 600]],
+        })
+        if (input.source === "granola") expect(bootstrap.captures[0]?.payload).toEqual(input.payload)
+      }
+    }
+  })
+
+
   test("returns 400 for invalid media and preserves the entire existing state", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
@@ -772,7 +815,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
       expect(response.status).toBe(400)
       expect(await json(response)).toMatchObject({ error: { code: "invalid_request" } })
       expect(snapshot()).toEqual(before)
-      await expect(Effect.runPromise(ingestCaptures(database, captureBody([invalid])))).rejects.toThrow("capture images must be valid")
+      await expect(Effect.runPromise(ingestCaptures(database, captureBody([invalid]), issueCredential(database, "collector", "device-a")))).rejects.toThrow("capture images must be valid")
       expect(snapshot()).toEqual(before)
     }
   })
@@ -790,6 +833,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
       mime: image.mime, width: 2, height: 3, bytes: Buffer.from(image.bytes, "base64"),
     })))
   })
+
 
   test("is idempotent, preserves null reconciliation attribution, and replaces children atomically", async () => {
     const root = await temporaryRoot()

@@ -43,6 +43,8 @@ Tailscale Serve exposes the hub's loopback service privately to authorized devic
 
 The web app receives the information needed to render the timeline and save your organization. It does not receive source-local session identifiers or bounded digests.
 
+Capture bootstrap data includes display fields such as titles, timestamps, project context, and image metadata. Private capture summary inputs, including bounded meeting notes and prompts, stay in hub storage and are omitted from bootstrap responses to both the browser and generic clients such as plugins.
+
 In local mode the browser connects to `http://127.0.0.1:7412/`. In multi-Mac mode an authorized tailnet device can use the private HTTPS URL configured by Tailscale Serve.
 
 ## May reach one harness-configured provider

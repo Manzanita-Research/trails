@@ -435,6 +435,27 @@ describe("capture ingest protocol v1", () => {
 })
 
 describe("bootstrap and mutation schemas", () => {
+  test.each(["midjourney", "granola"] as const)("excludes private summary input from the %s bootstrap contract", (source) => {
+    const capture = {
+      id: "1",
+      source,
+      project: "work/project",
+      projectHint: "Ideas",
+      title: "Display title",
+      startedAt: "2026-07-01T17:00:00.000Z",
+      endedAt: null,
+      attentionMinutes: [["2026-07-01", 600]],
+      updatedAt: "2026-07-01T17:01:00.000Z",
+      images: [],
+      payload: source === "midjourney"
+        ? { eventType: "imagine", jobType: "generation", parentGrid: null, hasParent: false, parentCaptureId: null }
+        : { attendeeCount: 2, folders: ["Planning"], webUrl: null },
+    }
+    const value = { ...bootstrap(), captures: [capture] }
+    expect(encodeExact(BootstrapV1Schema, decodeExact(BootstrapV1Schema, value))).toEqual(value)
+    rejects(BootstrapV1Schema, { ...value, captures: [{ ...capture, summaryInput: "Private input" }] })
+  })
+
   test("round-trips the exact bootstrap v1 shape", () => {
     const decoded = decodeExact(BootstrapV1Schema, bootstrap())
     expect(encodeExact(BootstrapV1Schema, decoded)).toEqual(bootstrap())
