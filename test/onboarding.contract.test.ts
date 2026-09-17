@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createApp } from "./authenticated-app"
@@ -174,6 +174,7 @@ describe("onboarding bootstrap contract", () => {
   test("upgrades a version-one database without losing canonical state", async () => {
     const root = await temporaryRoot()
     const path = join(root, "trails.sqlite")
+    await writeFile(path, "", { mode: 0o600, flag: "wx" })
     const legacy = new Database(path, { create: true })
     legacy.exec(MIGRATIONS[0]!.sql)
     legacy.query("UPDATE meta SET value = '7' WHERE key = 'state_revision'").run()

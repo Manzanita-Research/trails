@@ -12,6 +12,8 @@ let vite: ViteDevServer | undefined
 try {
   vite = await createServer({
     ...config, configFile: false, logLevel: "silent",
+    // This HTTP-only fixture does not load client modules or need dependency scanning.
+    optimizeDeps: { noDiscovery: true, include: [] },
     server: { ...config.server, port: 0, watch: null, hmr: false, proxy: {
       "/api": { ...config.server!.proxy!["/api"] as object, target: `http://127.0.0.1:${backend.port}` },
     } },
@@ -21,6 +23,15 @@ try {
   if (!address || typeof address === "string") throw new Error("Vite did not bind TCP")
   const origin = `http://127.0.0.1:${address.port}`
   app = createApp({ db, trustedOrigins: [...localOrigins(backend.port!), ...localOrigins(address.port)] })
+  for (const path of ["/", "/days/2026-09-16"]) {
+    for (const method of ["GET", "HEAD"]) {
+      const html = await fetch(origin + path, { method, headers: { accept: "text/html" } })
+      assert.equal(html.status, 200)
+      assert.equal(html.headers.get("content-security-policy"), "frame-ancestors 'none'")
+      assert.equal(html.headers.get("x-frame-options"), "DENY")
+      if (method === "GET") assert.match(await html.text(), /<html/)
+    }
+  }
   assert.equal((await fetch(origin + "/api/bootstrap")).status, 200)
   assert.equal((await fetch(origin + "/api/pocket", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json",

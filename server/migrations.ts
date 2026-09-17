@@ -360,6 +360,69 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
   {
     version: 8,
     sql: `
+      CREATE TABLE captures_v8(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        machine_id TEXT NOT NULL REFERENCES machines(id),
+        account_id TEXT NOT NULL DEFAULT '',
+        owner_machine_id TEXT NOT NULL REFERENCES machines(id),
+        source TEXT NOT NULL,
+        source_record_id TEXT NOT NULL,
+        project TEXT,
+        project_hint TEXT,
+        title TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        summary_input TEXT NOT NULL,
+        provider_payload TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(account_id, source, source_record_id)
+      );
+
+      INSERT INTO captures_v8
+        SELECT id, machine_id, '', machine_id, source, source_record_id, project, project_hint,
+          title, started_at, ended_at, summary_input, provider_payload, content_hash, updated_at FROM captures;
+      CREATE TEMP TABLE saved_capture_attention AS SELECT * FROM capture_attention;
+      CREATE TEMP TABLE saved_capture_images AS SELECT * FROM capture_images;
+      DROP TABLE capture_attention;
+      DROP TABLE capture_images;
+      DROP TABLE captures;
+      ALTER TABLE captures_v8 RENAME TO captures;
+
+      CREATE TABLE capture_attention(
+        capture_id INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+        utc_minute INTEGER NOT NULL,
+        PRIMARY KEY(capture_id, utc_minute)
+      );
+
+      CREATE TABLE capture_images(
+        capture_id INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+        image_index INTEGER NOT NULL,
+        mime TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        bytes BLOB NOT NULL,
+        content_hash TEXT NOT NULL,
+        PRIMARY KEY(capture_id, image_index)
+      );
+
+      CREATE INDEX captures_started_at ON captures(started_at, id);
+      CREATE INDEX captures_project ON captures(project);
+      CREATE INDEX capture_attention_utc ON capture_attention(utc_minute, capture_id);
+      CREATE INDEX captures_machine ON captures(machine_id);
+      INSERT INTO capture_attention SELECT * FROM saved_capture_attention;
+      INSERT INTO capture_images SELECT * FROM saved_capture_images;
+      DROP TABLE saved_capture_attention;
+      DROP TABLE saved_capture_images;
+
+      -- An absent binding keeps legacy device ownership. Empty account IDs are reserved.
+      CREATE TABLE capture_device_accounts(
+        source TEXT NOT NULL CHECK(source IN ('granola', 'midjourney')),
+        device_id TEXT NOT NULL,
+        account_id TEXT NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128),
+        PRIMARY KEY(source, device_id)
+      );
+
       CREATE TABLE resource_budgets(
         scope TEXT NOT NULL,
         kind TEXT NOT NULL,
@@ -367,7 +430,6 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
         used INTEGER NOT NULL,
         PRIMARY KEY(scope, kind)
       );
-      CREATE INDEX captures_machine ON captures(machine_id);
     `,
   },
 ]

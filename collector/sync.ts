@@ -24,6 +24,7 @@ import {
   type FileFingerprint,
 } from "./state"
 import { normalizeCollectorServer } from "../cli/config"
+import { abortable, collectorRequest, CYCLE_TIMEOUT_MS, readAcknowledgment, REQUEST_TIMEOUT_MS } from "./http"
 
 export interface CollectionOptions {
   readonly server: string
@@ -34,6 +35,8 @@ export interface CollectionOptions {
   readonly roots?: ReadonlyArray<SourceRoot>
   readonly fetch?: typeof globalThis.fetch
   readonly sleep?: (milliseconds: number) => Promise<void>
+  readonly requestTimeoutMs?: number
+  readonly cycleTimeoutMs?: number
 }
 
 export interface CollectionResult {
@@ -101,39 +104,49 @@ async function uploadBatch(
   fetcher: typeof globalThis.fetch,
   sleep: (milliseconds: number) => Promise<void>,
   token: string,
+  signal: AbortSignal,
+  timeoutMs: number,
 ): Promise<number> {
   const endpoint = new URL("api/ingest", target.server)
   let lastError = "upload failed"
   for (let attempt = 0; attempt <= 3; attempt++) {
+    signal.throwIfAborted()
     try {
-      const response = await fetcher(endpoint, {
+      return await collectorRequest(fetcher, endpoint, {
         method: "POST",
         redirect: "error",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ protocolVersion: 2, device: { id: target.deviceId, name: target.deviceName }, sessions }),
-      })
-      if (response.ok) {
-        const body: unknown = await response.json()
+      }, signal, timeoutMs, async (response, requestSignal) => {
+        if (!response.ok) throw new Error(`http_${response.status}`)
+        const body = await readAcknowledgment(response, requestSignal)
         if (
           typeof body !== "object" ||
           body === null ||
           !("revision" in body) ||
-          typeof body.revision !== "number"
+          !isCount(body.revision) ||
+          !("accepted" in body) ||
+          !isCount(body.accepted) ||
+          !("unchanged" in body) ||
+          !isCount(body.unchanged) ||
+          body.accepted + body.unchanged !== sessions.length
         ) {
           throw new Error("invalid ingest response")
         }
         return body.revision
-      }
-      lastError = `http_${response.status}`
-      const retryable = response.status === 408 || response.status === 429 || response.status >= 500
-      if (!retryable) throw new Error(lastError)
+      })
     } catch (cause) {
+      signal.throwIfAborted()
       lastError = cause instanceof Error ? cause.message : "network_error"
-      if (lastError.startsWith("http_4") && lastError !== "http_408" && lastError !== "http_429") throw cause
+      if (lastError.startsWith("http_") && lastError !== "http_408" && lastError !== "http_429" && !lastError.startsWith("http_5")) throw cause
     }
-    if (attempt < 3) await sleep(2_000 * 2 ** attempt)
+    if (attempt < 3) await abortable(sleep(2_000 * 2 ** attempt), signal)
   }
   throw new Error(lastError)
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 }
 
 function collectionProgram(
@@ -194,7 +207,7 @@ function collectionProgram(
       const sessions = batch.map((item) => decodeExact(IngestSessionV2Schema, item.session))
       const outcome = yield* Effect.either(
         Effect.tryPromise({
-          try: () => uploadBatch(target, sessions, fetcher, sleep, options.token),
+          try: (signal) => uploadBatch(target, sessions, fetcher, sleep, options.token, signal, options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS),
           catch: (cause) => (cause instanceof Error ? cause : new Error("upload_error")),
         }),
       )
@@ -211,7 +224,8 @@ function collectionProgram(
     }
 
     const state: CollectorState = { protocolVersion: 2, target, files: nextFiles }
-    yield* saveCollectorState(statePath, state)
+    // Finish an atomic checkpoint before releasing ownership, even on interruption.
+    yield* saveCollectorState(statePath, state).pipe(Effect.uninterruptible)
     const result: CollectionResult = {
       discovered: files.length,
       changed: changedFiles.length,
@@ -256,21 +270,23 @@ function reportCollectorStatus(
   outcome: CollectorStatusV1["outcome"],
   fetcher: typeof globalThis.fetch,
   token: string,
+  timeoutMs: number,
 ): Effect.Effect<void, Error> {
   return Effect.tryPromise({
-    try: async () => {
+    try: async (signal) => {
       const body = decodeExact(CollectorStatusV1Schema, {
         protocolVersion: 1,
         device: { id: target.deviceId, name: target.deviceName },
         outcome,
       })
-      const response = await fetcher(new URL("api/collector-status", target.server), {
+      await collectorRequest(fetcher, new URL("api/collector-status", target.server), {
         method: "POST",
         redirect: "error",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
+      }, signal, timeoutMs, async (response) => {
+        if (!response.ok) throw new Error(`collector status http_${response.status}`)
       })
-      if (!response.ok) throw new Error(`collector status http_${response.status}`)
     },
     catch: (cause) => (cause instanceof Error ? cause : new Error("collector status failed")),
   })
@@ -289,6 +305,7 @@ function ownedCollectionProgram(
         { status: "processed", metrics: metricsOf(outcome.right), error: null },
         fetcher,
         options.token,
+        options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
       )
       return outcome.right
     }
@@ -302,6 +319,7 @@ function ownedCollectionProgram(
       },
       fetcher,
       options.token,
+      options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
     ).pipe(Effect.ignore)
     return yield* Effect.fail(failure)
   })
@@ -309,12 +327,24 @@ function ownedCollectionProgram(
 
 export function runCollection(options: CollectionOptions): Effect.Effect<CollectionResult, Error | CollectorError> {
   return Effect.try({
-    try: () => collectorTarget(options),
+    try: () => {
+      for (const timeout of [options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS, options.cycleTimeoutMs ?? CYCLE_TIMEOUT_MS]) {
+        if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2_147_483_647) {
+          throw new Error("collector timeouts must be positive timer-safe integers")
+        }
+      }
+      return collectorTarget(options)
+    },
     catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
   }).pipe(
     Effect.flatMap((target) => {
       const statePath = resolve(options.statePath ?? DEFAULT_STATE_PATH)
-      return withCollectorLock(statePath, ownedCollectionProgram(options, target))
+      return withCollectorLock(statePath, ownedCollectionProgram(options, target).pipe(
+        Effect.timeoutFail({
+          duration: options.cycleTimeoutMs ?? CYCLE_TIMEOUT_MS,
+          onTimeout: () => new Error("collector cycle timed out"),
+        }),
+      ))
     }),
   )
 }

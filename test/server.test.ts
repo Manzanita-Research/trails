@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { writeFileSync } from "node:fs"
 import { Effect } from "effect"
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "./authenticated-app"
+import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
@@ -39,6 +41,7 @@ const LEGACY_END = "2026-11-01T09:31:00.000Z"
 const LEGACY_UPDATED_AT = Date.parse("2026-11-01T09:32:00.000Z")
 
 function createMigration3Fixture(path: string): void {
+  writeFileSync(path, "", { mode: 0o600, flag: "wx" })
   const legacy = new Database(path, { create: true, strict: true })
   for (const migration of MIGRATIONS.slice(0, 3)) legacy.exec(migration.sql)
   legacy.exec("PRAGMA user_version = 3")
@@ -781,7 +784,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     const duplicateImages = capture("job-invalid").images.map((image) => ({ ...image, index: 0 }))
     const invalid = capture("job-invalid", { images: duplicateImages })
 
-    await expect(Effect.runPromise(ingestCaptures(database, captureBody([valid, invalid])))).rejects.toThrow(
+    await expect(Effect.runPromise(ingestCaptures(database, captureBody([valid, invalid]), issueCredential(database, "collector", "device-a")))).rejects.toThrow(
       "capture ingestion failed",
     )
     expect(database.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
@@ -822,10 +825,10 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     expect(childBootstrap.payload.parentCaptureId).toBe(bootstrap.captures[0]?.id)
     expect(childBootstrap.payload).not.toHaveProperty("parentSourceRecordId")
     expect(bootstrap.captures[0]?.images.map((image) => image.url)).toEqual([
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/0\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/1\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/2\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/3\?v=[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/0\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/1\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/2\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/3\?v=2-[0-9a-f]{64}$/),
     ])
 
     const imageUrl = bootstrap.captures[0]!.images[0]!.url
