@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs"
+import { createPrivateFile } from "../shared/private-fs"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
 import { initializeOwner, issueCredential, ownerTokenPath, readPrivateFile, revokeCredential, rotateOwner } from "../server/auth"
 import { assignCaptureAccount, reconcileCaptureAccount } from "../server/capture-accounts"
@@ -51,7 +51,7 @@ export function runAuthCommand(args: string[]): void {
           ? { protocolVersion: 1, server: normalized, deviceId, deviceName, token: credential.token }
           : { server: normalized, token: credential.token }
         // Refuse to overwrite another credential/config file.
-        writeFileSync(output, JSON.stringify(config, null, 2) + "\n", { flag: "wx", mode: 0o600 })
+        createPrivateFile(output, JSON.stringify(config, null, 2) + "\n")
         console.log(`Created ${credential.role} credential ${credential.id}. Transfer ${output} privately.`)
       })()
     } else {

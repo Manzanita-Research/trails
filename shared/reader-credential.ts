@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { readPrivateFile } from "../server/auth"
+import { readPrivateFile, UnsafePathError } from "./private-fs"
 
 // Read integrations get a separate credential; never reuse an ingest/owner token.
 export function readerToken(server: string, home = homedir()): string | undefined {
@@ -8,6 +8,7 @@ export function readerToken(server: string, home = homedir()): string | undefine
   try { raw = readPrivateFile(join(home, ".config/trails/reader.json")) }
   catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined
+    if (error instanceof UnsafePathError) throw error
     throw new Error("Cannot read private Trails reader configuration")
   }
   try {

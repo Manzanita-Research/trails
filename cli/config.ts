@@ -1,18 +1,7 @@
-import { readPrivateFile } from "../server/auth"
+import { atomicWritePrivateFile, readPrivateFile, UnsafePathError } from "../shared/private-fs"
 import { Schema } from "effect"
-import {
-  chmodSync,
-  mkdirSync,
-  openSync,
-  closeSync,
-  fsyncSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs"
 import { homedir, hostname } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { decodeExact } from "../shared/protocol"
 import { HARNESS_IDS, type HarnessSelection } from "../shared/harnesses"
 
@@ -53,22 +42,7 @@ export function normalizeCollectorServer(value: string): string {
 
 
 export function atomicWriteJson(path: string, value: unknown): void {
-  const previousUmask = process.umask(0o077)
-  try {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
-    writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600 })
-    const descriptor = openSync(temporary, "r")
-    try {
-      fsyncSync(descriptor)
-    } finally {
-      closeSync(descriptor)
-    }
-    chmodSync(temporary, 0o600)
-    renameSync(temporary, path)
-  } finally {
-    process.umask(previousUmask)
-  }
+  atomicWritePrivateFile(path, JSON.stringify(value, null, 2))
 }
 
 export function loadCollectorConfig(path = COLLECTOR_CONFIG_PATH): CollectorConfig | null {
@@ -76,6 +50,7 @@ export function loadCollectorConfig(path = COLLECTOR_CONFIG_PATH): CollectorConf
     return decodeExact(CollectorConfigSchema, JSON.parse(readPrivateFile(path))) as CollectorConfig
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
+    if (error instanceof UnsafePathError) throw error
     throw new Error("collector configuration is invalid or its permissions are unsafe")
   }
 }
@@ -129,15 +104,10 @@ const ServerConfigV2Schema = Schema.Struct({
 export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
   let raw: string
   try {
-    const info = statSync(path)
-    const currentUid = process.getuid?.()
-    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
-      throw new Error("server configuration permissions are unsafe")
-    }
-    raw = readFileSync(path, "utf8")
+    raw = readPrivateFile(path)
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
-    throw new Error("server configuration is invalid")
+    throw new Error(`server configuration is invalid: ${error instanceof Error ? error.message : "read failed"}`)
   }
   try {
     const config = decodeExact(ServerConfigV3Schema, JSON.parse(raw))
@@ -149,15 +119,10 @@ export function loadHubConfig(path = SERVER_CONFIG_PATH): HubAiConfig | null {
 export function isLegacyProviderHubConfig(path = SERVER_CONFIG_PATH): boolean {
   let raw: string
   try {
-    const info = statSync(path)
-    const currentUid = process.getuid?.()
-    if (!info.isFile() || (currentUid !== undefined && info.uid !== currentUid) || (info.mode & 0o077) !== 0) {
-      throw new Error("server configuration permissions are unsafe")
-    }
-    raw = readFileSync(path, "utf8")
+    raw = readPrivateFile(path)
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return false
-    throw new Error("server configuration is invalid")
+    throw new Error(`server configuration is invalid: ${error instanceof Error ? error.message : "read failed"}`)
   }
   try {
     decodeExact(ServerConfigV2Schema, JSON.parse(raw))

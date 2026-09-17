@@ -113,8 +113,8 @@ describe("SQLite backups", () => {
     writer.sqlite.query("UPDATE meta SET value = '3' WHERE key = 'state_revision'").run()
     expect((await stat(`${databasePath}-wal`)).size).toBeGreaterThan(0)
 
-    await mkdir(join(root, "exports"), { recursive: true })
-    await writeFile(output, "old incomplete backup")
+    await mkdir(join(root, "exports"), { recursive: true, mode: 0o700 })
+    await writeFile(output, "old incomplete backup", { mode: 0o600 })
     writer.sqlite.exec("BEGIN IMMEDIATE")
     writer.sqlite
       .query("INSERT INTO pocket_items(id, text, created_at) VALUES (?, ?, ?)")
@@ -175,7 +175,7 @@ describe("SQLite backups", () => {
     database.sqlite
       .query("INSERT INTO custom_engagements(id, name, created_at) VALUES (?, ?, ?)")
       .run("custom:one", "One", 1)
-    await writeFile(output, "stale")
+    await writeFile(output, "stale", { mode: 0o600 })
 
     await expect(createBackup({ dbPath: databasePath })).rejects.toThrow("exactly one")
     await expect(createBackup({ dbPath: databasePath, output, outputDir: root })).rejects.toThrow("exactly one")
@@ -195,13 +195,13 @@ describe("SQLite backups", () => {
     const databasePath = join(root, "trails.sqlite")
     const backupDirectory = join(root, "backups")
     trackedDatabase(databasePath)
-    await mkdir(backupDirectory, { recursive: true })
+    await mkdir(backupDirectory, { recursive: true, mode: 0o700 })
     const oldBackups = [
       "trails-20240101-010101.sqlite",
       "trails-20240202-020202.sqlite",
       "trails-20240303-030303.sqlite",
     ]
-    for (const name of oldBackups) await writeFile(join(backupDirectory, name), name)
+    for (const name of oldBackups) await writeFile(join(backupDirectory, name), name, { mode: 0o600 })
     await writeFile(join(backupDirectory, "trails-manual.sqlite"), "manual")
     await writeFile(join(backupDirectory, "trails-20240101-010101.sqlite.bak"), "sidecar")
     await writeFile(join(backupDirectory, "another-app-20240101-010101.sqlite"), "neighbor")
@@ -234,9 +234,9 @@ describe("SQLite backups", () => {
     const databasePath = join(root, "trails.sqlite")
     const backupDirectory = join(root, "backups")
     trackedDatabase(databasePath)
-    await mkdir(backupDirectory, { recursive: true })
+    await mkdir(backupDirectory, { recursive: true, mode: 0o700 })
     const oldBackups = ["trails-20240101-010101.sqlite", "trails-20240202-020202.sqlite"]
-    for (const name of oldBackups) await writeFile(join(backupDirectory, name), name)
+    for (const name of oldBackups) await writeFile(join(backupDirectory, name), name, { mode: 0o600 })
     const blockedName = "trails-20260803-040506.sqlite"
     await mkdir(join(backupDirectory, blockedName))
 

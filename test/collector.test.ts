@@ -323,6 +323,7 @@ describe("collection synchronization", () => {
         target,
         files: { [filePath]: { size: fingerprint.size, mtimeMs: fingerprint.mtimeMs } },
       }),
+      { mode: 0o600 },
     )
 
     expect(await Effect.runPromise(loadCollectorState(statePath))).toBeNull()
