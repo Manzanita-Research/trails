@@ -48,14 +48,14 @@ https://your-hub.your-tailnet.ts.net/
 On the hub, create a separate pairing file for each additional Mac:
 
 ```bash
-trails auth pair --server https://your-hub.your-tailnet.ts.net/ --name "Laptop" --output pairing.json
+trails auth pair --server https://your-hub.your-tailnet.ts.net/ --name "Laptop" --output ~/.config/trails/pairing.json
 ```
 
-Transfer that file privately to the additional Mac, then run the installer there using the same URL:
+Transfer that file privately to `~/.config/trails/pairing.json` on the additional Mac (directory mode `700`, file mode `600`), then run the installer there using the same URL:
 
 ```bash
 curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- \
-  join https://your-hub.your-tailnet.ts.net/ --pairing-file pairing.json
+  join https://your-hub.your-tailnet.ts.net/ --pairing-file ~/.config/trails/pairing.json
 ```
 
 Each spoke parses its own sessions locally and sends normalized observations to the hub every minute. The hub continues collecting its own sessions too; clients and servers are roles within the same Trails binary, not separate products or required machines.
@@ -187,6 +187,8 @@ Rerun the same command once. If it still fails, send the command output and the 
 
 Only the hub has server and backup logs.
 
+Collector HTTP requests have a 15-second deadline, including response reads, and each collection cycle has a two-minute deadline covering parsing, uploads, retry waits, and status reporting. Upload acknowledgments are limited to 8 KiB and must account for every session in the batch before it is checkpointed. A timeout releases the collector lock so the next scheduled cycle can retry uncheckpointed work; an atomic checkpoint already being written finishes before the lock is released.
+
 ## Privacy
 
 Transcript parsing happens on the Mac where each session was created. Trails sends the hub only normalized observations: source, session identifier, working directory, branch, timestamps, event counts, first prompt, minute activity, and a bounded digest.
@@ -198,6 +200,8 @@ The hub rejects HTTP authorities outside its configured allowlist before serving
 Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; the application credentials below authenticate local processes and tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
 
 Capture uploads accept static JPEG, PNG and WebP images only. The hub inspects and fully decodes the bytes before writing any part of the request, checks that format and dimensions match the supplied metadata, and rejects damaged or animated images. Limits are 500 KiB compressed bytes and 4,000,000 pixels per image, 16,384 pixels per side, and 32,000,000 image pixels per request. The embedded ImageMagick WebAssembly decoder restricts formats and memory allocations, with a 64 MiB pixel cache and no disk spill or external delegates. Image responses require authentication and use `no-store`, `nosniff`, same-origin resource policy and a sandbox CSP. Previously stored images are not retroactively decoded or removed.
+
+The private web UI prohibits framing, including by the same origin, with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. This applies to disk and embedded static responses and the Vite development server. Open Trails as a top-level page on loopback or its trusted tailnet origin. The BB integration renders its own UI through authenticated JSON API reads and requires no framing exception.
 
 ### Authentication and upgrading an existing hub
 
@@ -217,18 +221,32 @@ After updating an existing installation:
 
 1. Rerun `trails setup hub` on the hub, retaining its original `--tailscale` or `--service svc:NAME` option. This keeps its device ID and provisions its local collector. Existing data and summary selection remain intact. A manually started hub can use `trails serve` to initialize owner authentication without installing services.
 2. Sign in using `trails auth owner`. Unauthenticated requests now return 401; there is no legacy anonymous mode.
-3. For each remote collector, read its existing `deviceId` from `~/.config/trails/collector.json`. On the hub, run `trails auth pair --server HUB_URL --device-id EXISTING_ID --name NAME --output pairing.json`. Transfer the file privately and run `trails setup join HUB_URL --pairing-file pairing.json` on that collector. Using its existing ID preserves session history and progress. Pairing files are bearer credentials, not public invitation links; delete transferred copies after import. Use a fresh credential per device. Legacy collector configuration must be owned by the collector account and mode 0600 (`chmod 600 ~/.config/trails/collector.json`).
-4. For each read integration, run `trails auth read --server HUB_URL --output reader.json` on the hub. Transfer it privately to that integration's host account and install it at `~/.config/trails/reader.json` with mode 0600. Both BB and Herdr read this file, independently of collector credentials, and refuse to send it to a different hub URL. Use `http://127.0.0.1:7412/` for a local integration. Server URL changes require a matching reader configuration.
+3. For each remote collector, read its existing `deviceId` from `~/.config/trails/collector.json`. On the hub, run `trails auth pair --server HUB_URL --device-id EXISTING_ID --name NAME --output ~/.config/trails/pairing.json`. Transfer the file privately and run `trails setup join HUB_URL --pairing-file ~/.config/trails/pairing.json` on that collector. Using its existing ID preserves session history and progress. Pairing files are bearer credentials, not public invitation links; delete transferred copies after import. Use a fresh credential per device. Legacy collector configuration must be owned by the collector account and mode 0600 (`chmod 600 ~/.config/trails/collector.json`).
+4. For each read integration, run `trails auth read --server HUB_URL --output ~/.config/trails/reader.json` on the hub. Transfer it privately to that integration's host account and install it at `~/.config/trails/reader.json` with mode 0600. Both BB and Herdr read this file, independently of collector credentials, and refuse to send it to a different hub URL. Use `http://127.0.0.1:7412/` for a local integration. Server URL changes require a matching reader configuration.
 
 Run `trails auth list` on the hub to see credential IDs and device bindings without exposing tokens. `trails auth revoke CREDENTIAL_ID` immediately revokes a collector or read credential without deleting history; revoke every credential listed for a device when unpairing it. To replace a revoked credential, issue and import a new pairing/read file. `trails auth rotate-owner` replaces the owner credential and revokes all browser sessions, including when the owner token file was lost. It does not revoke collectors or read integrations. These administrative commands require access to the hub account and database; keep credential files and database backups private. Processes running as that same OS account remain inside the owner trust boundary.
 
 When you explicitly activate a summary harness, the provider already configured in that harness receives only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, collector traffic, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
+
+Trails checks private files and their parent directories before use. Configuration, credentials, collector state, databases (including SQLite sidecars), logs, and backups must be regular files owned by the running account with no group/other access, normally mode `600`. Their immediate directories must be owned by that account with mode `700`. Ancestors may be searchable by others but cannot be group/other-writable or owned by another non-root account. Root-owned sticky temporary directories and root-owned system directory aliases such as macOS `/tmp` are supported; user-created directory symlinks, file symlinks, and hardlinked private files are rejected.
+
+Existing safe files upgrade normally. Unsafe paths fail with the offending path and repair guidance; Trails does not silently chmod or take ownership of existing data. Stop the affected Trails service, inspect the reported path and its ownership, and remove unintended group/other permissions only after confirming it is your intended file or directory. Store exported pairing credentials inside an owner-only directory too. These checks protect against other local accounts with access through unsafe filesystem permissions. They do not isolate processes running as the same OS account; SQLite and launchd still open validated paths by name.
 
 Harness selection lives in owner-only `~/.config/trails/server.json`. Harness credentials remain owned by the harness and never enter Trails configuration, SQLite, collector traffic, browser responses, feedback, or logs. Browser-visible status is limited to harness availability, selection, attempt/success timestamps, and a closed actionable error class.
 
 Sending beta feedback is explicit. The browser sends only the feedback kind, message, optional follow-up, and creation time unless you opt in to safe context. Safe context is limited to the trails version, current view, canonical revision, selected work date on Days or Project, counts by Claude Code/Codex/omp/pi source, viewport dimensions, and whether synchronization is in an error state. It never includes URLs or tailnet details, device or project names, paths, branches, prompts, summaries, identifiers, digests, transcript content, or user-agent.
 
 Feedback goes directly from the browser to a separate public-write Cloudflare Worker and D1 database with no public read route. It expires after 90 days and is deleted by the next daily cleanup. Cloudflare does not provide Trails inference; canonical session and organization state remains in SQLite on the hub Mac.
+
+### HTTP cache policy
+
+All API JSON, status responses (including unchanged-bootstrap 204s), authentication responses, and errors use `Cache-Control: no-store`. Private capture images use the same zero-retention policy on GET, HEAD, and conditional 304 responses. Browsers and proxies must not store these responses for reuse; images are deliberately fetched again instead of receiving a freshness window or offline fallback. Authentication and image existence are checked before evaluating an ETag, so the next request after session/credential revocation or image removal returns an error even with a matching validator.
+
+Bootstrap image URLs use a `v=2-` prefix to bypass entries stored under the former one-year immutable image policy. Updating the server cannot purge those older entries from browsers that already have them; clear the site's cached data on previously used clients when upgrading. HTTP cache policy also cannot erase downloaded files, screenshots, or content already rendered in an open page. Revocation governs subsequent requests, not copies already delivered.
+
+Only nonprivate, fingerprinted static assets receive `public, max-age=31536000, immutable`. The HTML shell and SPA fallbacks use `no-store`; other static assets use `no-cache` and must revalidate.
+
+Run the HTTP regressions with `bun test test/cache-policy.test.ts test/server.test.ts test/auth.test.ts`. The standalone browser probe, `bun --no-install scripts/check-cache-policy-browser.ts`, uses an existing Playwright installation (set `PLAYWRIGHT_MODULE` to its module path if it is outside this checkout). It starts only a temporary loopback fixture, uses a fresh browser profile with caching enabled, and removes its temporary files. It checks repeated requests, conditional requests, logout, deletion, offline behavior, legacy URL migration, and public asset caching without accessing an installed hub.
 
 ## Alpha release
 
@@ -262,6 +280,16 @@ This writes:
 ```text
 dist/release/trails/<version>/
 ```
+
+Staging rejects non-executable or wrong-architecture Mach-O files, symlinks and special files, unexpected client assets or embedded modules, source maps/bytecode, invalid installer syntax, descriptor mismatches, and recognized private payload patterns. `scripts/release-audit.ts` defines the explicit asset and privacy policy. The native Bun module format is inspected statically for both architectures; an unfamiliar format fails closed and requires policy review when upgrading Bun.
+
+Each staging directory also contains `release-audit.json`: a deterministic local review artifact with the policy hash, asset inventory, embedded module inventory, and staged file sizes/hashes. It contains no timestamps, operator paths, environment values, or matched private text. Recheck the staged bytes against that report and the current client build without recompiling:
+
+```sh
+bun scripts/stage-release.ts --audit dist/release/trails/<version>
+```
+
+The audit report stays local; the shared publisher's transport contract is unchanged. Keep it with the release review evidence. Pattern checks cover credential formats, sensitive environment values, personal paths, private endpoints, transcript/digest fixtures, source history, and source maps. Known Bun CI source paths have a narrow native-runtime exception, never an exception in the product module graph. These checks cannot prove that arbitrary or encoded secrets are absent. Review policy changes and audit findings before publication. A local validation build does not reserve a version: select a fresh version before publishing changed bytes.
 
 Validate through the shared publisher before uploading:
 
