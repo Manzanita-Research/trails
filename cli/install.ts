@@ -1,3 +1,4 @@
+import { terminalText } from "../shared/terminal"
 import {
   access,
   copyFile,
@@ -354,13 +355,13 @@ export async function install(options: InstallOptions): Promise<void> {
   }
 
   const planned = launchDefinitions(options.kind, exposeThroughTailscale ? currentTailnetUrl(service) : undefined)
-  console.log(`Executable: ${process.execPath} -> ${destination}`)
+  console.log(terminalText(`Executable: ${process.execPath} -> ${destination}`))
   for (const definition of planned) {
-    console.log(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`)
+    console.log(terminalText(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`))
   }
   if (options.kind === "server") {
     if (exposeThroughTailscale) {
-      console.log(`Tailscale preflight: ${service ? `${service} https:443` : "node root"} -> ${tailscaleProxy}`)
+      console.log(terminalText(`Tailscale preflight: ${service ? `${service} https:443` : "node root"} -> ${tailscaleProxy}`))
     } else {
       console.log("Access: local only at http://127.0.0.1:7412/")
     }
