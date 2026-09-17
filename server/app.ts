@@ -79,7 +79,10 @@ class ApiError extends Error {
   }
 }
 
-const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
+// Private responses have zero HTTP cache retention, including conditional responses and errors.
+// Keep this policy at the API boundary so bodyless/status responses inherit it too.
+const privateCacheControl = "no-store"
+const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": privateCacheControl }
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: jsonHeaders })
@@ -362,7 +365,8 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
           width: image.width,
           height: image.height,
           byteLength: image.byteLength,
-          url: `/api/capture-images/${row.id}/${image.index}?v=${image.hash}`,
+          // Bypass images cached under the former one-year immutable policy.
+          url: `/api/capture-images/${row.id}/${image.index}?v=2-${image.hash}`,
         })),
       }
       if (row.source === "midjourney") {
@@ -597,7 +601,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     const headers = new Headers({
       "Content-Type": row.mime,
       "Content-Length": String(row.byte_length),
-      "Cache-Control": "no-store",
+      "Cache-Control": privateCacheControl,
       ETag: etag,
     })
     if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers })
@@ -914,20 +918,20 @@ export function createApp(options: AppOptions): (request: Request) => Promise<Re
         const body = decodeBody(Schema.Struct({ token: Schema.String }), await readJson(request, 1024))
         const credential = credentialFor(options.db, body.token)
         if (!credential || credential.role !== "owner") throw new ApiError("unauthorized", "owner credential required", 401)
-        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.login(credential, url, now), "Cache-Control": "no-store" } })
+        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.login(credential, url, now), "Cache-Control": privateCacheControl } })
       }
       const credential = auth.authenticate(request, url, now)
       if (!credential) throw new ApiError("unauthorized", "sign in to Trails", 401)
       if (url.pathname === "/api/auth/session" && request.method === "GET") return jsonResponse({ role: credential.role })
       if (url.pathname === "/api/auth/logout" && request.method === "POST") {
-        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.logout(request, url), "Cache-Control": "no-store" } })
+        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.logout(request, url), "Cache-Control": privateCacheControl } })
       }
       const ingest = ["/api/ingest", "/api/captures", "/api/collector-status"].includes(url.pathname)
       const permitted = ingest ? credential.role === "collector"
         : ["GET", "HEAD"].includes(request.method) ? credential.role !== "collector" : credential.role === "owner"
       if (!permitted) throw new ApiError("forbidden", "credential does not grant this permission", 403)
       const response = await apiResponse(options, request, url, now, credential)
-      response.headers.set("Cache-Control", "no-store")
+      response.headers.set("Cache-Control", privateCacheControl)
       return response
     } catch (error) {
       return errorResponse(error instanceof ApiError ? error : new ApiError("internal_error", "internal server error", 500))
