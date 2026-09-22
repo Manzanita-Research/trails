@@ -106,7 +106,7 @@ export interface HubAiConfig {
 }
 
 const SummarizerSchema = Schema.Struct({
-  harness: Schema.Literal("auto", ...HARNESS_IDS),
+  harness: Schema.Literals(["auto", ...HARNESS_IDS]),
 })
 const ServerConfigV3Schema = Schema.Struct({
   protocolVersion: Schema.Literal(3),
@@ -115,7 +115,7 @@ const ServerConfigV3Schema = Schema.Struct({
 const ServerConfigV2Schema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   summarizer: Schema.NullOr(Schema.Struct({
-    provider: Schema.Literal("openrouter", "chatgpt", "openai-api"),
+    provider: Schema.Literals(["openrouter", "chatgpt", "openai-api"]),
     model: Schema.optional(Schema.String),
   })),
 })

@@ -133,7 +133,7 @@ async function readJson(request: Request, maximumBytes: number): Promise<unknown
   }
 }
 
-function decodeBody<S extends Schema.Schema.AnyNoContext>(schema: S, input: unknown): Schema.Schema.Type<S> {
+function decodeBody<S extends Schema.Decoder<unknown>>(schema: S, input: unknown): S["Type"] {
   try {
     return decodeExact(schema, input)
   } catch {

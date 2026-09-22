@@ -3,42 +3,46 @@ import type { LocalActivityTuple, Source, UtcActivityTuple } from "./domain"
 import { HARNESS_IDS } from "./harnesses"
 
 const boundedString = (minimum: number, maximum: number) =>
-  Schema.String.pipe(Schema.minLength(minimum), Schema.maxLength(maximum))
+  Schema.String.check(Schema.isLengthBetween(minimum, maximum))
 
 const trimmedString = (minimum: number, maximum: number) =>
-  boundedString(minimum, maximum).pipe(
-    Schema.filter((value) => value === value.trim() || "must be trimmed"),
+  boundedString(minimum, maximum).check(
+    Schema.makeFilter((value) => value === value.trim() || "must be trimmed"),
   )
 
-const nullableBoundedString = (maximum: number) => Schema.NullOr(Schema.String.pipe(Schema.maxLength(maximum)))
+const nullableBoundedString = (maximum: number) => Schema.NullOr(Schema.String.check(Schema.isMaxLength(maximum)))
 
-export const SourceSchema = Schema.Literal("claude", "codex", "omp", "pi")
-export const CanonicalTimestampSchema = Schema.String.pipe(
-  Schema.filter((value) => {
+const nonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const positiveInt = Schema.Int.check(Schema.isGreaterThan(0))
+const intBetween = (minimum: number, maximum: number) => Schema.Int.check(Schema.isBetween({ minimum, maximum }))
+
+export const SourceSchema = Schema.Literals(["claude", "codex", "omp", "pi"])
+export const CanonicalTimestampSchema = Schema.String.check(
+  Schema.makeFilter((value) => {
     const parsed = new Date(value)
     return (!Number.isNaN(parsed.getTime()) && parsed.toISOString() === value) || "must be canonical UTC milliseconds"
   }),
 )
-export const LocalDateSchema = Schema.String.pipe(
-  Schema.pattern(/^\d{4}-\d{2}-\d{2}$/),
-  Schema.filter((value) => {
+export const LocalDateSchema = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/),
+  Schema.makeFilter((value) => {
     const parsed = new Date(`${value}T12:00:00Z`)
     return (!Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value) || "must be a calendar date"
   }),
 )
 
-export const LocalActivityTupleSchema = Schema.Tuple(
+export const LocalActivityTupleSchema = Schema.Tuple([
   LocalDateSchema,
-  Schema.Number.pipe(Schema.int(), Schema.between(0, 1439)),
-  Schema.Number.pipe(Schema.int(), Schema.positive()),
-  Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-).pipe(
-  Schema.filter((tuple) => tuple[3] <= tuple[2] || "user event count exceeds event count"),
+  intBetween(0, 1439),
+  positiveInt,
+  nonNegativeInt,
+]).check(
+  Schema.makeFilter((tuple) => tuple[3] <= tuple[2] || "user event count exceeds event count"),
 )
 
-const LocalActivitySchema = Schema.Array(LocalActivityTupleSchema).pipe(
-  Schema.minItems(1),
-  Schema.filter((activity) => {
+const LocalActivitySchema = Schema.Array(LocalActivityTupleSchema).check(
+  Schema.isMinLength(1),
+  Schema.makeFilter((activity) => {
     let previous = ""
     for (const [date, minute] of activity) {
       const key = `${date}:${String(minute).padStart(4, "0")}`
@@ -49,17 +53,17 @@ const LocalActivitySchema = Schema.Array(LocalActivityTupleSchema).pipe(
   }),
 )
 
-export const UtcActivityTupleSchema = Schema.Tuple(
-  Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  Schema.Number.pipe(Schema.int(), Schema.positive()),
-  Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-).pipe(
-  Schema.filter((tuple) => tuple[2] <= tuple[1] || "user event count exceeds event count"),
+export const UtcActivityTupleSchema = Schema.Tuple([
+  nonNegativeInt,
+  positiveInt,
+  nonNegativeInt,
+]).check(
+  Schema.makeFilter((tuple) => tuple[2] <= tuple[1] || "user event count exceeds event count"),
 )
 
-const UtcActivitySchema = Schema.Array(UtcActivityTupleSchema).pipe(
-  Schema.minItems(1),
-  Schema.filter((activity) => {
+const UtcActivitySchema = Schema.Array(UtcActivityTupleSchema).check(
+  Schema.isMinLength(1),
+  Schema.makeFilter((activity) => {
     let previous = -1
     for (const [utcMinute] of activity) {
       if (utcMinute <= previous) return "activity tuples must be unique and sorted"
@@ -69,17 +73,16 @@ const UtcActivitySchema = Schema.Array(UtcActivityTupleSchema).pipe(
   }),
 )
 
-export const CaptureSourceV1Schema = Schema.Literal("midjourney", "granola")
+export const CaptureSourceV1Schema = Schema.Literals(["midjourney", "granola"])
 
-export const CaptureAttentionTupleV1Schema = Schema.Tuple(
+export const CaptureAttentionTupleV1Schema = Schema.Tuple([
   LocalDateSchema,
-  Schema.Number.pipe(Schema.int(), Schema.between(0, 1439)),
-)
+  intBetween(0, 1439),
+])
 
-const CaptureAttentionV1Schema = Schema.Array(CaptureAttentionTupleV1Schema).pipe(
-  Schema.minItems(1),
-  Schema.maxItems(10_080),
-  Schema.filter((attention) => {
+const CaptureAttentionV1Schema = Schema.Array(CaptureAttentionTupleV1Schema).check(
+  Schema.isLengthBetween(1, 10_080),
+  Schema.makeFilter((attention) => {
     let previous = ""
     for (const [date, minute] of attention) {
       const key = `${date}:${String(minute).padStart(4, "0")}`
@@ -90,12 +93,9 @@ const CaptureAttentionV1Schema = Schema.Array(CaptureAttentionTupleV1Schema).pip
   }),
 )
 
-const CaptureUtcAttentionV1Schema = Schema.Array(
-  Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-).pipe(
-  Schema.minItems(1),
-  Schema.maxItems(10_080),
-  Schema.filter((attention) => {
+const CaptureUtcAttentionV1Schema = Schema.Array(nonNegativeInt).check(
+  Schema.isLengthBetween(1, 10_080),
+  Schema.makeFilter((attention) => {
     let previous = -1
     for (const utcMinute of attention) {
       if (utcMinute <= previous) return "attention minutes must be unique and sorted"
@@ -105,9 +105,9 @@ const CaptureUtcAttentionV1Schema = Schema.Array(
   }),
 )
 
-const strictBase64 = Schema.String.pipe(
-  Schema.minLength(4),
-  Schema.filter((value) => {
+const strictBase64 = Schema.String.check(
+  Schema.isMinLength(4),
+  Schema.makeFilter((value) => {
     if (
       value.startsWith("data:") ||
       value.length % 4 !== 0 ||
@@ -121,23 +121,23 @@ const strictBase64 = Schema.String.pipe(
 )
 
 export const CaptureImageV1Schema = Schema.Struct({
-  index: Schema.Number.pipe(Schema.int(), Schema.between(0, 3)),
-  mime: Schema.Literal("image/jpeg", "image/png", "image/webp"),
-  width: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
-  height: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
+  index: intBetween(0, 3),
+  mime: Schema.Literals(["image/jpeg", "image/png", "image/webp"]),
+  width: intBetween(1, 16_384),
+  height: intBetween(1, 16_384),
   bytes: strictBase64,
 })
 
-const MidjourneyImagesV1Schema = Schema.Array(CaptureImageV1Schema).pipe(
-  Schema.itemsCount(4),
-  Schema.filter(
+const MidjourneyImagesV1Schema = Schema.Array(CaptureImageV1Schema).check(
+  Schema.isLengthBetween(4, 4),
+  Schema.makeFilter(
     (images) =>
       images.every((image, index) => image.index === index) ||
       "Midjourney images must contain indexes 0 through 3 in order",
   ),
 )
 
-const GranolaImagesV1Schema = Schema.Array(CaptureImageV1Schema).pipe(Schema.itemsCount(0))
+const GranolaImagesV1Schema = Schema.Array(CaptureImageV1Schema).check(Schema.isLengthBetween(0, 0))
 
 const CaptureCommonV1Fields = {
   sourceRecordId: trimmedString(1, 128),
@@ -154,11 +154,11 @@ const MidjourneyCapturePayloadV1Schema = Schema.Struct({
   eventType: trimmedString(1, 100),
   jobType: trimmedString(1, 100),
   parentSourceRecordId: Schema.NullOr(trimmedString(1, 128)),
-  parentGrid: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(0, 3))),
+  parentGrid: Schema.NullOr(intBetween(0, 3)),
 })
 
-const GranolaNoteUrlSchema = boundedString(1, 2048).pipe(
-  Schema.filter((value) => {
+const GranolaNoteUrlSchema = boundedString(1, 2048).check(
+  Schema.makeFilter((value) => {
     try {
       const url = new URL(value)
       const granolaHost = url.hostname === "granola.ai" || url.hostname.endsWith(".granola.ai")
@@ -169,13 +169,13 @@ const GranolaNoteUrlSchema = boundedString(1, 2048).pipe(
   }),
 )
 
-const GranolaFoldersV1Schema = Schema.Array(trimmedString(1, 200)).pipe(
-  Schema.maxItems(50),
-  Schema.filter((folders) => new Set(folders).size === folders.length || "folder names must be unique"),
+const GranolaFoldersV1Schema = Schema.Array(trimmedString(1, 200)).check(
+  Schema.isMaxLength(50),
+  Schema.makeFilter((folders) => new Set(folders).size === folders.length || "folder names must be unique"),
 )
 
 const GranolaCapturePayloadV1Schema = Schema.Struct({
-  attendeeCount: Schema.Number.pipe(Schema.int(), Schema.between(0, 10_000)),
+  attendeeCount: intBetween(0, 10_000),
   folders: GranolaFoldersV1Schema,
   webUrl: Schema.NullOr(GranolaNoteUrlSchema),
 })
@@ -190,16 +190,16 @@ export const MidjourneyCaptureV1Schema = Schema.Struct({
   source: Schema.Literal("midjourney"),
   payload: MidjourneyCapturePayloadV1Schema,
   images: MidjourneyImagesV1Schema,
-}).pipe(Schema.filter(validCaptureInterval))
+}).check(Schema.makeFilter(validCaptureInterval))
 
 export const GranolaCaptureV1Schema = Schema.Struct({
   ...CaptureCommonV1Fields,
   source: Schema.Literal("granola"),
   payload: GranolaCapturePayloadV1Schema,
   images: GranolaImagesV1Schema,
-}).pipe(Schema.filter(validCaptureInterval))
+}).check(Schema.makeFilter(validCaptureInterval))
 
-export const IngestCaptureV1Schema = Schema.Union(MidjourneyCaptureV1Schema, GranolaCaptureV1Schema)
+export const IngestCaptureV1Schema = Schema.Union([MidjourneyCaptureV1Schema, GranolaCaptureV1Schema])
 
 
 export const IngestSessionV2Schema = Schema.Struct({
@@ -209,13 +209,13 @@ export const IngestSessionV2Schema = Schema.Struct({
   branch: nullableBoundedString(4096),
   start: CanonicalTimestampSchema,
   end: CanonicalTimestampSchema,
-  events: Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(2)),
-  userEvents: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  events: Schema.Int.check(Schema.isGreaterThanOrEqualTo(2)),
+  userEvents: nonNegativeInt,
   firstPrompt: nullableBoundedString(240),
   activity: UtcActivitySchema,
   digest: nullableBoundedString(9000),
-}).pipe(
-  Schema.filter((session) => {
+}).check(
+  Schema.makeFilter((session) => {
     if (session.start > session.end) return "start must not be after end"
     if (session.userEvents > session.events) return "userEvents exceeds events"
     let events = 0
@@ -236,27 +236,27 @@ export const DeviceV1Schema = Schema.Struct({
 export const IngestRequestV2Schema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   device: DeviceV1Schema,
-  sessions: Schema.Array(IngestSessionV2Schema).pipe(Schema.minItems(1), Schema.maxItems(50)),
+  sessions: Schema.Array(IngestSessionV2Schema).check(Schema.isLengthBetween(1, 50)),
 })
 export const CollectionMetricsV1Schema = Schema.Struct({
-  discovered: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  changed: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  uploaded: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  ignored: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  unchanged: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  discovered: nonNegativeInt,
+  changed: nonNegativeInt,
+  uploaded: nonNegativeInt,
+  ignored: nonNegativeInt,
+  unchanged: nonNegativeInt,
 })
 
-export const CollectorErrorCodeSchema = Schema.Literal(
+export const CollectorErrorCodeSchema = Schema.Literals([
   "parse_error",
   "file_changed_during_read",
   "upload_error",
   "collector_error",
-)
+])
 
 export const CollectorStatusV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   device: DeviceV1Schema,
-  outcome: Schema.Union(
+  outcome: Schema.Union([
     Schema.Struct({
       status: Schema.Literal("processed"),
       metrics: CollectionMetricsV1Schema,
@@ -267,12 +267,12 @@ export const CollectorStatusV1Schema = Schema.Struct({
       metrics: Schema.NullOr(CollectionMetricsV1Schema),
       error: CollectorErrorCodeSchema,
     }),
-  ),
+  ]),
 })
 export const IngestCapturesRequestV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   device: DeviceV1Schema,
-  captures: Schema.Array(IngestCaptureV1Schema).pipe(Schema.minItems(1), Schema.maxItems(20)),
+  captures: Schema.Array(IngestCaptureV1Schema).check(Schema.isLengthBetween(1, 20)),
 })
 
 export const MachineStatusV1Schema = Schema.Struct({
@@ -291,8 +291,8 @@ export const MachinesV1Schema = Schema.Struct({
   generatedAt: CanonicalTimestampSchema,
   machines: Schema.Array(MachineStatusV1Schema),
 })
-export const HarnessIdSchema = Schema.Literal(...HARNESS_IDS)
-export const HarnessSelectionSchema = Schema.Literal("auto", ...HARNESS_IDS)
+export const HarnessIdSchema = Schema.Literals(HARNESS_IDS)
+export const HarnessSelectionSchema = Schema.Literals(["auto", ...HARNESS_IDS])
 export const SummarizationMetadataV2Schema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   harness: HarnessIdSchema,
@@ -302,7 +302,7 @@ export const SummarizationMetadataV2Schema = Schema.Struct({
   }),
 })
 
-export const SummarizationStatusV2Schema = Schema.Union(
+export const SummarizationStatusV2Schema = Schema.Union([
   Schema.Struct({
     enabled: Schema.Literal(false),
     metadata: Schema.Null,
@@ -311,15 +311,15 @@ export const SummarizationStatusV2Schema = Schema.Union(
     enabled: Schema.Literal(true),
     metadata: SummarizationMetadataV2Schema,
   }),
-)
+])
 
-export const SummarizeErrorClassSchema = Schema.Literal(
+export const SummarizeErrorClassSchema = Schema.Literals([
   "auth_required",
   "quota",
   "harness_failed",
   "timeout",
   "protocol",
-)
+])
 export const HarnessStatusV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   harnesses: Schema.Array(Schema.Struct({
@@ -330,9 +330,9 @@ export const HarnessStatusV1Schema = Schema.Struct({
   active: Schema.NullOr(Schema.Struct({
     selection: HarnessSelectionSchema,
     harness: Schema.NullOr(HarnessIdSchema),
-    state: Schema.Literal("unavailable", "never_ran", "ok", "failing"),
-    lastAttemptAt: Schema.NullOr(Schema.Number.pipe(Schema.nonNegative())),
-    lastSuccessAt: Schema.NullOr(Schema.Number.pipe(Schema.nonNegative())),
+    state: Schema.Literals(["unavailable", "never_ran", "ok", "failing"]),
+    lastAttemptAt: Schema.NullOr(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+    lastSuccessAt: Schema.NullOr(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
     lastErrorClass: Schema.NullOr(SummarizeErrorClassSchema),
   })),
 })
@@ -345,18 +345,18 @@ export const BootstrapSessionV1Schema = Schema.Struct({
   branch: nullableBoundedString(4096),
   start: CanonicalTimestampSchema,
   end: CanonicalTimestampSchema,
-  events: Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(2)),
-  userEvents: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  events: Schema.Int.check(Schema.isGreaterThanOrEqualTo(2)),
+  userEvents: nonNegativeInt,
   firstPrompt: nullableBoundedString(240),
   activity: LocalActivitySchema,
 })
 
-const StringRecordSchema = Schema.Record({ key: Schema.String, value: Schema.String })
+const StringRecordSchema = Schema.Record(Schema.String, Schema.String)
 
 export const PreferencesV1Schema = Schema.Struct({
-  boundary: Schema.Literal(4, 5, 6, 7),
-  halo: Schema.Literal(0, 5, 10, 15),
-  onboardingVersion: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  boundary: Schema.Literals([4, 5, 6, 7]),
+  halo: Schema.Literals([0, 5, 10, 15]),
+  onboardingVersion: nonNegativeInt,
   assignments: StringRecordSchema,
   customEngagements: Schema.Array(
     Schema.Struct({ id: trimmedString(1, 128), name: trimmedString(1, 80) }),
@@ -366,13 +366,13 @@ export const PreferencesV1Schema = Schema.Struct({
     Schema.Struct({
       id: trimmedString(1, 128),
       text: trimmedString(1, 500),
-      at: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+      at: nonNegativeInt,
     }),
   ),
 })
 
-export const TimeZoneSchema = trimmedString(1, 100).pipe(
-  Schema.filter((value) => {
+export const TimeZoneSchema = trimmedString(1, 100).check(
+  Schema.makeFilter((value) => {
     try {
       new Intl.DateTimeFormat("en-US", { timeZone: value })
       return true
@@ -383,11 +383,11 @@ export const TimeZoneSchema = trimmedString(1, 100).pipe(
 )
 
 export const BootstrapCaptureImageV1Schema = Schema.Struct({
-  index: Schema.Number.pipe(Schema.int(), Schema.between(0, 3)),
-  mime: Schema.Literal("image/jpeg", "image/png", "image/webp"),
-  width: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
-  height: Schema.Number.pipe(Schema.int(), Schema.between(1, 16_384)),
-  byteLength: Schema.Number.pipe(Schema.int(), Schema.between(1, 500 * 1024)),
+  index: intBetween(0, 3),
+  mime: Schema.Literals(["image/jpeg", "image/png", "image/webp"]),
+  width: intBetween(1, 16_384),
+  height: intBetween(1, 16_384),
+  byteLength: intBetween(1, 500 * 1024),
   url: boundedString(1, 512),
 })
 
@@ -401,7 +401,7 @@ const BootstrapCaptureCommonV1Fields = {
   summaryInput: trimmedString(1, 12_000),
   attentionMinutes: CaptureAttentionV1Schema,
   updatedAt: CanonicalTimestampSchema,
-  images: Schema.Array(BootstrapCaptureImageV1Schema).pipe(Schema.maxItems(4)),
+  images: Schema.Array(BootstrapCaptureImageV1Schema).check(Schema.isMaxLength(4)),
 }
 
 export const BootstrapMidjourneyCaptureV1Schema = Schema.Struct({
@@ -410,7 +410,7 @@ export const BootstrapMidjourneyCaptureV1Schema = Schema.Struct({
   payload: Schema.Struct({
     eventType: trimmedString(1, 100),
     jobType: trimmedString(1, 100),
-    parentGrid: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.between(0, 3))),
+    parentGrid: Schema.NullOr(intBetween(0, 3)),
     hasParent: Schema.Boolean,
     parentCaptureId: Schema.NullOr(boundedString(1, 64)),
   }),
@@ -422,14 +422,14 @@ export const BootstrapGranolaCaptureV1Schema = Schema.Struct({
   payload: GranolaCapturePayloadV1Schema,
 })
 
-export const BootstrapCaptureV1Schema = Schema.Union(
+export const BootstrapCaptureV1Schema = Schema.Union([
   BootstrapMidjourneyCaptureV1Schema,
   BootstrapGranolaCaptureV1Schema,
-)
+])
 
 export const BootstrapV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
-  revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  revision: nonNegativeInt,
   generatedAt: CanonicalTimestampSchema,
   indexedAt: Schema.NullOr(CanonicalTimestampSchema),
   hubUrl: trimmedString(1, 2048),
@@ -441,44 +441,44 @@ export const BootstrapV1Schema = Schema.Struct({
 })
 
 export const SettingsPatchSchema = Schema.Struct({
-  boundary: Schema.optional(Schema.Literal(4, 5, 6, 7)),
-  halo: Schema.optional(Schema.Literal(0, 5, 10, 15)),
+  boundary: Schema.optional(Schema.Literals([4, 5, 6, 7])),
+  halo: Schema.optional(Schema.Literals([0, 5, 10, 15])),
   onboardingVersion: Schema.optional(Schema.Literal(1)),
   timezone: Schema.optional(TimeZoneSchema),
 })
 export const ProjectPatchSchema = Schema.Struct({
   project: trimmedString(1, 4096),
   engagementId: Schema.optional(Schema.NullOr(trimmedString(1, 4096))),
-  displayName: Schema.optional(Schema.NullOr(Schema.String.pipe(Schema.maxLength(80)))),
+  displayName: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(80)))),
 })
 
 export const EngagementCreateSchema = Schema.Struct({ name: trimmedString(1, 80) })
 export const PocketCreateSchema = Schema.Struct({ text: trimmedString(1, 500) })
 
 const FeedbackSourceCountsV1Schema = Schema.Struct({
-  claude: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  codex: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  omp: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  pi: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  claude: nonNegativeInt,
+  codex: nonNegativeInt,
+  omp: nonNegativeInt,
+  pi: nonNegativeInt,
 })
 
 const FeedbackContextV1Schema = Schema.Struct({
   appVersion: trimmedString(1, 40),
-  view: Schema.Literal("loading", "hub-error", "welcome", "days", "week", "threads", "project", "settings"),
-  revision: Schema.NullOr(Schema.Number.pipe(Schema.int(), Schema.nonNegative())),
+  view: Schema.Literals(["loading", "hub-error", "welcome", "days", "week", "threads", "project", "settings"]),
+  revision: Schema.NullOr(nonNegativeInt),
   workDate: Schema.NullOr(LocalDateSchema),
   sourceCounts: Schema.NullOr(FeedbackSourceCountsV1Schema),
   viewport: Schema.Struct({
-    width: Schema.Number.pipe(Schema.int(), Schema.between(1, 10_000)),
-    height: Schema.Number.pipe(Schema.int(), Schema.between(1, 10_000)),
+    width: intBetween(1, 10_000),
+    height: intBetween(1, 10_000),
   }),
   syncError: Schema.Boolean,
 })
 
 export const FeedbackSubmissionV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
-  id: Schema.UUID,
-  kind: Schema.Literal("confusing", "broken", "idea", "delight"),
+  id: Schema.String.check(Schema.isUUID()),
+  kind: Schema.Literals(["confusing", "broken", "idea", "delight"]),
   message: trimmedString(1, 2_000),
   followUp: Schema.NullOr(trimmedString(1, 200)),
   createdAt: CanonicalTimestampSchema,
@@ -487,7 +487,7 @@ export const FeedbackSubmissionV1Schema = Schema.Struct({
 
 export const FeedbackReceiptV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
-  id: Schema.UUID,
+  id: Schema.String.check(Schema.isUUID()),
   status: Schema.Literal("received"),
 })
 
@@ -529,10 +529,10 @@ export type PocketCreate = Schema.Schema.Type<typeof PocketCreateSchema>
 export type FeedbackSubmissionV1 = Schema.Schema.Type<typeof FeedbackSubmissionV1Schema>
 export type FeedbackReceiptV1 = Schema.Schema.Type<typeof FeedbackReceiptV1Schema>
 
-export function decodeExact<S extends Schema.Schema.AnyNoContext>(schema: S, input: unknown): Schema.Schema.Type<S> {
+export function decodeExact<S extends Schema.Decoder<unknown>>(schema: S, input: unknown): S["Type"] {
   return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input)
 }
 
-export function encodeExact<S extends Schema.Schema.AnyNoContext>(schema: S, value: Schema.Schema.Type<S>): unknown {
+export function encodeExact<S extends Schema.Encoder<unknown>>(schema: S, value: S["Type"]): unknown {
   return Schema.encodeSync(schema)(value)
 }

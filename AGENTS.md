@@ -49,6 +49,10 @@ For release changes, run the focused Trails tests, typecheck, production build, 
 
 When exercising a live installation, preserve the machine's existing setup mode and verify service health, LaunchAgents, collection, backups, and summary processing. Never put private tailnet or machine details in public documentation or repository history.
 
+## Effect
+
+Trails uses Effect v4. `effect` is pinned to an exact 4.0.0 release candidate in `package.json` because release candidates can still change APIs, so upgrade it deliberately and rerun the typecheck and tests. Before writing or changing Effect code, read the `effect` skill in `.agents/skills/effect/SKILL.md` (`.claude/skills/effect` links to the same directory). It is vendored unchanged from `kitlangton/skills` at commit `22c35cb`. To update it, copy `skills/effect` from that repository again instead of editing it here. Existing Trails conventions still apply.
+
 ## Repository discipline
 
 Respect unrelated changes and other worktrees. Stage only task-owned files or hunks. Commit each coherent, verified change. Never commit generated release directories, binaries, downloaded verification artifacts, `.env` files, credentials, private operational output, or local hook logs.
