@@ -51,7 +51,7 @@ When exercising a live installation, preserve the machine's existing setup mode 
 
 ## Effect
 
-Before writing or changing Effect code, read the `effect` skill in `.agents/skills/effect/SKILL.md` (`.claude/skills/effect` links to the same directory). It is vendored unchanged from `kitlangton/skills` at commit `22c35cb`. To update it, copy `skills/effect` from that repository again instead of editing it here. Existing Trails conventions still apply.
+Trails uses Effect v4. `effect` is pinned to an exact 4.0.0 release candidate in `package.json` because release candidates can still change APIs, so upgrade it deliberately and rerun the typecheck and tests. Before writing or changing Effect code, read the `effect` skill in `.agents/skills/effect/SKILL.md` (`.claude/skills/effect` links to the same directory). It is vendored unchanged from `kitlangton/skills` at commit `22c35cb`. To update it, copy `skills/effect` from that repository again instead of editing it here. Existing Trails conventions still apply.
 
 ## Repository discipline
 

@@ -112,7 +112,7 @@ function changed<T>(value: T, mutate: (copy: T) => void): T {
   return copy
 }
 
-function rejects(schema: Schema.Schema.AnyNoContext, value: unknown): void {
+function rejects(schema: Schema.Decoder<unknown>, value: unknown): void {
   expect(() => decodeExact(schema, value)).toThrow()
 }
 

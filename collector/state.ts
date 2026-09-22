@@ -27,18 +27,18 @@ const TargetSchema = Schema.Struct({
   deviceName: Schema.String,
 })
 const FingerprintSchema = Schema.Struct({
-  size: Schema.Number.pipe(Schema.nonNegative()),
-  mtimeMs: Schema.Number.pipe(Schema.nonNegative()),
+  size: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  mtimeMs: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
 })
 const CollectorStateSchema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   target: TargetSchema,
-  files: Schema.Record({ key: Schema.String, value: FingerprintSchema }),
+  files: Schema.Record(Schema.String, FingerprintSchema),
 })
 const LegacyCollectorStateSchema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   target: TargetSchema,
-  files: Schema.Record({ key: Schema.String, value: FingerprintSchema }),
+  files: Schema.Record(Schema.String, FingerprintSchema),
 })
 
 export const DEFAULT_STATE_PATH = join(homedir(), ".local/state/trails/collector-state.json")

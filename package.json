@@ -27,7 +27,7 @@
     "herdr:fixture": "bun plugins/herdr-trails/dev/server.ts"
   },
   "dependencies": {
-    "effect": "^3.22.0",
+    "effect": "4.0.0-rc.117",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

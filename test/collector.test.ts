@@ -179,12 +179,12 @@ describe("collector state and locking", () => {
     )
     await acquired
     expect(await Bun.file(lockPath).exists()).toBe(true)
-    const overlap = await Effect.runPromise(Effect.either(withCollectorLock(statePath, Effect.succeed("second"))))
-    expect(overlap._tag).toBe("Left")
-    if (overlap._tag === "Left") expect(overlap.left).toBeInstanceOf(CollectorBusyError)
+    const overlap = await Effect.runPromise(Effect.result(withCollectorLock(statePath, Effect.succeed("second"))))
+    expect(overlap._tag).toBe("Failure")
+    if (overlap._tag === "Failure") expect(overlap.failure).toBeInstanceOf(CollectorBusyError)
     const server = startIngestServer(() => Response.json({ revision: 1 }))
     const ownedElsewhere = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runCollection({
           server: serverBase(server),
           deviceId: "device-1",
@@ -194,8 +194,8 @@ describe("collector state and locking", () => {
         }),
       ),
     )
-    expect(ownedElsewhere._tag).toBe("Left")
-    if (ownedElsewhere._tag === "Left") expect(ownedElsewhere.left).toBeInstanceOf(CollectorBusyError)
+    expect(ownedElsewhere._tag).toBe("Failure")
+    if (ownedElsewhere._tag === "Failure") expect(ownedElsewhere.failure).toBeInstanceOf(CollectorBusyError)
     expect(collectorStatuses).toEqual([])
     releaseGate()
     await holder
@@ -367,11 +367,11 @@ describe("collection synchronization", () => {
       },
     }
 
-    const failed = await Effect.runPromise(Effect.either(runCollection(options)))
-    expect(failed._tag).toBe("Left")
-    if (failed._tag !== "Left") throw new Error("collection unexpectedly succeeded")
-    expect(failed.left).toBeInstanceOf(CollectorError)
-    expect((failed.left as CollectorError).result).toMatchObject({
+    const failed = await Effect.runPromise(Effect.result(runCollection(options)))
+    expect(failed._tag).toBe("Failure")
+    if (failed._tag !== "Failure") throw new Error("collection unexpectedly succeeded")
+    expect(failed.failure).toBeInstanceOf(CollectorError)
+    expect((failed.failure as CollectorError).result).toMatchObject({
       changed: 51,
       uploaded: 50,
       errors: ["http_400"],
@@ -436,9 +436,9 @@ describe("collection synchronization", () => {
       statePath,
       roots: [liveClaudeRoot(root)],
     }
-    const parseFailure = await Effect.runPromise(Effect.either(runCollection(options)))
+    const parseFailure = await Effect.runPromise(Effect.result(runCollection(options)))
     await chmod(unreadable, 0o600)
-    expect(parseFailure._tag).toBe("Left")
+    expect(parseFailure._tag).toBe("Failure")
     expect(decodeExact(CollectorStatusV1Schema, collectorStatuses.at(-1))).toMatchObject({
       outcome: {
         status: "failed",
@@ -449,7 +449,7 @@ describe("collection synchronization", () => {
 
     const uploadServer = startIngestServer(() => Response.json({ error: "bad request" }, { status: 400 }))
     const uploadFailure = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runCollection({
           ...options,
           server: serverBase(uploadServer),
@@ -457,7 +457,7 @@ describe("collection synchronization", () => {
         }),
       ),
     )
-    expect(uploadFailure._tag).toBe("Left")
+    expect(uploadFailure._tag).toBe("Failure")
     expect(decodeExact(CollectorStatusV1Schema, collectorStatuses.at(-1))).toMatchObject({
       outcome: {
         status: "failed",
@@ -467,8 +467,8 @@ describe("collection synchronization", () => {
     })
 
     await writeFile(statePath, "{broken")
-    const collectorFailure = await Effect.runPromise(Effect.either(runCollection(options)))
-    expect(collectorFailure._tag).toBe("Left")
+    const collectorFailure = await Effect.runPromise(Effect.result(runCollection(options)))
+    expect(collectorFailure._tag).toBe("Failure")
     expect(decodeExact(CollectorStatusV1Schema, collectorStatuses.at(-1))).toMatchObject({
       outcome: { status: "failed", metrics: null, error: "collector_error" },
     })
@@ -481,7 +481,7 @@ describe("collection synchronization", () => {
     const statusFailure = () => Response.json({ error: "unavailable" }, { status: 503 })
     const emptyServer = startIngestServer(() => Response.json({ revision: 1 }), statusFailure)
     const successfulCollection = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runCollection({
           server: serverBase(emptyServer),
           deviceId: "device-1",
@@ -491,9 +491,9 @@ describe("collection synchronization", () => {
         }),
       ),
     )
-    expect(successfulCollection._tag).toBe("Left")
-    if (successfulCollection._tag === "Left") {
-      expect(successfulCollection.left).not.toBeInstanceOf(CollectorError)
+    expect(successfulCollection._tag).toBe("Failure")
+    if (successfulCollection._tag === "Failure") {
+      expect(successfulCollection.failure).not.toBeInstanceOf(CollectorError)
     }
 
     await writeClaudeSession(root, "upload-fails")
@@ -502,7 +502,7 @@ describe("collection synchronization", () => {
       statusFailure,
     )
     const collectionFailure = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         runCollection({
           server: serverBase(failingServer),
           deviceId: "device-1",
@@ -512,9 +512,9 @@ describe("collection synchronization", () => {
         }),
       ),
     )
-    expect(collectionFailure._tag).toBe("Left")
-    if (collectionFailure._tag === "Left") {
-      expect(collectionFailure.left).toBeInstanceOf(CollectorError)
+    expect(collectionFailure._tag).toBe("Failure")
+    if (collectionFailure._tag === "Failure") {
+      expect(collectionFailure.failure).toBeInstanceOf(CollectorError)
     }
   })
 })
