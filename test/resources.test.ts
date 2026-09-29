@@ -12,6 +12,7 @@ import { runSummaryPoll } from "../server/summaries"
 import { SummarizeError, type Summarizer } from "../server/harnesses/types"
 import { decodeExact, IngestRequestV2Schema, type IngestSessionV2 } from "../shared/protocol"
 import { INGEST_LIMITS } from "../shared/limits"
+import { fixtureImage } from "./capture-image-fixtures"
 
 const databases: TrailsDb[] = []
 const roots: string[] = []
@@ -163,7 +164,7 @@ describe("bounded ingest resources", () => {
       title: "Synthetic image", startedAt: new Date(now).toISOString(), endedAt: null,
       summaryInput: "Synthetic capture", attentionMinutes: [minute],
       payload: { eventType: "imagine", jobType: "grid", parentSourceRecordId: null, parentGrid: null },
-      images: Array.from({ length: 4 }, (_, index) => ({ index, mime: "image/png", width: 1, height: 1, bytes: "AAAA" })),
+      images: Array.from({ length: 4 }, (_, index) => fixtureImage("static.png", { index })),
     }
     const post = (captures: unknown[]) => app(new Request("http://localhost:7412/api/captures", {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -186,9 +187,9 @@ describe("bounded ingest resources", () => {
     const db = database()
     const { post, app } = client(db)
     expect((await post([session("seed")])).status).toBe(200)
-    const insert = db.sqlite.query(`INSERT INTO captures(machine_id, source, source_record_id,
+    const insert = db.sqlite.query(`INSERT INTO captures(machine_id, owner_machine_id, source, source_record_id,
       title, started_at, summary_input, provider_payload, content_hash, updated_at)
-      VALUES ('device', 'granola', ?, 'Synthetic', '2026-08-01T12:00:00.000Z', 'Synthetic', '{}', 'hash', ?)`)
+      VALUES ('device', 'device', 'granola', ?, 'Synthetic', '2026-08-01T12:00:00.000Z', 'Synthetic', '{}', 'hash', ?)`)
     db.sqlite.transaction(() => {
       for (let i = 0; i < RESOURCE_LIMITS.deviceRecords; i++) insert.run(`quota-${i}`, now)
     })()

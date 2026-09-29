@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtempSync, rmSync } from "node:fs"
+import { chmodSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
@@ -12,6 +12,7 @@ import { openDatabase, type TrailsDb } from "../server/db"
 import { MIGRATIONS } from "../server/migrations"
 import { runAuthCommand } from "../cli/auth"
 import type { IngestCaptureV1, IngestCapturesRequestV1, MidjourneyCaptureV1 } from "../shared/protocol"
+import { fixtureImage } from "./capture-image-fixtures"
 
 const databases: TrailsDb[] = []
 const roots: string[] = []
@@ -36,8 +37,7 @@ function capture(id = "shared-record", overrides: Partial<MidjourneyCaptureV1> =
     title: "Original title", startedAt: new Date(now).toISOString(), endedAt: null,
     summaryInput: "Original content", attentionMinutes: [now / 60000],
     payload: { eventType: "imagine", jobType: "generation", parentSourceRecordId: null, parentGrid: null },
-    images: Array.from({ length: 4 }, (_, index) => ({ index, mime: "image/webp", width: 640, height: 640,
-      bytes: Buffer.from(`RIFF synthetic original ${index}`).toString("base64") })),
+    images: ["static.webp", "static.png", "static.jpg", "static.webp"].map((name, index) => fixtureImage(name, { index })),
     ...overrides,
   }
 }
@@ -66,7 +66,7 @@ describe("capture ownership", () => {
     const before = snapshot(db)
     const replacement = capture(undefined, { title: "replacement by B", project: "/code/stolen",
       projectHint: "stolen", summaryInput: "replacement", attentionMinutes: [now / 60000 + 1],
-      images: capture().images.map(image => ({ ...image, bytes: Buffer.from("replacement").toString("base64") })) })
+      images: ["static.png", "static.jpg", "static.webp", "static.png"].map((name, index) => fixtureImage(name, { index })) })
     const response = await b.post([capture("batch-first"), replacement], { device: { id: "owner-b", name: "Renamed B" } })
     expect(response.status).toBe(403)
     expect(await response.json()).toMatchObject({ error: { code: "forbidden" } })
@@ -175,9 +175,14 @@ describe("capture ownership", () => {
 
   test("migration preserves legacy IDs, blobs, attribution and original ownership across reopen", async () => {
     const path = temporaryPath(), legacy = new Database(path)
+    chmodSync(path, 0o600)
     legacy.exec("PRAGMA foreign_keys = ON")
-    for (const migration of MIGRATIONS.filter(migration => migration.version <= 7)) legacy.exec(migration.sql)
-    legacy.exec("PRAGMA user_version = 7")
+    // Version 8 is the last schema before capture ownership.
+    for (const migration of MIGRATIONS.filter(migration => migration.version <= 8)) {
+      legacy.exec(migration.sql)
+      migration.afterSql?.(legacy, { defaultTimezone: "UTC", now })
+    }
+    legacy.exec("PRAGMA user_version = 8")
     legacy.query("INSERT INTO machines(id, name, first_seen_at, last_seen_at) VALUES ('legacy-a', 'A', ?, ?)").run(now, now)
     const item = capture()
     legacy.query(`INSERT INTO captures(id, machine_id, source, source_record_id, project, project_hint, title,

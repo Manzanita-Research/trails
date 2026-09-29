@@ -6,12 +6,11 @@ import { bootstrapOf, createApp } from "../server/app"
 import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
 import { openDatabase } from "../server/db"
+import { fixtureImage } from "./capture-image-fixtures"
 
-// Valid, synthetic 1x1 PNG; never read an installed hub or real capture.
-export const cacheFixtureImage = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1cAAAAASUVORK5CYII=",
-  "base64",
-)
+// Synthetic checked-in PNG; never read an installed hub or real capture.
+const fixture = fixtureImage("static.png")
+export const cacheFixtureImage = Buffer.from(fixture.bytes, "base64")
 
 export async function cacheFixture(origin = "http://trails.test") {
   const root = await mkdtemp(join(tmpdir(), "trails-cache-"))
@@ -35,9 +34,9 @@ export async function cacheFixture(origin = "http://trails.test") {
         title: "Synthetic cache fixture", startedAt: "2026-09-16T12:00:00.000Z", endedAt: null,
         summaryInput: "Synthetic fixture", attentionMinutes: [Date.parse("2026-09-16T12:00:00.000Z") / 60_000],
         payload: { eventType: "imagine", jobType: "generation", parentSourceRecordId: null, parentGrid: null },
-        images: [{ index: 0, mime: "image/png", width: 1, height: 1, bytes: cacheFixtureImage.toString("base64") }],
+        images: [0, 1, 2, 3].map((index) => ({ ...fixture, index })),
       }],
-    }))
+    }, collector))
     const bootstrap = bootstrapOf(db)
     const imageUrl = bootstrap.captures[0]!.images[0]!.url
     const app = createApp({
