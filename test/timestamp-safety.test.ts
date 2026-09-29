@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { Effect } from "effect"
-import { mkdtempSync, rmSync } from "node:fs"
+import { chmodSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { bootstrapOf, createApp } from "../server/app"
+import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { ingestSessions } from "../server/ingest"
@@ -40,6 +41,7 @@ const open = (path = ":memory:", timezone = "UTC") => {
   databases.push(db)
   return db
 }
+const collector = (db: TrailsDb) => issueCredential(db, "collector", device.id)
 const close = (db: TrailsDb) => {
   databases.splice(databases.indexOf(db), 1)
   db.close()
@@ -49,9 +51,11 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-function post(app: ReturnType<typeof createApp>, path: string, body: unknown) {
+function post(app: ReturnType<typeof createApp>, path: string, body: unknown, token: string) {
   return app(new Request(`http://trails.test${path}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
   }))
 }
 
@@ -87,6 +91,7 @@ describe("supported timestamp range", () => {
   test("accepts exact endpoints and keeps localization/workdays within the calendar", async () => {
     for (const timezone of ["UTC", "Pacific/Kiritimati", "Etc/GMT+12", "America/Los_Angeles"]) {
       const db = open(":memory:", timezone)
+      const credential = collector(db)
       for (const ms of [0, MAX_TIMESTAMP_MS]) {
         const timestamp = new Date(ms).toISOString()
         const utcMinute = Math.floor(ms / 60_000)
@@ -102,7 +107,7 @@ describe("supported timestamp range", () => {
         }]), now))
         await Effect.runPromise(ingestCaptures(db, captures([{
           ...capture(String(ms)), startedAt: timestamp, endedAt: timestamp, attentionMinutes: [utcMinute],
-        }]), now))
+        }]), credential, now))
       }
       expect(bootstrapOf(db, now).sessions).toHaveLength(2)
       expect(bootstrapOf(db, now).captures).toHaveLength(2)
@@ -149,19 +154,23 @@ describe("supported timestamp range", () => {
 describe("ingestion and persistent recovery", () => {
   test("rejects mixed poison batches before modifying any state, including direct callers", async () => {
     const db = open()
-    const app = createApp({ db, now: () => now })
-    await Effect.runPromise(ingestCaptures(db, captures([capture("existing")]), now))
+    const app = createApp({ db, now: () => now, trustedOrigins: ["http://trails.test"] })
+    const credential = collector(db)
+    const reader = issueCredential(db, "read")
+    await Effect.runPromise(ingestCaptures(db, captures([capture("existing")]), credential, now))
     await Effect.runPromise(ingestSessions(db, sessions([session("existing")]), now))
     const before = snapshot(db)
     for (const badMinute of [Number.MAX_SAFE_INTEGER, MAX_UTC_MINUTE + 1, minute - 1]) {
       const capBatch = captures([capture("new"), { ...capture("existing"), attentionMinutes: [badMinute] }])
       const sessionBatch = sessions([session("new"), { ...session("existing"), activity: [[badMinute, 2, 1]] }])
-      expect((await post(app, "/api/captures", capBatch)).status).toBe(400)
-      expect((await post(app, "/api/ingest", sessionBatch)).status).toBe(400)
-      await expect(Effect.runPromise(ingestCaptures(db, capBatch, now + 1000))).rejects.toThrow()
+      expect((await post(app, "/api/captures", capBatch, credential.token)).status).toBe(400)
+      expect((await post(app, "/api/ingest", sessionBatch, credential.token)).status).toBe(400)
+      await expect(Effect.runPromise(ingestCaptures(db, capBatch, credential, now + 1000))).rejects.toThrow()
       await expect(Effect.runPromise(ingestSessions(db, sessionBatch, now + 1000))).rejects.toThrow()
       expect(snapshot(db)).toEqual(before)
-      expect((await app(new Request("http://trails.test/api/bootstrap"))).status).toBe(200)
+      expect((await app(new Request("http://trails.test/api/bootstrap", {
+        headers: { Authorization: `Bearer ${reader.token}` },
+      }))).status).toBe(200)
     }
   })
 
@@ -171,6 +180,7 @@ describe("ingestion and persistent recovery", () => {
     const path = join(root, "trails.sqlite")
     // Construct the actual v6 schema, before the recovery tables exist.
     const sqlite = new Database(path)
+    chmodSync(path, 0o600)
     sqlite.exec("PRAGMA foreign_keys=ON")
     for (const migration of MIGRATIONS.filter((migration) => migration.version <= 6)) {
       sqlite.exec(migration.sql)
@@ -179,8 +189,22 @@ describe("ingestion and persistent recovery", () => {
     sqlite.exec("PRAGMA user_version=6")
     const db: TrailsDb = { sqlite, path, close: () => sqlite.close() }
     databases.push(db)
-    await Effect.runPromise(ingestSessions(db, sessions([session("good"), session("bad")]), now))
-    await Effect.runPromise(ingestCaptures(db, captures([capture("good"), capture("bad")]), now))
+    // Current ingestion needs later tables, so ingest into a current database
+    // and copy the v6 columns across.
+    const seedPath = join(root, "seed.sqlite")
+    const seed = open(seedPath)
+    await Effect.runPromise(ingestSessions(seed, sessions([session("good"), session("bad")]), now))
+    await Effect.runPromise(ingestCaptures(seed, captures([capture("good"), capture("bad")]), collector(seed), now))
+    close(seed)
+    sqlite.query("ATTACH DATABASE ? AS seed").run(seedPath)
+    for (const table of ["machines", "sessions", "session_activity", "session_summary_jobs", "day_summary_jobs",
+      "captures", "capture_attention"]) {
+      const columns = (sqlite.query(`PRAGMA main.table_info(${table})`).all() as Array<{ name: string }>)
+        .map(({ name }) => name).join(", ")
+      sqlite.exec(`DELETE FROM main.${table}; INSERT INTO main.${table}(${columns}) SELECT ${columns} FROM seed.${table}`)
+    }
+    sqlite.exec("UPDATE main.meta SET value = (SELECT value FROM seed.meta WHERE key = 'state_revision') WHERE key = 'state_revision'")
+    sqlite.exec("DETACH DATABASE seed")
     sqlite.exec(`
       UPDATE session_activity SET utc_minute = 9007199254740991 WHERE session_id = 2;
       UPDATE captures SET started_at = '+010000-01-01T00:00:00.000Z' WHERE id = 2;
@@ -206,7 +230,7 @@ describe("ingestion and persistent recovery", () => {
     for (const [table, archived] of Object.entries(rows)) {
       expect(db.sqlite.query(`SELECT * FROM timestamp_quarantine_${table}`).all()).toEqual(archived)
     }
-    expect(db.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
+    expect(db.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 9 })
     expect(db.sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
     const restored = bootstrapOf(db, now)
     expect(restored.sessions).toHaveLength(1)
@@ -219,7 +243,7 @@ describe("ingestion and persistent recovery", () => {
     expect(bootstrapOf(reopened, now)).toEqual(restored)
     expect(reopened.sqlite.query("SELECT count(*) AS n FROM timestamp_quarantine_captures").get()).toEqual({ n: 1 })
     // Corrected re-ingestion is possible without touching the archived copy.
-    await Effect.runPromise(ingestCaptures(reopened, captures([capture("bad")]), now))
+    await Effect.runPromise(ingestCaptures(reopened, captures([capture("bad")]), collector(reopened), now))
     expect(bootstrapOf(reopened, now).captures).toHaveLength(2)
   })
 

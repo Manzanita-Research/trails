@@ -4,6 +4,7 @@ import { createHash } from "node:crypto"
 import { localParts, workdayOf } from "../shared/domain"
 import type { SummaryRuntimeStatus } from "./harnesses/manager"
 import type { InferenceResult, Summarizer } from "./harnesses/types"
+import { chargeBudget, checkDisk, RESOURCE_LIMITS } from "./resources"
 import type { TrailsDb } from "./db"
 
 export interface SummaryPollOptions {
@@ -18,6 +19,7 @@ export interface SummaryPollOptions {
 type SessionJob = {
   readonly kind: "session"
   readonly key: string
+  readonly deviceId: string
   readonly sessionId: number
   readonly digestHash: string
   readonly attempts: number
@@ -40,6 +42,7 @@ type SummaryJob = SessionJob | DayJob
 
 type DayMember = {
   readonly id: number
+  readonly deviceId: string
   readonly digestHash: string | null
   readonly summary: string
   readonly pending: boolean
@@ -64,12 +67,13 @@ function retryAt(attempts: number, now: number): number {
 function selectJobs(db: TrailsDb, now: number, inFlight: Set<string>): SummaryJob[] {
   const sessionJobs = db.sqlite
     .query(
-      `SELECT j.session_id, j.digest_hash, j.attempts, j.available_at, s.digest
+      `SELECT j.session_id, j.digest_hash, j.attempts, j.available_at, s.digest, s.machine_id
        FROM session_summary_jobs j JOIN sessions s ON s.id = j.session_id
-       WHERE j.available_at <= ? ORDER BY j.available_at, j.session_id LIMIT 4`,
+       WHERE j.available_at <= ? AND j.attempts < ${RESOURCE_LIMITS.attempts} ORDER BY j.available_at, j.session_id LIMIT 4`,
     )
     .all(now) as Array<{
     session_id: number
+    machine_id: string
     digest_hash: string
     attempts: number
     available_at: number
@@ -78,7 +82,7 @@ function selectJobs(db: TrailsDb, now: number, inFlight: Set<string>): SummaryJo
   const dayJobs = db.sqlite
     .query(
       `SELECT work_date, project, boundary, generation, attempts, available_at
-       FROM day_summary_jobs WHERE available_at <= ? ORDER BY available_at, work_date, project LIMIT 4`,
+       FROM day_summary_jobs WHERE available_at <= ? AND attempts < ${RESOURCE_LIMITS.attempts} ORDER BY available_at, work_date, project LIMIT 4`,
     )
     .all(now) as Array<{
     work_date: string
@@ -93,6 +97,7 @@ function selectJobs(db: TrailsDb, now: number, inFlight: Set<string>): SummaryJo
       kind: "session",
       key: `session:${job.session_id}`,
       sessionId: job.session_id,
+      deviceId: job.machine_id,
       digestHash: job.digest_hash,
       attempts: job.attempts,
       availableAt: job.available_at,
@@ -119,7 +124,7 @@ function selectJobs(db: TrailsDb, now: number, inFlight: Set<string>): SummaryJo
 function dayMembers(db: TrailsDb, job: DayJob): DayMember[] {
   const rows = db.sqlite
     .query(
-      `SELECT s.id, s.digest_hash, s.first_prompt, ss.summary, sj.session_id AS pending_id,
+      `SELECT s.id, s.machine_id, s.digest_hash, s.first_prompt, ss.summary, sj.session_id AS pending_id,
          a.utc_minute
        FROM sessions s
        JOIN session_activity a ON a.session_id = s.id
@@ -129,6 +134,7 @@ function dayMembers(db: TrailsDb, job: DayJob): DayMember[] {
     )
     .all(job.project) as Array<{
     id: number
+    machine_id: string
     digest_hash: string | null
     first_prompt: string | null
     summary: string | null
@@ -144,6 +150,7 @@ function dayMembers(db: TrailsDb, job: DayJob): DayMember[] {
     if (workdayOf(local.date, local.minute, job.boundary) !== job.workDate || members.has(row.id)) continue
     members.set(row.id, {
       id: row.id,
+      deviceId: row.machine_id,
       digestHash: row.digest_hash,
       summary: row.summary ?? row.first_prompt ?? "Coding session",
       pending: row.pending_id !== null,
@@ -211,6 +218,8 @@ function completeDay(
            summary = excluded.summary, updated_at = excluded.updated_at`,
       )
       .run(job.workDate, job.project, job.boundary, result.model, result.text, now)
+    db.sqlite.exec(`DELETE FROM day_summaries WHERE rowid IN
+      (SELECT rowid FROM day_summaries ORDER BY updated_at DESC, rowid DESC LIMIT -1 OFFSET ${RESOURCE_LIMITS.records})`)
     db.sqlite
       .query("DELETE FROM day_summary_jobs WHERE work_date = ? AND project = ? AND boundary = ? AND generation = ?")
       .run(job.workDate, job.project, job.boundary, job.generation)
@@ -257,8 +266,25 @@ function processJob(
   now: number,
   status?: SummaryRuntimeStatus,
 ): Effect.Effect<void, never> {
-  const summarize = (kind: "session" | "day", input: string) => {
+  const summarize = (kind: "session" | "day", input: string, devices: readonly string[]) => {
     if (!client) return null
+    try {
+      checkDisk(db)
+      db.sqlite.transaction(() => chargeBudget(db, "call", devices, now))()
+    } catch {
+      // Move blocked work out of the selection window so another device can
+      // progress. No provider call occurs unless its reservation committed.
+      try {
+        if (job.kind === "session") {
+          db.sqlite.query("UPDATE session_summary_jobs SET available_at = ? WHERE session_id = ? AND digest_hash = ?")
+            .run(now + 60_000, job.sessionId, job.digestHash)
+        } else {
+          db.sqlite.query("UPDATE day_summary_jobs SET available_at = ? WHERE work_date = ? AND project = ? AND boundary = ? AND generation = ?")
+            .run(now + 60_000, job.workDate, job.project, job.boundary, job.generation)
+        }
+      } catch {}
+      return null
+    }
     if (status) status.lastAttemptAt = now
     return client.summarize(kind, input).pipe(
       Effect.tap(() =>
@@ -277,11 +303,11 @@ function processJob(
     )
   }
   if (job.kind === "session") {
-    const run = summarize("session", job.digest.slice(0, 9_000))
+    const run = summarize("session", job.digest.slice(0, 9_000), [job.deviceId])
     if (!run) return Effect.void
     return run.pipe(
-      Effect.tap((result) => Effect.sync(() => completeSession(db, job, result, now))),
-      Effect.catchAll((error) => Effect.sync(() => failSession(db, job, error, now))),
+      Effect.tap((result) => Effect.try({ try: () => completeSession(db, job, result, now), catch: error => error })),
+      Effect.catchAll((error) => Effect.sync(() => { try { failSession(db, job, error, now) } catch {} })),
       Effect.asVoid,
     )
   }
@@ -294,11 +320,11 @@ function processJob(
   }
   const memberText = members.map((member) => `- ${member.summary.slice(0, 600)}`).join("\n")
   const input = `Project: ${job.project}\nDay: ${job.workDate}\nSession summaries:\n${memberText}`.slice(0, 12_000)
-  const run = summarize("day", input)
+  const run = summarize("day", input, members.map(member => member.deviceId))
   if (!run) return Effect.void
   return run.pipe(
-    Effect.tap((result) => Effect.sync(() => completeDay(db, job, capturedHash, result, now))),
-    Effect.catchAll((error) => Effect.sync(() => failDay(db, job, error, now))),
+    Effect.tap((result) => Effect.try({ try: () => completeDay(db, job, capturedHash, result, now), catch: error => error })),
+    Effect.catchAll((error) => Effect.sync(() => { try { failDay(db, job, error, now) } catch {} })),
     Effect.asVoid,
   )
 }

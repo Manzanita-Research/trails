@@ -27,6 +27,7 @@ interface StoredFeedback {
 
 export const FEEDBACK_EXPIRY_MS = 7_776_000_000
 const MAX_BODY_BYTES = 8 * 1024
+const BODY_READ_TIMEOUT_MS = 5_000
 const FEEDBACK_PATH = "/api/feedback"
 const ALLOW = "POST, OPTIONS"
 
@@ -73,15 +74,58 @@ function errorResponse(error: string, status: number, origin: string | null, ext
   return jsonResponse({ error }, status, origin, extra)
 }
 
+async function readSubmissionBody(request: Request): Promise<Uint8Array | "oversize" | "timeout" | null> {
+  const declaredLength = request.headers.get("Content-Length")
+  if (declaredLength !== null) {
+    if (!/^\d+$/.test(declaredLength)) {
+      void request.body?.cancel().catch(() => {})
+      return null
+    }
+    if (Number(declaredLength) > MAX_BODY_BYTES) {
+      void request.body?.cancel().catch(() => {})
+      return "oversize"
+    }
+  }
+  if (request.body === null) return null
 
-async function decodeSubmission(request: Request): Promise<FeedbackSubmissionV1 | "oversize" | null> {
-  let bytes: ArrayBuffer
+  const reader = request.body.getReader()
+  let complete = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // One fixed buffer also bounds overhead for uploads delivered in tiny chunks.
+  const bytes = new Uint8Array(MAX_BODY_BYTES)
+  const read = async (): Promise<Uint8Array | "oversize"> => {
+    let length = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        complete = true
+        return bytes.subarray(0, length)
+      }
+      if (value.byteLength > MAX_BODY_BYTES - length) return "oversize"
+      bytes.set(value, length)
+      length += value.byteLength
+    }
+  }
+
   try {
-    bytes = await request.arrayBuffer()
+    // Race the entire read, not individual chunks: progress must not reset the deadline.
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), BODY_READ_TIMEOUT_MS)
+    })
+    return await Promise.race([read(), timeout])
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
+    // Do not let a stalled or failing source's cancellation delay the response.
+    if (!complete) void reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
-  if (bytes.byteLength > MAX_BODY_BYTES) return "oversize"
+}
+
+async function decodeSubmission(request: Request): Promise<FeedbackSubmissionV1 | "oversize" | "timeout" | null> {
+  const bytes = await readSubmissionBody(request)
+  if (bytes === null || typeof bytes === "string") return bytes
 
   let text: string
   try {
@@ -242,6 +286,9 @@ export const worker = {
     const submission = await decodeSubmission(request)
     if (submission === "oversize") {
       return errorResponse("request too large", 413, origin)
+    }
+    if (submission === "timeout") {
+      return errorResponse("request timed out", 408, origin)
     }
     if (submission === null) {
       return errorResponse("invalid request", 400, origin)

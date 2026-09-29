@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite"
-import { chmodSync, mkdirSync } from "node:fs"
+import { closeSync, fstatSync } from "node:fs"
+import { inspectPrivateFile, openPrivateFile, secureDirectory, UnsafePathError } from "../shared/private-fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { RESOURCE_LIMITS } from "./resources"
 import { MIGRATIONS } from "./migrations"
 
 export interface TrailsDb {
@@ -45,16 +47,39 @@ export function openDatabase(
   const previousUmask = process.umask(0o077)
   let sqlite: Database
   try {
-    if (resolvedPath !== ":memory:") mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 })
-    sqlite = new Database(resolvedPath, { create: true, strict: true })
-    if (resolvedPath !== ":memory:") chmodSync(resolvedPath, 0o600)
+    if (resolvedPath === ":memory:") {
+      sqlite = new Database(resolvedPath, { strict: true })
+    } else {
+      secureDirectory(dirname(resolvedPath), true)
+      // Bun SQLite opens by pathname, not by descriptor. Protect the namespace
+      // first, precreate exclusively, and check its inode around SQLite's open.
+      // WAL/SHM and rollback journals can also be opened by SQLite.
+      for (const suffix of ["-wal", "-shm", "-journal"]) inspectPrivateFile(`${resolvedPath}${suffix}`)
+      const fd = openPrivateFile(resolvedPath, "append")
+      try {
+        const expected = fstatSync(fd)
+        sqlite = new Database(resolvedPath, { strict: true })
+        try {
+          const actual = inspectPrivateFile(resolvedPath)
+          if (!actual || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+            throw new UnsafePathError(resolvedPath, "database changed while opening")
+          }
+        } catch (error) {
+          sqlite.close()
+          throw error
+        }
+      } finally { closeSync(fd) }
+    }
   } finally {
     process.umask(previousUmask)
   }
   try {
     sqlite.exec("PRAGMA journal_mode=WAL")
     sqlite.exec("PRAGMA foreign_keys=ON")
-    sqlite.exec("PRAGMA busy_timeout=5000")
+    sqlite.exec("PRAGMA busy_timeout=100")
+    const { page_size } = sqlite.query("PRAGMA page_size").get() as { page_size: number }
+    sqlite.exec(`PRAGMA max_page_count=${Math.floor(RESOURCE_LIMITS.databaseBytes / page_size)}`)
+    sqlite.exec("PRAGMA journal_size_limit=16777216")
     applyMigrations(sqlite, {
       defaultTimezone: validTimezone(
         options.defaultTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,

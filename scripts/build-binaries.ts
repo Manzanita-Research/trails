@@ -1,5 +1,7 @@
-import { chmod, mkdir, readdir, stat, writeFile } from "node:fs/promises"
-import { join, relative, resolve } from "node:path"
+import { auditClient, regularPath } from "./release-audit"
+import { auditBinary } from "./binary-audit"
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { resolve } from "node:path"
 
 const minimum = [1, 3, 14]
 const current = Bun.version.split(".").map(Number)
@@ -10,21 +12,11 @@ for (let index = 0; index < minimum.length; index++) {
 
 await mkdir(resolve("dist"), { recursive: true })
 
-async function filesUnder(directory: string): Promise<string[]> {
-  const files: string[] = []
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) files.push(...await filesUnder(path))
-    else files.push(path)
-  }
-  return files
-}
-
 const clientRoot = resolve("dist/client")
 const compiledEntry = resolve("dist/compiled-entry.ts")
-const assetImports = (await filesUnder(clientRoot))
-  .sort()
-  .map((path) => `import ${JSON.stringify(`./client/${relative(clientRoot, path)}`)} with { type: "file" }`)
+const assets = await auditClient(clientRoot)
+const assetImports = assets.map(({ file }) => `import ${JSON.stringify(`./client/${file}`)} with { type: "file" }`)
+await safeOutput(compiledEntry)
 await writeFile(
   compiledEntry,
   `${assetImports.join("\n")}\nimport { main } from "../cli/main"\nawait main()\n`,
@@ -35,11 +27,17 @@ const targets = [
   { target: "bun-darwin-x64", output: "dist/trails-darwin-x64" },
 ] as const
 
+async function safeOutput(path: string) {
+  try { await regularPath(path) } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+}
+
 for (const build of targets) {
-  const compile: Bun.CompileBuildOptions & { readonly assets: ReadonlyArray<string> } = {
+  await safeOutput(resolve(build.output))
+  const compile: Bun.CompileBuildOptions = {
     target: build.target,
     outfile: resolve(build.output),
-    assets: ["./dist/client"],
     autoloadDotenv: false,
     autoloadBunfig: false,
     autoloadTsconfig: false,
@@ -49,6 +47,8 @@ for (const build of targets) {
     entrypoints: [compiledEntry],
     compile,
     minify: true,
+    env: "disable",
+    sourcemap: "none",
     naming: { asset: "[name].[ext]" },
   })
   if (!result.success) {
@@ -57,6 +57,7 @@ for (const build of targets) {
   }
   const info = await stat(build.output)
   if (!info.isFile() || info.size === 0) throw new Error(`${build.output} was not created`)
+  auditBinary(await readFile(build.output), build.target === "bun-darwin-arm64" ? "darwin-arm64" : "darwin-x64", assets)
   await chmod(build.output, 0o755)
   if (((await stat(build.output)).mode & 0o111) === 0) throw new Error(`${build.output} is not executable`)
   console.log(`built ${build.output}`)

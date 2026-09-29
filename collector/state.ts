@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect"
-import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises"
+import { unlinkSync } from "node:fs"
+import { atomicWritePrivateFile, createPrivateFile, inspectPrivateFile, readPrivateFile, secureDirectory } from "../shared/private-fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { decodeExact } from "../shared/protocol"
@@ -59,7 +60,7 @@ export function loadCollectorState(path: string): Effect.Effect<CollectorState |
   return Effect.tryPromise({
     try: async () => {
       try {
-        const input: unknown = JSON.parse(await readFile(path, "utf8"))
+        const input: unknown = JSON.parse(readPrivateFile(path))
         try {
           return decodeExact(CollectorStateSchema, input) as CollectorState
         } catch (error) {
@@ -82,18 +83,7 @@ export function loadCollectorState(path: string): Effect.Effect<CollectorState |
 export function saveCollectorState(path: string, state: CollectorState): Effect.Effect<void, Error> {
   return Effect.tryPromise({
     try: async () => {
-      const absolute = resolve(path)
-      await mkdir(dirname(absolute), { recursive: true, mode: 0o700 })
-      const temporary = `${absolute}.${process.pid}.${crypto.randomUUID()}.tmp`
-      const handle = await open(temporary, "wx", 0o600)
-      try {
-        await handle.writeFile(JSON.stringify(state))
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      await chmod(temporary, 0o600)
-      await rename(temporary, absolute)
+      atomicWritePrivateFile(resolve(path), JSON.stringify(state))
     },
     catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
   })
@@ -112,25 +102,17 @@ function pidIsAlive(pid: number): boolean {
 function acquireLock(path: string): Effect.Effect<void, Error> {
   return Effect.tryPromise({
     try: async () => {
-      await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+      secureDirectory(dirname(path), true)
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const handle = await open(path, "wx", 0o600)
-          try {
-            await handle.writeFile(String(process.pid))
-            await handle.sync()
-          } finally {
-            await handle.close()
-          }
+          createPrivateFile(path, String(process.pid))
           return
         } catch (error) {
           if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error
-          let owner = 0
-          try {
-            owner = Number((await readFile(path, "utf8")).trim())
-          } catch {}
+          const owner = Number(readPrivateFile(path).trim())
           if (pidIsAlive(owner)) throw new CollectorBusyError()
-          await rm(path, { force: true })
+          inspectPrivateFile(path)
+          unlinkSync(path)
         }
       }
       throw new CollectorBusyError()
@@ -147,6 +129,8 @@ export function withCollectorLock<A, E>(
   return Effect.acquireUseRelease(
     acquireLock(lockPath),
     () => effect,
-    () => Effect.promise(() => rm(lockPath, { force: true })),
+    () => Effect.sync(() => {
+      if (inspectPrivateFile(lockPath)) unlinkSync(lockPath)
+    }),
   )
 }

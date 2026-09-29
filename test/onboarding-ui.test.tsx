@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createApp, setAdvertisedHubUrl } from "../server/app"
+import { createApp, setAdvertisedHubUrl } from "./authenticated-app"
 import { openDatabase, type TrailsDb } from "../server/db"
 import {
   BootstrapV1Schema,
@@ -20,7 +20,7 @@ const originalFetch = globalThis.fetch
 const databases = new Set<TrailsDb>()
 const privateHubUrl = "https://trails.example.ts.net/"
 const clientSetupCommand =
-  "curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- join https://trails.example.ts.net/"
+  "curl -fsSL https://releases.manzanita.dev/trails/install.sh | sh -s -- join https://trails.example.ts.net/ --pairing-file pairing.json"
 
 const firstTrail: IngestRequestV2 = {
   protocolVersion: 2,
@@ -68,7 +68,7 @@ function makeHarness(options: { readonly hubUrl?: string } = {}): Harness {
   const db = openDatabase(":memory:")
   databases.add(db)
   if (options.hubUrl !== undefined) setAdvertisedHubUrl(db, options.hubUrl)
-  const app = createApp({ db, now: () => fixedNow })
+  const app = createApp({ trustedOrigins: ["http://trails.test"], db, now: () => fixedNow })
   const failedSettingsPatches: SettingsPatch[] = []
   const settingsRequests: SettingsPatch[] = []
   let heldBootstrap: Promise<void> | null = null
@@ -177,7 +177,7 @@ describe("first-run onboarding", () => {
     ).toBeTruthy()
     expect(screen.getByRole("heading", { name: "Add another Mac" })).toBeTruthy()
     expect(screen.getByText(clientSetupCommand)).toBeTruthy()
-    expect(screen.getByText("That Mac’s hostname will be its name in Trails.")).toBeTruthy()
+    expect(screen.getByText("The pairing file gives this Mac permission to upload its own sessions.")).toBeTruthy()
 
     await user.tab()
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "feedback" }))

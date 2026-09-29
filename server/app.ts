@@ -1,6 +1,11 @@
+import { createAuthentication, credentialFor, type Credential } from "./auth"
 import { Effect, Schema } from "effect"
-import { basename, join, resolve, sep } from "node:path"
+import { Blob as NodeBlob } from "node:buffer"
+import { constants } from "node:fs"
+import { lstat, open, realpath } from "node:fs/promises"
+import { basename, join, relative, resolve, sep } from "node:path"
 import { localActivityOf, orgOf, type LocalActivityTuple, type UtcActivityTuple } from "../shared/domain"
+import { INGEST_LIMITS } from "../shared/limits"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
 import type { HarnessId, HarnessSelection } from "../shared/harnesses"
 import {
@@ -24,6 +29,7 @@ import {
   type MachinesV1,
 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
+import { admitRequest, checkStorage, checkQueue, ResourceError } from "./resources"
 import { ingestCaptures } from "./captures"
 import { ingestSessions } from "./ingest"
 import { rebuildDaySummaryJobs } from "./day-jobs"
@@ -52,6 +58,11 @@ export interface AppOptions {
 }
 
 type ErrorCode =
+  | "rate_limited"
+  | "storage_full"
+  | "summary_capacity"
+  | "unauthorized"
+  | "forbidden"
   | "untrusted_host"
   | "untrusted_origin"
   | "invalid_json"
@@ -73,14 +84,19 @@ class ApiError extends Error {
   }
 }
 
-const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" }
+// Private responses have zero HTTP cache retention, including conditional responses and errors.
+// Keep this policy at the API boundary so bodyless/status responses inherit it too.
+const privateCacheControl = "no-store"
+const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": privateCacheControl }
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: jsonHeaders })
 }
 
 function errorResponse(error: ApiError): Response {
-  return jsonResponse({ error: { code: error.code, message: error.message } }, error.status)
+  const response = jsonResponse({ error: { code: error.code, message: error.message } }, error.status)
+  if (error.status === 429) response.headers.set("Retry-After", "60")
+  return response
 }
 
 function revisionOf(db: TrailsDb): number {
@@ -114,12 +130,22 @@ async function readJson(request: Request, maximumBytes: number): Promise<unknown
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let length = 0
+  const deadline = Date.now() + 10_000
   while (true) {
-    const result = await reader.read()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new ApiError("invalid_request", "request body timed out", 408))
+          void reader.cancel().catch(() => {})
+        }, Math.max(1, deadline - Date.now()))
+      }),
+    ]).finally(() => clearTimeout(timer))
     if (result.done) break
     length += result.value.byteLength
     if (length > maximumBytes) {
-      await reader.cancel()
+      void reader.cancel().catch(() => {})
       throw new ApiError("payload_too_large", "request body is too large", 413)
     }
     chunks.push(result.value)
@@ -230,6 +256,7 @@ function imagesByCapture(db: TrailsDb): Map<number, CaptureImageMetadata[]> {
 }
 
 export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
+  checkStorage(db)
   const timezone = (
     db.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get() as { timezone: string }
   ).timezone
@@ -257,23 +284,26 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
   }>
   const captureRows = db.sqlite
     .query(
-      `SELECT id, source, source_record_id, project, project_hint, title, started_at, ended_at,
-         summary_input, provider_payload, updated_at FROM captures ORDER BY started_at, id`,
+      `SELECT id, account_id, owner_machine_id, source, source_record_id, project, project_hint, title, started_at, ended_at,
+         provider_payload, updated_at FROM captures ORDER BY started_at, id`
     )
     .all() as Array<{
     id: number
     source: BootstrapCaptureV1["source"]
     source_record_id: string
+    account_id: string
+    owner_machine_id: string
     project: string | null
     project_hint: string | null
     title: string
     started_at: string
     ended_at: string | null
-    summary_input: string
     provider_payload: string
     updated_at: number
   }>
-  const captureIdBySourceRecord = new Map(captureRows.map((row) => [row.source_record_id, row.id]))
+  const captureKey = (row: typeof captureRows[number], recordId: string) =>
+    JSON.stringify([row.account_id, row.account_id === "" ? row.owner_machine_id : "", row.source, recordId])
+  const captureIdBySourceRecord = new Map(captureRows.map((row) => [captureKey(row, row.source_record_id), row.id]))
   const settings = db.sqlite
     .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
     .get() as {
@@ -343,7 +373,6 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
         title: row.title,
         startedAt: row.started_at,
         endedAt: row.ended_at,
-        summaryInput: row.summary_input,
         attentionMinutes: captureAttention.get(row.id) ?? [],
         updatedAt: new Date(row.updated_at).toISOString(),
         images: (captureImages.get(row.id) ?? []).map((image) => ({
@@ -352,7 +381,8 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
           width: image.width,
           height: image.height,
           byteLength: image.byteLength,
-          url: `/api/capture-images/${row.id}/${image.index}?v=${image.hash}`,
+          // Bypass images cached under the former one-year immutable policy.
+          url: `/api/capture-images/${row.id}/${image.index}?v=2-${image.hash}`,
         })),
       }
       if (row.source === "midjourney") {
@@ -369,7 +399,7 @@ export function bootstrapOf(db: TrailsDb, now = Date.now()): BootstrapV1 {
             parentCaptureId:
               parentSourceRecordId === null
                 ? null
-                : String(captureIdBySourceRecord.get(parentSourceRecordId) ?? "") || null,
+                : String(captureIdBySourceRecord.get(captureKey(row, parentSourceRecordId)) ?? "") || null,
           },
         }
       }
@@ -533,12 +563,31 @@ function summarizationOf(options: AppOptions): unknown {
   })
 }
 
-async function apiResponse(options: AppOptions, request: Request, url: URL, now: number): Promise<Response> {
-  const { db } = options
-  if (url.pathname === "/api/health") {
-    if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
-    return jsonResponse({ ok: true, revision: revisionOf(db) })
+// Reject oversized arrays before the schema walks individual tuples.
+function checkTupleCounts(input: unknown, key: string, activityKey: string, maximum: number): void {
+  if (typeof input !== "object" || input === null) return
+  const records = (input as Record<string, unknown>)[key]
+  if (!Array.isArray(records)) return
+  let tuples = 0
+  if (records.length > maximum) throw new ApiError("invalid_request", "request body failed validation", 400)
+  for (const record of records) {
+    const activity = record?.[activityKey]
+    if (!Array.isArray(activity)) continue
+    tuples += activity.length
+    if (activity.length > INGEST_LIMITS.sessionTuples || tuples > INGEST_LIMITS.batchTuples) {
+      throw new ApiError("invalid_request", "activity tuple limit exceeded", 400)
+    }
   }
+}
+
+async function runIngest<A>(effect: Effect.Effect<A, { readonly cause: unknown }>): Promise<A> {
+  const result = await Effect.runPromise(Effect.either(effect))
+  if (result._tag === "Left") throw result.left.cause
+  return result.right
+}
+
+async function apiResponse(options: AppOptions, request: Request, url: URL, now: number, credential: Credential): Promise<Response> {
+  const { db } = options
   if (url.pathname === "/api/bootstrap") {
     if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
     const afterValue = url.searchParams.get("after")
@@ -559,12 +608,20 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     ) {
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
+    checkTupleCounts(input, "captures", "attentionMinutes", 20)
     const body = decodeBody(IngestCapturesRequestV1Schema, input)
-    try {
-      return jsonResponse(await Effect.runPromise(ingestCaptures(db, body, now)))
-    } catch {
+    requireDevice(credential, body.device.id)
+    const result = await Effect.runPromise(Effect.either(ingestCaptures(db, body, credential, now)))
+    if (result._tag === "Left") {
+      if (result.left._tag === "CaptureOwnershipError") {
+        throw new ApiError("forbidden", "capture ownership does not permit this write", 403)
+      }
+      if (result.left._tag === "CaptureImageValidationError") {
+        throw new ApiError("invalid_request", result.left.message, 400)
+      }
       throw new ApiError("internal_error", "internal server error", 500)
     }
+    return jsonResponse(result.right)
   }
   if (url.pathname.startsWith("/api/capture-images/")) {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -587,7 +644,10 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     const headers = new Headers({
       "Content-Type": row.mime,
       "Content-Length": String(row.byte_length),
-      "Cache-Control": "private, max-age=31536000, immutable",
+      "Cache-Control": privateCacheControl,
+      "X-Content-Type-Options": "nosniff",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Content-Security-Policy": "default-src 'none'; sandbox"
       ETag: etag,
     })
     if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers })
@@ -604,12 +664,10 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     ) {
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
+    checkTupleCounts(input, "sessions", "activity", 50)
     const body = decodeBody(IngestRequestV2Schema, input)
-    try {
-      return jsonResponse(await Effect.runPromise(ingestSessions(db, body, now)))
-    } catch {
-      throw new ApiError("internal_error", "internal server error", 500)
-    }
+    requireDevice(credential, body.device.id)
+    return jsonResponse(await runIngest(ingestSessions(db, body, now)))
   }
   if (url.pathname === "/api/collector-status") {
     if (request.method !== "POST") throw new ApiError("method_not_allowed", "method not allowed", 405)
@@ -622,7 +680,9 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     ) {
       throw new ApiError("unsupported_protocol", "unsupported protocol version", 400)
     }
-    recordCollectorStatus(db, decodeBody(CollectorStatusV1Schema, input), now)
+    const body = decodeBody(CollectorStatusV1Schema, input)
+    requireDevice(credential, body.device.id)
+    recordCollectorStatus(db, body, now)
     return new Response(null, { status: 204 })
   }
   if (url.pathname === "/api/machines") {
@@ -685,6 +745,7 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
           clearSummaries: timezone !== current.timezone,
         })
       }
+      checkQueue(db)
       return incrementRevision(db)
     })()
     return jsonResponse({ revision })
@@ -779,6 +840,42 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
   throw new ApiError("not_found", "API route not found", 404)
 }
 
+async function readStaticFile(root: string, requested: string): Promise<Blob | null> {
+  try {
+    // The configured root may use host aliases (e.g. /var on macOS), but no
+    // component beneath that canonical root may be a symlink.
+    const canonicalRoot = await realpath(root)
+    const candidate = resolve(canonicalRoot, requested)
+    const parts = relative(canonicalRoot, candidate).split(sep).filter(Boolean)
+    let path = canonicalRoot
+    let info = await lstat(path)
+    for (const part of parts) {
+      if (!info.isDirectory()) throw new ApiError("not_found", "static file not found", 404)
+      path = join(path, part)
+      info = await lstat(path)
+      if (info.isSymbolicLink()) throw new ApiError("not_found", "static file not found", 404)
+    }
+    if (!info.isFile()) throw new ApiError("not_found", "static file not found", 404)
+
+    // Refuse a replaced leaf or special file, and read the checked descriptor
+    // now: a lazy Bun.file(path) would reopen an attacker-replaceable path later.
+    const file = await open(candidate, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const opened = await file.stat()
+      if (!opened.isFile() || opened.dev !== info.dev || opened.ino !== info.ino || await realpath(candidate) !== candidate) {
+        throw new ApiError("not_found", "static file not found", 404)
+      }
+      return new NodeBlob([await file.readFile()], { type: Bun.file(candidate).type })
+    } finally {
+      await file.close()
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+    throw new ApiError("not_found", "static file not found", 404)
+  }
+}
+
 async function staticResponse(options: AppOptions, request: Request, url: URL): Promise<Response> {
   if (!options.staticRoot) throw new ApiError("not_found", "static serving is disabled", 404)
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -802,18 +899,20 @@ async function staticResponse(options: AppOptions, request: Request, url: URL): 
   }
   let body: Blob
   let selectedName = requested
-  const diskFile = Bun.file(candidate)
-  if (await diskFile.exists()) {
-    body = diskFile
+  if (options.staticAssets) {
+    // Bun's embedded filesystem is not a host filesystem; do not apply disk
+    // realpath/open checks to it or consult host files in embedded mode.
+    const embedded = options.staticAssets.find((asset) => basename(asset.name) === basename(requested))
+      ?? options.staticAssets.find((asset) => basename(asset.name) === "index.html")
+    if (!embedded) throw new ApiError("not_found", "static file not found", 404)
+    body = embedded
+    selectedName = basename(embedded.name)
   } else {
-    const embedded = options.staticAssets?.find((asset) => basename(asset.name) === basename(requested))
-      ?? options.staticAssets?.find((asset) => basename(asset.name) === "index.html")
-    if (embedded) {
-      body = embedded
-      selectedName = basename(embedded.name)
-    } else {
-      const index = Bun.file(join(root, "index.html"))
-      if (!(await index.exists())) throw new ApiError("not_found", "static file not found", 404)
+    const diskFile = await readStaticFile(root, relative(root, candidate))
+    if (diskFile) body = diskFile
+    else {
+      const index = await readStaticFile(root, "index.html")
+      if (!index) throw new ApiError("not_found", "static file not found", 404)
       body = index
       selectedName = "index.html"
     }
@@ -823,6 +922,10 @@ async function staticResponse(options: AppOptions, request: Request, url: URL): 
     ? "public, max-age=31536000, immutable"
     : "no-cache"
   const headers = new Headers({ "Cache-Control": cacheControl, "Content-Type": body.type || "application/octet-stream" })
+  // The private UI must never be framed, including disk/embedded SPA fallbacks.
+  // BB renders its own UI using the JSON API and needs no embedding exception.
+  headers.set("Content-Security-Policy", "frame-ancestors 'none'")
+  headers.set("X-Frame-Options", "DENY")
   if (request.method === "HEAD") {
     headers.set("Content-Length", String(body.size))
     return new Response(null, { status: 200, headers })
@@ -830,18 +933,62 @@ async function staticResponse(options: AppOptions, request: Request, url: URL): 
   return new Response(body, { headers })
 }
 
+function requireDevice(credential: Credential, deviceId: string): void {
+  if (credential.role !== "collector" || credential.deviceId !== deviceId) {
+    throw new ApiError("forbidden", "credential is not paired to this device", 403)
+  }
+}
+
 export function createApp(options: AppOptions): (request: Request) => Promise<Response> {
-  const requestBoundary = createRequestBoundary(options.trustedOrigins ?? localOrigins(7412))
+  const origins = options.trustedOrigins ?? localOrigins(7412)
+  const requestBoundary = createRequestBoundary(origins)
+  const secureAuthorities = new Set(origins.flatMap(origin => {
+    const url = new URL(origin)
+    return url.protocol === "https:" ? [url.host, `${url.hostname}:${url.port || "443"}`] : []
+  }))
+  const auth = createAuthentication(options.db, secureAuthorities)
   return async (request) => {
     try {
       const url = new URL(request.url)
       const rejection = requestBoundary(request, url)
       if (rejection) throw new ApiError(rejection, "request origin or host is not trusted", 403)
       const now = (options.now ?? Date.now)()
-      return url.pathname.startsWith("/api/")
-        ? await apiResponse(options, request, url, now)
-        : await staticResponse(options, request, url)
+      if (!url.pathname.startsWith("/api/")) return await staticResponse(options, request, url)
+      if (url.pathname === "/api/health") {
+        if (request.method !== "GET") throw new ApiError("method_not_allowed", "method not allowed", 405)
+        return jsonResponse({ ok: true })
+      }
+      if (url.pathname === "/api/auth/login" && request.method === "POST") {
+        const body = decodeBody(Schema.Struct({ token: Schema.String }), await readJson(request, 1024))
+        const credential = credentialFor(options.db, body.token)
+        if (!credential || credential.role !== "owner") throw new ApiError("unauthorized", "owner credential required", 401)
+        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.login(credential, url, now), "Cache-Control": privateCacheControl } })
+      }
+      const credential = auth.authenticate(request, url, now)
+      if (!credential) throw new ApiError("unauthorized", "sign in to Trails", 401)
+      if (url.pathname === "/api/auth/session" && request.method === "GET") return jsonResponse({ role: credential.role })
+      if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+        return new Response(null, { status: 204, headers: { "Set-Cookie": auth.logout(request, url), "Cache-Control": privateCacheControl } })
+      }
+      const ingest = ["/api/ingest", "/api/captures", "/api/collector-status"].includes(url.pathname)
+      const permitted = ingest ? credential.role === "collector"
+        : ["GET", "HEAD"].includes(request.method) ? credential.role !== "collector" : credential.role === "owner"
+      if (!permitted) throw new ApiError("forbidden", "credential does not grant this permission", 403)
+      const release = ingest ? admitRequest(options.db, credential.deviceId!, now) : () => {}
+      try {
+        const response = await apiResponse(options, request, url, now, credential)
+        response.headers.set("Cache-Control", privateCacheControl)
+        return response
+      } finally {
+        release()
+      }
     } catch (error) {
+      if (error instanceof ResourceError) {
+        return errorResponse(new ApiError(error.code, error.message, error.code === "storage_full" ? 507 : 429))
+      }
+      if (error instanceof Error && "code" in error && ["SQLITE_FULL", "SQLITE_IOERR_WRITE", "SQLITE_IOERR_FSYNC"].includes(String(error.code))) {
+        return errorResponse(new ApiError("storage_full", "storage is unavailable; free disk space before retrying", 507))
+      }
       return errorResponse(error instanceof ApiError ? error : new ApiError("internal_error", "internal server error", 500))
     }
   }

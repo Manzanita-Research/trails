@@ -1,3 +1,4 @@
+import { readerToken } from "./reader-credential";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -141,9 +142,9 @@ function emptyReport(source: Report["source"], now = new Date()): Report {
     warnings: [], days: [], projects: [], machines: [], summaries: null };
 }
 
-export async function requestJson(base: string, path: string, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<unknown> {
+export async function requestJson(base: string, path: string, signal: AbortSignal, fetcher: typeof fetch = fetch, token?: string): Promise<unknown> {
   const response = await fetcher(new URL(path, base), {
-    method: "GET", redirect: "error", headers: { Accept: "application/json" }, cache: "no-store", signal,
+    method: "GET", redirect: "error", headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, cache: "no-store", signal,
   });
   if (!response.ok) { await response.body?.cancel(); throw new Error(`HTTP ${response.status}`); }
   const reader = response.body?.getReader();
@@ -165,7 +166,8 @@ export async function queryTrails(query: Query, serverUrl: string, signal: Abort
   signal.throwIfAborted();
   const connection = await resolveServer(serverUrl, options.home);
   const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(8000)]);
-  const read = (path: string) => requestJson(connection.url, path, boundedSignal, options.fetch);
+  const token = readerToken(connection.url, options.home);
+  const read = (path: string) => requestJson(connection.url, path, boundedSignal, options.fetch, token);
   try {
     if (query.view !== "status") {
       const value = await read("/api/bootstrap");

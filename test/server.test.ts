@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { writeFileSync } from "node:fs"
 import { Effect } from "effect"
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { createApp, setAdvertisedHubUrl } from "../server/app"
+import { createApp, setAdvertisedHubUrl } from "./authenticated-app"
+import { createApp as productionApp } from "../server/app"
+import { issueCredential } from "../server/auth"
 import { ingestCaptures } from "../server/captures"
+import { fixtureImage } from "./capture-image-fixtures"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { sessionContentHash } from "../server/ingest"
 import { MIGRATIONS } from "../server/migrations"
@@ -39,6 +43,7 @@ const LEGACY_END = "2026-11-01T09:31:00.000Z"
 const LEGACY_UPDATED_AT = Date.parse("2026-11-01T09:32:00.000Z")
 
 function createMigration3Fixture(path: string): void {
+  writeFileSync(path, "", { mode: 0o600, flag: "wx" })
   const legacy = new Database(path, { create: true, strict: true })
   for (const migration of MIGRATIONS.slice(0, 3)) legacy.exec(migration.sql)
   legacy.exec("PRAGMA user_version = 3")
@@ -135,7 +140,7 @@ function ingestBody(
   return { protocolVersion: 2, device, sessions }
 }
 
-const syntheticWebp = Buffer.from("RIFF\\x08\\x00\\x00\\x00WEBPsynthetic")
+const syntheticWebp = await readFile(new URL("./fixtures/capture-images/static.webp", import.meta.url))
 
 function capture(
   sourceRecordId: string,
@@ -160,8 +165,8 @@ function capture(
     images: Array.from({ length: 4 }, (_, index) => ({
       index,
       mime: "image/webp" as const,
-      width: 640,
-      height: 640,
+      width: 2,
+      height: 3,
       bytes: syntheticWebp.toString("base64"),
     })),
     ...overrides,
@@ -199,7 +204,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -207,10 +212,10 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(7)
+    expect(userVersion.user_version).toBe(9)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
-    expect(Object.values(busyTimeout)[0]).toBe(5000)
+    expect(Object.values(busyTimeout)[0]).toBe(100)
     expect(database.sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get()).toEqual({ value: "0" })
     expect(
       database.sqlite.query("SELECT boundary, halo, onboarding_version, hub_url FROM settings WHERE id = 1").get(),
@@ -250,7 +255,7 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(7)
+    expect(reopenedVersion.user_version).toBe(9)
     expect(
       reopened.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
@@ -271,7 +276,7 @@ describe("database opening and ordered migrations", () => {
     const database = openDatabase(path, { defaultTimezone: "Europe/Rome", now: migrationNow })
     databases.add(database)
 
-    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
+    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 9 })
     expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
       timezone: "Europe/Rome",
     })
@@ -397,7 +402,7 @@ describe("database opening and ordered migrations", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 9 })
     expect(migrated.sqlite.query("SELECT halo FROM settings WHERE id = 1").get()).toEqual({ halo: 15 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM sessions").get()).toEqual({ count: 1 })
@@ -743,6 +748,94 @@ describe("ingest and bootstrap", () => {
 })
 
 describe("capture ingest, bootstrap privacy, and image API", () => {
+  test.each(["midjourney", "granola"] as const)("keeps %s summary input internal for every bootstrap reader", async (source) => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const options = { trustedOrigins: ["http://trails.test"], db: database }
+    const summaryInput = `SYNTHETIC_PRIVATE_${source.toUpperCase()}_DIGEST`
+    const base = capture("private-record", { summaryInput })
+    const input: IngestCaptureV1 = source === "midjourney" ? base : {
+      ...base,
+      source,
+      payload: { attendeeCount: 2, folders: ["Planning"], webUrl: null },
+      images: [],
+    }
+    expect((await request(createApp(options), "POST", "/api/captures", captureBody([input]))).status).toBe(200)
+    expect(database.sqlite.query("SELECT summary_input FROM captures").get()).toEqual({ summary_input: summaryInput })
+
+    const app = productionApp(options)
+    for (const role of ["owner", "read"] as const) {
+      const credential = issueCredential(database, role)
+      for (const path of ["/api/bootstrap", "/api/bootstrap?after=0"]) {
+        const response = await app(new Request(`http://trails.test${path}`, {
+          headers: { Authorization: `Bearer ${credential.token}` },
+        }))
+        expect(response.status).toBe(200)
+        const body = await response.text()
+        expect(body).not.toContain(summaryInput)
+        expect(body).not.toContain("summaryInput")
+        expect(body).not.toContain("summary_input")
+        const bootstrap = JSON.parse(body) as BootstrapV1
+        expect(bootstrap.captures).toHaveLength(1)
+        expect(bootstrap.captures[0]).toMatchObject({
+          source,
+          title: input.title,
+          projectHint: input.projectHint,
+          startedAt: input.startedAt,
+          attentionMinutes: [["2026-08-03", 600]],
+        })
+        if (input.source === "granola") expect(bootstrap.captures[0]?.payload).toEqual(input.payload)
+      }
+    }
+  })
+
+
+  test("returns 400 for invalid media and preserves the entire existing state", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
+    const original = capture("existing")
+    expect((await request(app, "POST", "/api/captures", captureBody([original]))).status).toBe(200)
+    const snapshot = () => ["machines", "captures", "capture_images", "capture_attention", "meta"].map(
+      (table) => database.sqlite.query(`SELECT * FROM ${table}`).all(),
+    )
+    const before = snapshot()
+    for (const image of [
+      fixtureImage("static.png", { bytes: Buffer.from("ordinary text").toString("base64") }),
+      fixtureImage("static.jpg", { mime: "image/png" }),
+      fixtureImage("static.webp", { width: 1 }),
+      fixtureImage("static.png", { bytes: fixtureImage().bytes.slice(0, 40) }),
+      fixtureImage("over-pixel-limit.png", { width: 1, height: 1 }),
+      fixtureImage("animated.png"),
+      fixtureImage("animated.webp"),
+    ]) {
+      const invalid = capture("invalid", { images: [image, ...original.images.slice(1)] })
+      const response = await request(app, "POST", "/api/captures", captureBody([
+        { ...original, title: "Must not persist" }, invalid,
+      ], { id: "new-device", name: "Must not persist" }))
+      expect(response.status).toBe(400)
+      expect(await json(response)).toMatchObject({ error: { code: "invalid_request" } })
+      expect(snapshot()).toEqual(before)
+      await expect(Effect.runPromise(ingestCaptures(database, captureBody([invalid]), issueCredential(database, "collector", "device-a")))).rejects.toThrow("capture images must be valid")
+      expect(snapshot()).toEqual(before)
+    }
+  })
+
+  test("persists validated PNG, JPEG and WebP with their verified dimensions", async () => {
+    const root = await temporaryRoot()
+    const database = trackedDatabase(join(root, "trails.sqlite"))
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
+    const images = ["static.png", "static.jpg", "static.webp", "static.png"].map(
+      (name, index) => fixtureImage(name, { index }),
+    )
+    expect((await request(app, "POST", "/api/captures", captureBody([capture("formats", { images })]))).status).toBe(200)
+    const rows = database.sqlite.query("SELECT mime, width, height, bytes FROM capture_images ORDER BY image_index").all()
+    expect(rows).toEqual(images.map((image) => ({
+      mime: image.mime, width: 2, height: 3, bytes: Buffer.from(image.bytes, "base64"),
+    })))
+  })
+
+
   test("is idempotent, preserves null reconciliation attribution, and replaces children atomically", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
@@ -786,7 +879,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     `)
     const invalid = capture("job-invalid")
 
-    await expect(Effect.runPromise(ingestCaptures(database, captureBody([valid, invalid])))).rejects.toThrow(
+    await expect(Effect.runPromise(ingestCaptures(database, captureBody([valid, invalid]), issueCredential(database, "collector", "device-a")))).rejects.toThrow(
       "capture ingestion failed",
     )
     expect(database.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
@@ -827,10 +920,10 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     expect(childBootstrap.payload.parentCaptureId).toBe(bootstrap.captures[0]?.id)
     expect(childBootstrap.payload).not.toHaveProperty("parentSourceRecordId")
     expect(bootstrap.captures[0]?.images.map((image) => image.url)).toEqual([
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/0\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/1\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/2\?v=[0-9a-f]{64}$/),
-      expect.stringMatching(/^\/api\/capture-images\/\d+\/3\?v=[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/0\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/1\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/2\?v=2-[0-9a-f]{64}$/),
+      expect.stringMatching(/^\/api\/capture-images\/\d+\/3\?v=2-[0-9a-f]{64}$/),
     ])
 
     const imageUrl = bootstrap.captures[0]!.images[0]!.url
@@ -838,18 +931,25 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     expect(imageResponse.status).toBe(200)
     expect(imageResponse.headers.get("content-type")).toBe("image/webp")
     expect(imageResponse.headers.get("content-length")).toBe(String(syntheticWebp.byteLength))
-    expect(imageResponse.headers.get("cache-control")).toBe("private, max-age=31536000, immutable")
+    expect(imageResponse.headers.get("cache-control")).toBe("no-store")
+    expect(imageResponse.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(imageResponse.headers.get("cross-origin-resource-policy")).toBe("same-origin")
+    expect(imageResponse.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox")
     expect(Buffer.from(await imageResponse.arrayBuffer())).toEqual(syntheticWebp)
     const etag = imageResponse.headers.get("etag")
     expect(etag).toMatch(/^"[0-9a-f]{64}"$/)
 
     imageResponse = await app(new Request(`http://trails.test${imageUrl}`, { headers: { "If-None-Match": etag! } }))
     expect(imageResponse.status).toBe(304)
+    expect(imageResponse.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(imageResponse.headers.get("cross-origin-resource-policy")).toBe("same-origin")
     expect((await imageResponse.arrayBuffer()).byteLength).toBe(0)
 
     imageResponse = await request(app, "HEAD", imageUrl)
     expect(imageResponse.status).toBe(200)
     expect(imageResponse.headers.get("content-length")).toBe(String(syntheticWebp.byteLength))
+    expect(imageResponse.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(imageResponse.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox")
     expect((await imageResponse.arrayBuffer()).byteLength).toBe(0)
     expect((await request(app, "GET", "/api/capture-images/999/0")).status).toBe(404)
     expect((await request(app, "GET", "/api/capture-images/not-an-id/0")).status).toBe(400)
@@ -1113,7 +1213,7 @@ describe("static and method routing", () => {
     expect(await json(response)).toEqual({ error: { code: "not_found", message: "static serving is disabled" } })
     response = await request(apiOnly, "GET", "/api/health")
     expect(response.status).toBe(200)
-    expect(await json(response)).toEqual({ ok: true, revision: 0 })
+    expect(await json(response)).toEqual({ ok: true })
 
     expect(await readFile(join(root, "outside.txt"), "utf8")).toBe("must not escape")
     expect(await readdir(staticRoot)).toEqual(expect.arrayContaining(["index.html", "app-12345678.js", "plain.css"]))
