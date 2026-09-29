@@ -1,4 +1,5 @@
-import { chmod, mkdir, open, readdir, rename, rm } from "node:fs/promises"
+import { readdir, rm } from "node:fs/promises"
+import { atomicWritePrivateFile, inspectPrivateFile, secureDirectory } from "../shared/private-fs"
 import { basename, dirname, join, resolve } from "node:path"
 import { DEFAULT_DB_PATH, openDatabase } from "./db"
 
@@ -23,7 +24,7 @@ export async function createBackup(options: BackupOptions): Promise<string> {
   const retain = options.retain ?? 14
   if (!Number.isInteger(retain) || retain < 1) throw new Error("retain must be a positive integer")
   const outputPath = resolve(options.output ?? join(options.outputDir!, scheduledName(options.now ?? new Date())))
-  await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 })
+  secureDirectory(dirname(outputPath), true)
   const database = openDatabase(options.dbPath ?? process.env.TRAILS_DB_PATH ?? DEFAULT_DB_PATH)
   let serialized: Uint8Array
   try {
@@ -31,16 +32,7 @@ export async function createBackup(options: BackupOptions): Promise<string> {
   } finally {
     database.close()
   }
-  const temporary = `${outputPath}.${process.pid}.${crypto.randomUUID()}.tmp`
-  const handle = await open(temporary, "wx", 0o600)
-  try {
-    await handle.writeFile(serialized)
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await chmod(temporary, 0o600)
-  await rename(temporary, outputPath)
+  atomicWritePrivateFile(outputPath, serialized)
 
   if (options.outputDir) {
     const directory = resolve(options.outputDir)
@@ -48,7 +40,10 @@ export async function createBackup(options: BackupOptions): Promise<string> {
       .filter((name) => BACKUP_NAME.test(name))
       .sort()
       .reverse()
-    for (const name of matching.slice(retain)) await rm(join(directory, name))
+    for (const name of matching.slice(retain)) {
+      inspectPrivateFile(join(directory, name))
+      await rm(join(directory, name))
+    }
   }
   return outputPath
 }

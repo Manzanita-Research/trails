@@ -1,3 +1,4 @@
+import { terminalText } from "../../../shared/terminal"
 import { buildModel, fetchSnapshot, resolveServer, type ServerResolution, type TrailsSnapshot } from "./trails"
 import { renderDashboard, type Screen, type ViewState } from "./render"
 
@@ -188,6 +189,6 @@ async function main(): Promise<void> {
 try {
   await main()
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error))
+  console.error(terminalText(error instanceof Error ? error.message : String(error)))
   process.exitCode = 1
 }

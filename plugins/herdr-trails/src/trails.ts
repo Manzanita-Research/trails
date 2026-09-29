@@ -1,3 +1,4 @@
+import { readerToken } from "../../../shared/reader-credential"
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -306,12 +307,13 @@ async function responseError(response: Response): Promise<string> {
   return `HTTP ${response.status}`
 }
 
-async function requestJson(base: string, path: string, fetcher: FetchLike, timeoutMs: number): Promise<unknown> {
+async function requestJson(base: string, path: string, fetcher: FetchLike, timeoutMs: number, token?: string): Promise<unknown> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetcher(new URL(path, base), {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      redirect: "error",
       cache: "no-store",
       signal: controller.signal,
     })
@@ -327,21 +329,22 @@ async function requestJson(base: string, path: string, fetcher: FetchLike, timeo
 
 export async function fetchSnapshot(
   server: string,
-  options: { readonly fetch?: FetchLike; readonly timeoutMs?: number; readonly now?: () => number } = {},
+  options: { readonly fetch?: FetchLike; readonly timeoutMs?: number; readonly now?: () => number; readonly home?: string } = {},
 ): Promise<TrailsSnapshot> {
+  const token = readerToken(server, options.home)
   const fetcher = options.fetch ?? globalThis.fetch
   const timeoutMs = options.timeoutMs ?? 5_000
   const warnings: string[] = []
   const optional = async <T>(label: string, path: string, decode: (value: unknown) => T): Promise<T | null> => {
     try {
-      return decode(await requestJson(server, path, fetcher, timeoutMs))
+      return decode(await requestJson(server, path, fetcher, timeoutMs, token))
     } catch (error) {
       warnings.push(`${label}: ${error instanceof Error ? error.message : "unavailable"}`)
       return null
     }
   }
   const [bootstrapValue, machines, harnesses] = await Promise.all([
-    requestJson(server, "/api/bootstrap", fetcher, timeoutMs),
+    requestJson(server, "/api/bootstrap", fetcher, timeoutMs, token),
     optional("machines", "/api/machines", decodeMachines),
     optional("summaries", "/api/harnesses", decodeHarnesses),
   ])

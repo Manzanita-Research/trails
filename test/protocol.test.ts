@@ -28,7 +28,7 @@ const session = () => ({
   events: 2,
   userEvents: 1,
   firstPrompt: "Ship it",
-  activity: [[1, 2, 1]],
+  activity: [[Math.floor(Date.parse("2026-07-01T17:00:00.000Z") / 60_000), 2, 1]],
   digest: "A bounded digest",
 })
 
@@ -205,6 +205,8 @@ describe("ingest protocol v2", () => {
     }
 
     const edge = changed(request(), (copy) => {
+      copy.sessions[0].start = "1970-01-01T00:00:00.000Z"
+      copy.sessions[0].end = "1970-01-01T00:02:00.000Z"
       copy.sessions[0].activity = [[0, 1, 1], [2, 1, 0]]
     })
     expect(JSON.stringify(decodeExact(IngestRequestV2Schema, edge).sessions[0].activity)).toBe(
@@ -415,6 +417,10 @@ describe("capture ingest protocol v1", () => {
       changed(captureRequest(), (copy) => (copy.captures[0].images[0].bytes = `data:image/webp;base64,${imageBytes}`)),
       changed(captureRequest(), (copy) => (copy.captures[0].images[0].bytes = "not base64")),
       changed(captureRequest(), (copy) => {
+        copy.captures[0].images[0].width = 2001
+        copy.captures[0].images[0].height = 2000
+      }),
+      changed(captureRequest(), (copy) => {
         copy.captures[0].images[0].bytes = Buffer.alloc(500 * 1024 + 1).toString("base64")
       }),
     ]
@@ -431,6 +437,27 @@ describe("capture ingest protocol v1", () => {
 })
 
 describe("bootstrap and mutation schemas", () => {
+  test.each(["midjourney", "granola"] as const)("excludes private summary input from the %s bootstrap contract", (source) => {
+    const capture = {
+      id: "1",
+      source,
+      project: "work/project",
+      projectHint: "Ideas",
+      title: "Display title",
+      startedAt: "2026-07-01T17:00:00.000Z",
+      endedAt: null,
+      attentionMinutes: [["2026-07-01", 600]],
+      updatedAt: "2026-07-01T17:01:00.000Z",
+      images: [],
+      payload: source === "midjourney"
+        ? { eventType: "imagine", jobType: "generation", parentGrid: null, hasParent: false, parentCaptureId: null }
+        : { attendeeCount: 2, folders: ["Planning"], webUrl: null },
+    }
+    const value = { ...bootstrap(), captures: [capture] }
+    expect(encodeExact(BootstrapV1Schema, decodeExact(BootstrapV1Schema, value))).toEqual(value)
+    rejects(BootstrapV1Schema, { ...value, captures: [{ ...capture, summaryInput: "Private input" }] })
+  })
+
   test("round-trips the exact bootstrap v1 shape", () => {
     const decoded = decodeExact(BootstrapV1Schema, bootstrap())
     expect(encodeExact(BootstrapV1Schema, decoded)).toEqual(bootstrap())

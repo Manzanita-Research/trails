@@ -1,20 +1,21 @@
+import { terminalText } from "../shared/terminal"
 import {
   access,
-  chmod,
   copyFile,
   lstat,
-  mkdir,
   open,
-  readFile,
   realpath,
   rename,
   stat,
   unlink,
 } from "node:fs/promises"
-import { constants } from "node:fs"
+import { closeSync, constants, readFileSync } from "node:fs"
+import { atomicWritePrivateFile, inspectPrivateFile, openPrivateFile, readPrivateFile, secureDirectory, UnsafePathError } from "../shared/private-fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { COLLECTOR_CONFIG_PATH, isLegacyProviderHubConfig, loadCollectorConfig, loadHubConfig, writeHubConfig } from "./config"
+import { exposureMessage, parseExposureState, prepareExposure, type ExposureState } from "./exposure"
+import { normalizeTrustedOrigin } from "../server/request-boundary"
 export type InstallKind = "server" | "collector"
 
 export interface InstallOptions {
@@ -36,7 +37,7 @@ interface LaunchDefinition {
 const destination = join(homedir(), ".local/bin/trails")
 const stateDirectory = join(homedir(), ".local/state/trails")
 const launchAgentDirectory = join(homedir(), "Library/LaunchAgents")
-const tailscaleProxy = "http://127.0.0.1:7412"
+const exposurePath = join(stateDirectory, "exposure.json")
 const legacyAuthPath = join(homedir(), ".config/trails/auth.json")
 const legacyProviders = new Set(["openrouter", "chatgpt", "openai-api"])
 
@@ -75,7 +76,7 @@ ${argumentsXml}
 `
 }
 
-function definitions(kind: InstallKind): LaunchDefinition[] {
+export function launchDefinitions(kind: InstallKind, trustedOrigin?: string): LaunchDefinition[] {
   if (kind === "collector") {
     return [
       {
@@ -89,7 +90,10 @@ function definitions(kind: InstallKind): LaunchDefinition[] {
   return [
     {
       label: "com.manzanita.trails.server",
-      arguments: [destination, "serve", "--port", "7412"],
+      arguments: [
+        destination, "serve", "--port", "7412",
+        ...(trustedOrigin ? ["--trusted-origin", normalizeTrustedOrigin(trustedOrigin)] : []),
+      ],
       runAtLoad: true,
       keepAliveOnFailure: true,
     },
@@ -106,23 +110,6 @@ function definitions(kind: InstallKind): LaunchDefinition[] {
       calendarHour: 3,
     },
   ]
-}
-
-function findRootProxy(value: unknown): string | null {
-  if (typeof value !== "object" || value === null) return null
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "/") {
-      if (typeof child === "string") return child
-      if (typeof child === "object" && child !== null) {
-        for (const field of ["Proxy", "proxy", "Target", "target"]) {
-          if (field in child && typeof child[field] === "string") return child[field]
-        }
-      }
-    }
-    const nested = findRootProxy(child)
-    if (nested) return nested
-  }
-  return null
 }
 
 function run(executable: string, args: ReadonlyArray<string>): { readonly exitCode: number; readonly stdout: string; readonly stderr: string } {
@@ -158,32 +145,40 @@ async function writableAncestor(path: string): Promise<void> {
 }
 
 async function atomicCopy(source: string, target: string): Promise<void> {
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+  secureDirectory(dirname(target), true, false)
+  inspectPrivateFile(target, false)
   try {
     if ((await realpath(source)) === (await realpath(target))) return
   } catch {}
   const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`
-  await copyFile(source, temporary)
-  await chmod(temporary, 0o700)
-  const handle = await open(temporary, "r")
+  await copyFile(source, temporary, constants.COPYFILE_EXCL)
   try {
-    await handle.sync()
+    const handle = await open(temporary, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const info = await handle.stat()
+      if (!info.isFile() || info.uid !== process.getuid?.() || info.nlink !== 1) {
+        throw new UnsafePathError(temporary, "invalid executable temporary file")
+      }
+      await handle.chmod(0o700)
+      const current = inspectPrivateFile(temporary, false)
+      if (!current || current.dev !== info.dev || current.ino !== info.ino) {
+        throw new UnsafePathError(temporary, "executable changed while opening")
+      }
+      await handle.sync()
+      inspectPrivateFile(target, false)
+      await rename(temporary, target)
+    } finally {
+      await handle.close()
+    }
   } finally {
-    await handle.close()
+    try { await unlink(temporary) } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+    }
   }
-  await rename(temporary, target)
 }
 
 async function atomicText(path: string, content: string): Promise<void> {
-  const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
-  const handle = await open(temporary, "wx", 0o600)
-  try {
-    await handle.writeFile(content)
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await rename(temporary, path)
+  atomicWritePrivateFile(path, content, false)
 }
 
 function tailscalePath(): string | null {
@@ -254,8 +249,9 @@ async function validatedLegacyFile(path: string, validate: (value: unknown) => b
   }
   let value: unknown
   try {
-    value = JSON.parse(await readFile(path, "utf8"))
-  } catch {
+    value = JSON.parse(readPrivateFile(path))
+  } catch (error) {
+    if (error instanceof UnsafePathError) throw error
     throw new Error(`legacy Trails file requires manual removal: ${path}`)
   }
   if (!validate(value)) throw new Error(`legacy Trails file requires manual removal: ${path}`)
@@ -274,6 +270,7 @@ function isLegacyAuth(value: unknown): boolean {
 }
 
 async function removeValidatedLegacyFile(path: string, expected: { readonly dev: number; readonly ino: number }): Promise<void> {
+  inspectPrivateFile(path)
   const current = await lstat(path)
   if (!current.isFile() || current.isSymbolicLink() || current.dev !== expected.dev || current.ino !== expected.ino) {
     throw new Error(`legacy Trails file changed during upgrade: ${path}`)
@@ -321,37 +318,40 @@ export async function install(options: InstallOptions): Promise<void> {
   }
   const service = options.kind === "server" ? normalizeTailscaleService(options.service) : undefined
   const exposeThroughTailscale = options.kind === "server" && (options.tailscale === true || service !== undefined)
-  const tailscale = exposeThroughTailscale ? tailscalePath() : null
-  if (exposeThroughTailscale && !tailscale) throw new Error("Tailscale is required for private network access")
+  let previousExposure: ExposureState | null = null
+  if (options.kind === "server") {
+    try {
+      const fd = openPrivateFile(exposurePath, "read", false)
+      try {
+        previousExposure = parseExposureState(JSON.parse(readFileSync(fd, "utf8")))
+      } finally {
+        closeSync(fd)
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+    }
+  }
+  const tailscale = options.kind === "server" ? tailscalePath() : null
+  const exposure = options.kind === "server" ? prepareExposure(
+    exposeThroughTailscale ? { mode: "tailscale", service } : { mode: "local" },
+    tailscale ? {
+      run: (args) => run(tailscale, args),
+      host: (service) => new URL(currentTailnetUrl(service)).hostname,
+    } : null,
+    previousExposure,
+  ) : null
   await writableAncestor(destination)
   await writableAncestor(launchAgentDirectory)
   await writableAncestor(stateDirectory)
 
-  if (tailscale && !service) {
-    const status = run(tailscale, ["serve", "status", "--json"])
-    if (status.exitCode !== 0) throw new Error("unable to inspect Tailscale Serve status")
-    let rootProxy: string | null
-    try {
-      rootProxy = findRootProxy(JSON.parse(status.stdout) as unknown)
-    } catch {
-      throw new Error("Tailscale Serve returned invalid status")
-    }
-    if (rootProxy && rootProxy !== tailscaleProxy) {
-      throw new Error(`Tailscale Serve root already points to ${rootProxy}`)
-    }
-  }
-
-  const planned = definitions(options.kind)
-  console.log(`Executable: ${process.execPath} -> ${destination}`)
+  const planned = launchDefinitions(options.kind, exposeThroughTailscale ? currentTailnetUrl(service) : undefined)
+  console.log(terminalText(`Executable: ${process.execPath} -> ${destination}`))
   for (const definition of planned) {
-    console.log(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`)
+    console.log(terminalText(`LaunchAgent ${definition.label}: ${definition.arguments.join(" ")}`))
   }
   if (options.kind === "server") {
-    if (exposeThroughTailscale) {
-      console.log(`Tailscale preflight: ${service ? `${service} https:443` : "node root"} -> ${tailscaleProxy}`)
-    } else {
-      console.log("Access: local only at http://127.0.0.1:7412/")
-    }
+    if (previousExposure) console.log(terminalText(`Previous access mode: ${previousExposure.mode}${previousExposure.mode === "tailscale" && previousExposure.service ? ` ${previousExposure.service}` : ""}`))
+    console.log(terminalText(exposure!.description))
     if (!aiConfig) console.warn("Summaries are off; run `trails summaries use auto` on the hub to enable them")
   }
   if (options.dryRun) return
@@ -366,13 +366,11 @@ export async function install(options: InstallOptions): Promise<void> {
   }
 
   await atomicCopy(process.execPath, destination)
-  await mkdir(stateDirectory, { recursive: true, mode: 0o700 })
-  await mkdir(launchAgentDirectory, { recursive: true, mode: 0o700 })
+  secureDirectory(stateDirectory, true)
+  secureDirectory(launchAgentDirectory, true, false)
   for (const definition of planned) {
     for (const suffix of [".log", ".error.log"]) {
-      const handle = await open(join(stateDirectory, `${definition.label}${suffix}`), "a", 0o600)
-      await handle.close()
-      await chmod(join(stateDirectory, `${definition.label}${suffix}`), 0o600)
+      closeSync(openPrivateFile(join(stateDirectory, `${definition.label}${suffix}`), "append"))
     }
     const plistPath = join(launchAgentDirectory, `${definition.label}.plist`)
     await atomicText(plistPath, renderPlist(definition))
@@ -392,13 +390,9 @@ export async function install(options: InstallOptions): Promise<void> {
     const kickstart = run(launchctl, ["kickstart", "-k", service])
     if (kickstart.exitCode !== 0) throw new Error(`failed to start ${definition.label}`)
   }
-  if (tailscale) {
-    const args = service
-      ? ["serve", `--service=${service}`, "--https=443", "--yes", tailscaleProxy]
-      : ["serve", "--bg", "--yes", tailscaleProxy]
-    const applied = run(tailscale, args)
-    if (applied.exitCode !== 0) {
-      throw new Error(`failed to configure Tailscale Serve: ${applied.stderr.trim()}`)
-    }
+  if (exposure) {
+    const verified = exposure.apply()
+    await atomicText(exposurePath, `${JSON.stringify(verified)}\n`)
+    console.log(exposureMessage(verified))
   }
 }

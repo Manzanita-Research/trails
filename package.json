@@ -24,12 +24,21 @@
     "docs:dev": "bun run --cwd apps/docs dev",
     "docs:build": "bun run --cwd apps/docs build",
     "herdr:build": "bash plugins/herdr-trails/build.sh",
-    "herdr:fixture": "bun plugins/herdr-trails/dev/server.ts"
+    "herdr:fixture": "bun plugins/herdr-trails/dev/server.ts",
+    "bb:build": "bb plugin build plugins/bb-plugin-trails",
+    "bb:check": "bun run --cwd plugins/bb-plugin-trails check",
+    "bb:test": "bun test plugins/bb-plugin-trails test/bb-plugin-contract.test.ts"
   },
   "dependencies": {
+    "@imagemagick/magick-wasm": "0.0.43",
     "effect": "4.0.0-rc.117",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.8",
+    "js-yaml": "^4.3.2",
+    "nanoid": "^3.3.19"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260727.1",
@@ -43,6 +52,6 @@
     "@vitejs/plugin-react": "^6.0.4",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
-    "wrangler": "^4.114.0"
+    "wrangler": "^4.132.0"
   }
 }

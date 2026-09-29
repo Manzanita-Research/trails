@@ -1,6 +1,8 @@
 import { Schema } from "effect"
 import type { LocalActivityTuple, Source, UtcActivityTuple } from "./domain"
+import { INGEST_LIMITS } from "./limits"
 import { HARNESS_IDS } from "./harnesses"
+import { CAPTURE_IMAGE_MAX_BYTES, CAPTURE_IMAGE_MAX_DIMENSION, CAPTURE_IMAGE_MAX_PIXELS } from "./capture-image-limits"
 
 const boundedString = (minimum: number, maximum: number) =>
   Schema.String.check(Schema.isLengthBetween(minimum, maximum))
@@ -17,10 +19,22 @@ const positiveInt = Schema.Int.check(Schema.isGreaterThan(0))
 const intBetween = (minimum: number, maximum: number) => Schema.Int.check(Schema.isBetween({ minimum, maximum }))
 
 export const SourceSchema = Schema.Literals(["claude", "codex", "omp", "pi"])
+// Keep UTC instants nonnegative, as required by activity minutes. Reserve the
+// final UTC day of year 9999 so localization in any IANA zone stays four-digit.
+export const MIN_TIMESTAMP_MS = 0
+export const MAX_TIMESTAMP_MS = Date.parse("9999-12-31T00:00:00.000Z") - 1
+export const MAX_UTC_MINUTE = Math.floor(MAX_TIMESTAMP_MS / 60_000)
+
+export const UtcMinuteSchema = intBetween(0, MAX_UTC_MINUTE)
+
 export const CanonicalTimestampSchema = Schema.String.check(
   Schema.makeFilter((value) => {
     const parsed = new Date(value)
-    return (!Number.isNaN(parsed.getTime()) && parsed.toISOString() === value) || "must be canonical UTC milliseconds"
+    return (
+      parsed.getTime() >= MIN_TIMESTAMP_MS &&
+      parsed.getTime() <= MAX_TIMESTAMP_MS &&
+      parsed.toISOString() === value
+    ) || "must be canonical UTC milliseconds in the supported calendar range"
   }),
 )
 export const LocalDateSchema = Schema.String.check(
@@ -54,7 +68,7 @@ const LocalActivitySchema = Schema.Array(LocalActivityTupleSchema).check(
 )
 
 export const UtcActivityTupleSchema = Schema.Tuple([
-  nonNegativeInt,
+  UtcMinuteSchema,
   positiveInt,
   nonNegativeInt,
 ]).check(
@@ -62,8 +76,9 @@ export const UtcActivityTupleSchema = Schema.Tuple([
 )
 
 const UtcActivitySchema = Schema.Array(UtcActivityTupleSchema).check(
-  Schema.isMinLength(1),
+  Schema.isLengthBetween(1, INGEST_LIMITS.sessionTuples),
   Schema.makeFilter((activity) => {
+    if (activity.at(-1)![0] - activity[0][0] > INGEST_LIMITS.spanMinutes) return "activity span exceeds 31 days"
     let previous = -1
     for (const [utcMinute] of activity) {
       if (utcMinute <= previous) return "activity tuples must be unique and sorted"
@@ -93,9 +108,10 @@ const CaptureAttentionV1Schema = Schema.Array(CaptureAttentionTupleV1Schema).che
   }),
 )
 
-const CaptureUtcAttentionV1Schema = Schema.Array(nonNegativeInt).check(
-  Schema.isLengthBetween(1, 10_080),
+const CaptureUtcAttentionV1Schema = Schema.Array(UtcMinuteSchema).check(
+  Schema.isLengthBetween(1, INGEST_LIMITS.sessionTuples),
   Schema.makeFilter((attention) => {
+    if (attention.at(-1)! - attention[0] > INGEST_LIMITS.spanMinutes) return "attention span exceeds 31 days"
     let previous = -1
     for (const utcMinute of attention) {
       if (utcMinute <= previous) return "attention minutes must be unique and sorted"
@@ -106,7 +122,7 @@ const CaptureUtcAttentionV1Schema = Schema.Array(nonNegativeInt).check(
 )
 
 const strictBase64 = Schema.String.check(
-  Schema.isMinLength(4),
+  Schema.isLengthBetween(4, Math.ceil(CAPTURE_IMAGE_MAX_BYTES / 3) * 4),
   Schema.makeFilter((value) => {
     if (
       value.startsWith("data:") ||
@@ -116,17 +132,17 @@ const strictBase64 = Schema.String.check(
       return "must be raw canonical base64"
     }
     const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0
-    return (value.length / 4) * 3 - padding <= 500 * 1024 || "decoded image exceeds 500 KiB"
+    return (value.length / 4) * 3 - padding <= CAPTURE_IMAGE_MAX_BYTES || "decoded image exceeds 500 KiB"
   }),
 )
 
 export const CaptureImageV1Schema = Schema.Struct({
   index: intBetween(0, 3),
   mime: Schema.Literals(["image/jpeg", "image/png", "image/webp"]),
-  width: intBetween(1, 16_384),
-  height: intBetween(1, 16_384),
+  width: intBetween(1, CAPTURE_IMAGE_MAX_DIMENSION),
+  height: intBetween(1, CAPTURE_IMAGE_MAX_DIMENSION),
   bytes: strictBase64,
-})
+}).check(Schema.makeFilter((image) => image.width * image.height <= CAPTURE_IMAGE_MAX_PIXELS || "image exceeds pixel limit"))
 
 const MidjourneyImagesV1Schema = Schema.Array(CaptureImageV1Schema).check(
   Schema.isLengthBetween(4, 4),
@@ -180,24 +196,60 @@ const GranolaCapturePayloadV1Schema = Schema.Struct({
   webUrl: Schema.NullOr(GranolaNoteUrlSchema),
 })
 
+const minutesWithinInterval = (
+  minutes: ReadonlyArray<number>,
+  start: string,
+  end: string | null,
+): boolean | string => {
+  const first = Math.floor(Date.parse(start) / 60_000)
+  const last = end === null ? MAX_UTC_MINUTE : Math.floor(Date.parse(end) / 60_000)
+  return minutes.every((minute) => minute >= first && minute <= last) || "minutes must fall within the timestamp interval"
+}
+
+const validSessionInterval = <A extends { readonly start: string; readonly end: string }>(session: A): boolean | string =>
+  session.start <= session.end || "start must not be after end"
+
 const validCaptureInterval = <A extends { readonly startedAt: string; readonly endedAt: string | null }>(
   capture: A,
 ): boolean | string =>
-  capture.endedAt === null || capture.endedAt >= capture.startedAt || "endedAt must not be before startedAt"
+  capture.endedAt === null ||
+  (capture.endedAt >= capture.startedAt && Date.parse(capture.endedAt) - Date.parse(capture.startedAt) <= INGEST_LIMITS.spanMinutes * 60_000) ||
+  "capture interval must be ordered and at most 31 days"
+
+export const SessionTimingSchema = Schema.Struct({
+  start: CanonicalTimestampSchema,
+  end: CanonicalTimestampSchema,
+  activity: UtcActivitySchema,
+}).check(
+  Schema.makeFilter(validSessionInterval),
+  Schema.makeFilter((session) => minutesWithinInterval(session.activity.map(([minute]) => minute), session.start, session.end)),
+)
+
+export const CaptureTimingSchema = Schema.Struct({
+  startedAt: CanonicalTimestampSchema,
+  endedAt: Schema.NullOr(CanonicalTimestampSchema),
+  attentionMinutes: CaptureUtcAttentionV1Schema,
+}).check(
+  Schema.makeFilter(validCaptureInterval),
+  Schema.makeFilter((capture) => minutesWithinInterval(capture.attentionMinutes, capture.startedAt, capture.endedAt)),
+)
+
+const isValidSessionTiming = Schema.is(SessionTimingSchema)
+const isValidCaptureTiming = Schema.is(CaptureTimingSchema)
 
 export const MidjourneyCaptureV1Schema = Schema.Struct({
   ...CaptureCommonV1Fields,
   source: Schema.Literal("midjourney"),
   payload: MidjourneyCapturePayloadV1Schema,
   images: MidjourneyImagesV1Schema,
-}).check(Schema.makeFilter(validCaptureInterval))
+}).check(Schema.makeFilter((capture) => isValidCaptureTiming(capture)))
 
 export const GranolaCaptureV1Schema = Schema.Struct({
   ...CaptureCommonV1Fields,
   source: Schema.Literal("granola"),
   payload: GranolaCapturePayloadV1Schema,
   images: GranolaImagesV1Schema,
-}).check(Schema.makeFilter(validCaptureInterval))
+}).check(Schema.makeFilter((capture) => isValidCaptureTiming(capture)))
 
 export const IngestCaptureV1Schema = Schema.Union([MidjourneyCaptureV1Schema, GranolaCaptureV1Schema])
 
@@ -215,8 +267,9 @@ export const IngestSessionV2Schema = Schema.Struct({
   activity: UtcActivitySchema,
   digest: nullableBoundedString(9000),
 }).check(
+  Schema.makeFilter((session) => isValidSessionTiming(session)),
   Schema.makeFilter((session) => {
-    if (session.start > session.end) return "start must not be after end"
+    if (Date.parse(session.end) - Date.parse(session.start) > INGEST_LIMITS.spanMinutes * 60_000) return "session span exceeds 31 days"
     if (session.userEvents > session.events) return "userEvents exceeds events"
     let events = 0
     let userEvents = 0
@@ -237,7 +290,7 @@ export const IngestRequestV2Schema = Schema.Struct({
   protocolVersion: Schema.Literal(2),
   device: DeviceV1Schema,
   sessions: Schema.Array(IngestSessionV2Schema).check(Schema.isLengthBetween(1, 50)),
-})
+}).check(Schema.makeFilter(body => body.sessions.reduce((sum, session) => sum + session.activity.length, 0) <= INGEST_LIMITS.batchTuples || "batch tuple limit exceeded"))
 export const CollectionMetricsV1Schema = Schema.Struct({
   discovered: nonNegativeInt,
   changed: nonNegativeInt,
@@ -273,7 +326,7 @@ export const IngestCapturesRequestV1Schema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   device: DeviceV1Schema,
   captures: Schema.Array(IngestCaptureV1Schema).check(Schema.isLengthBetween(1, 20)),
-})
+}).check(Schema.makeFilter(body => body.captures.reduce((sum, capture) => sum + capture.attentionMinutes.length, 0) <= INGEST_LIMITS.batchTuples || "batch tuple limit exceeded"))
 
 export const MachineStatusV1Schema = Schema.Struct({
   id: trimmedString(1, 128),
@@ -349,7 +402,7 @@ export const BootstrapSessionV1Schema = Schema.Struct({
   userEvents: nonNegativeInt,
   firstPrompt: nullableBoundedString(240),
   activity: LocalActivitySchema,
-})
+}).check(Schema.makeFilter(validSessionInterval))
 
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String)
 
@@ -391,6 +444,7 @@ export const BootstrapCaptureImageV1Schema = Schema.Struct({
   url: boundedString(1, 512),
 })
 
+// Display fields only; summaryInput belongs to the ingest/storage boundary.
 const BootstrapCaptureCommonV1Fields = {
   id: boundedString(1, 64),
   project: Schema.NullOr(trimmedString(1, 4096)),
@@ -398,7 +452,6 @@ const BootstrapCaptureCommonV1Fields = {
   title: trimmedString(1, 200),
   startedAt: CanonicalTimestampSchema,
   endedAt: Schema.NullOr(CanonicalTimestampSchema),
-  summaryInput: trimmedString(1, 12_000),
   attentionMinutes: CaptureAttentionV1Schema,
   updatedAt: CanonicalTimestampSchema,
   images: Schema.Array(BootstrapCaptureImageV1Schema).check(Schema.isMaxLength(4)),
@@ -414,13 +467,13 @@ export const BootstrapMidjourneyCaptureV1Schema = Schema.Struct({
     hasParent: Schema.Boolean,
     parentCaptureId: Schema.NullOr(boundedString(1, 64)),
   }),
-})
+}).check(Schema.makeFilter(validCaptureInterval))
 
 export const BootstrapGranolaCaptureV1Schema = Schema.Struct({
   ...BootstrapCaptureCommonV1Fields,
   source: Schema.Literal("granola"),
   payload: GranolaCapturePayloadV1Schema,
-})
+}).check(Schema.makeFilter(validCaptureInterval))
 
 export const BootstrapCaptureV1Schema = Schema.Union([
   BootstrapMidjourneyCaptureV1Schema,

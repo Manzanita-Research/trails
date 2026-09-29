@@ -22,6 +22,8 @@ The hub process always binds only to `127.0.0.1:7412`. In the default one-Mac mo
 
 Multi-Mac setup adds Tailscale as the private network and HTTPS access boundary. `--tailscale` uses the hub machine's MagicDNS URL. `--service svc:trails` instead advertises through a pre-defined Tailscale Service and reports the stable `https://trails.<tailnet>.ts.net/` URL. Named services are opt-in because they require a tag-authenticated host, tailnet administrator configuration, and service-host approval. Tailscale does not run or store Trails, and Trails never opens a LAN socket.
 
+Server installation persists that exact HTTPS origin as a `--trusted-origin` LaunchAgent argument. The hub accepts only configured Host authorities (plus loopback names at its listening port), ignoring forwarding headers. Browser mutation origins must match the addressed authority and configured public scheme; Fetch Metadata must indicate same-origin when present. Requests carrying browser metadata without Origin are rejected. Native collectors may omit both. Existing installations must rerun setup with their exposure options to populate this allowlist; a Tailscale hostname change likewise requires setup again. These boundary checks are separate from client authentication.
+
 ## Standalone distribution
 
 `bun run build` creates `dist/trails-darwin-arm64` and `dist/trails-darwin-x64`. Each executable embeds:
@@ -35,7 +37,7 @@ Target Macs run the matching file without Bun, Node, a source checkout, or sidec
 
 ## Release transport
 
-`bun run release:stage` runs the production web and standalone binary builds, then writes a deterministic product-owned staging directory under `dist/release/trails/<version>/`. It contains both architecture binaries, the POSIX installer pinned to immutable HTTPS paths and SHA-256 hashes, `SHA256SUMS`, and `release-input.json`. Trails does not contain Cloudflare credentials or assume a sibling checkout path.
+`bun run release:stage` runs the production web and standalone binary builds, then writes a deterministic product-owned staging directory under `dist/release/trails/<version>/`. It contains both architecture binaries, the POSIX installer pinned to immutable HTTPS paths and SHA-256 hashes, `SHA256SUMS`, `release-input.json`, and a local `release-audit.json` report binding the audited asset/module inventory and policy to the staged hashes. Staging statically validates both Mach-O architectures, the Bun payload allowlist, privacy patterns, installer syntax, and descriptor integrity. The report is reproducible with `bun scripts/stage-release.ts --audit <staging-directory>`; it is not a public transport object. Trails does not contain Cloudflare credentials or assume a sibling checkout path.
 
 The public release boundary begins after staging. The shared [`Manzanita-Research/releases`](https://github.com/Manzanita-Research/releases) repository validates the registered product, manifest schema, file types, paths, sizes, and hashes; refuses any immutable collision; uploads to a private R2 bucket; and exposes only read-only `GET`/`HEAD` access through `https://releases.manzanita.dev/`.
 
@@ -87,7 +89,44 @@ Remove `--dry-run` after review. Selecting an older version rolls back without d
 
 Every bootstrap-visible change increments one monotonic revision. Replayed ingestion, last-seen timestamps, duplicate engagement creation, and exact preference no-ops do not. Browsers poll `/api/bootstrap?after=<revision>` while visible and retain the last snapshot through temporary failures.
 
+Session and capture timestamps must be canonical UTC milliseconds from `1970-01-01T00:00:00.000Z` through `9999-12-30T23:59:59.999Z`. UTC activity/attention minutes must be integers in that range and fall within the record's start/end minute buckets (inclusive); a null capture end leaves the upper interval open. The final UTC day of year 9999 is reserved so timezone conversion stays within the four-digit calendar. Invalid batches are rejected before any writes.
+
+Migration 7 recovers existing invalid session/capture timing by moving each affected record and its children into local `timestamp_quarantine_*` tables in the same database. These tables preserve original data, including image bytes, digests, summaries, and jobs, but are excluded from bootstrap and processing. Session recovery also clears derived day summaries and rebuilds day jobs; any recovery increments the revision once. The migration is transactional and runs once. Corrected records can be ingested again; archived copies remain available for manual inspection through SQLite and are included in database backups. Treat them as private data, just like the active tables.
+
 There is no scan-blob or localStorage compatibility path. Transcript history is re-ingested from source logs.
+
+## Hub authentication and pairing
+
+Network access and the Host/Origin allowlist are followed by application authentication. The owning OS account initializes a random owner token beside the database (`<db-path>.owner-token`, mode 0600); HTTP callers cannot bootstrap an owner. `trails auth owner` retrieves it for browser sign-in. The database stores only SHA-256 token hashes. Browser sessions last at most 12 hours, end on server restart/sign-out, and recheck the owner's credential ID on every request so owner rotation invalidates them. HTTPS authorities use a Secure, host-only `__Host-` cookie; loopback uses a separate host-only cookie. Cookie writes also require a matching Origin.
+
+The owner controls reads and administrative writes, including summary activation. Read credentials have no write permissions. Collector credentials have only session/capture ingest and collector-status permission and must match the payload's device ID. An owner cannot accidentally use the owner credential as a collector token. Neither anonymous callers nor collectors can list registered machine IDs.
+
+`trails setup hub` provisions its local collector. For a spoke, the hub account issues a credential file using `trails auth pair --server HUB_URL --output pairing.json [--device-id EXISTING_ID] [--name NAME]`. Transfer it privately, then run `trails setup join HUB_URL --pairing-file pairing.json` on the spoke. The server URL must match, including the origin/port. Import stores the credential in the mode-0600 collector config; upload progress files never contain the token. Native uploads send a Bearer header and refuse redirects. Changing the hub or resetting the device ID clears the old credential and requires pairing again.
+
+Pairing files are long-lived credentials until revoked, not one-time public invitations. `trails auth list` lists IDs and scopes, and `trails auth revoke ID` removes a credential immediately without removing collected history. Multiple credentials can bind the same device during replacement; revoke old credentials explicitly. `trails auth rotate-owner` rotates owner access independently. BB and Herdr use separate, URL-bound mode-0600 `~/.config/trails/reader.json` credentials issued with `trails auth read --server HUB_URL --output reader.json`.
+
+Existing anonymous collectors stop uploading after upgrade until paired. Preserve their existing device IDs and rerun hub setup with the same exposure options. See [the authentication migration](README.md#authentication-and-upgrading-an-existing-hub) for local, tailnet, and read-integration steps. No live installation is changed by building this source. The trust boundary is the single owner account, not other local accounts or every reachable tailnet peer.
+
+### Capture ownership and provider accounts
+
+Pairing a collector does not grant access to another device's captures. Without an explicit account assignment, capture V1 uses a legacy namespace per provider: the first submitting device owns each provider record. Replays from another device return HTTP 403, including identical replays. The whole batch rolls back, including machine metadata, images, attention, project attribution, and the state revision. Upgrading preserves the stored machine as the original owner; it cannot reconstruct ownership already overwritten before this fix.
+
+For the same provider account collected on multiple devices, the hub's owning OS account must assign each paired device to the same opaque account ID. Deduplication then uses `(account ID, provider, provider record ID)`. Devices assigned to different accounts can store identical provider record IDs independently. Account IDs are local labels, not provider credentials, and Trails does not verify provider login identity. Only assign devices after confirming they collect the same account. Each device has one account assignment per provider; ingest payloads cannot select or change it.
+
+```sh
+trails auth capture-account --source midjourney --device-id DEVICE_A --account personal-art
+trails auth capture-account --source midjourney --device-id DEVICE_B --account personal-art
+```
+
+Assignments authorize future writes in that account; they do not move existing history. To reconcile a legacy capture, explicitly select its numeric capture ID and expected original owner after assigning that owner device to the target account:
+
+```sh
+trails auth capture-reconcile --source midjourney --capture-id 42 --owner-device-id DEVICE_A --account personal-art
+```
+
+Reconciliation preserves the capture ID, content, images, attribution, and original owner. It refuses a mismatched owner/source, an already scoped capture, or an existing record with the same key in the destination account. There is no automatic merge, cross-account transfer, or collector-controlled transfer. Authorized subsequent replays may update content and the last-uploading machine, while the original owner remains recorded. Null project attribution on replay preserves existing attribution. Parent-capture links resolve only within the same account (or the same legacy owner).
+
+Use `--source granola` for Granola. All commands accept `--db PATH`. Inspect assignments locally with `SELECT * FROM capture_device_accounts` and legacy IDs with `SELECT id, source, owner_machine_id FROM captures WHERE account_id = ''` in the hub database. Remove an assignment with `trails auth capture-account --source midjourney --device-id DEVICE_B --revoke`; this removes access to that account and returns future uploads to legacy ownership rules, without deleting history. Revoke the collector credential with `trails auth revoke ID` to stop all uploads. Reassigning a device to a different account leaves its previous account's history intact.
 
 ## Periodic collectors
 
@@ -153,7 +192,9 @@ The compiled installer manages only these labels:
 | `com.manzanita.trails.collector` | RunAtLoad, every 60s | `trails collect --once` |
 | `com.manzanita.trails.backup` | 03:00 daily | `trails backup --output-dir … --retain 14` |
 
-Program arguments and working directories are absolute. The server resolves supported harnesses from owner-local executable directories and standard Homebrew/system paths rather than relying on an interactive shell. Logs are mode 0600 under `~/.local/state/trails`. `install --dry-run` performs preflight and prints the complete plan without writing files or changing processes. Server installation requires Tailscale only when `--tailscale` or `--service` exposure is requested; collector installation requires collector configuration.
+Program arguments and working directories are absolute. The server resolves supported harnesses from owner-local executable directories and standard Homebrew/system paths rather than relying on an interactive shell. Logs are mode 0600 under `~/.local/state/trails`. `install --dry-run` performs preflight and prints the complete plan without writing files or changing processes. Collector installation requires collector configuration.
+
+Server installation inspects the full Tailscale Serve configuration whenever the CLI is available. Omitting `--tailscale` and `--service` intentionally removes only recognized Trails HTTPS root proxies, including node and named-service mappings, using explicit `--set-path=/` removal. Switching exposure modes removes the old Trails roots. Other routes remain intact; custom/foreground Trails proxies and unknown configuration require manual review. Failed inspection, removal, or verification aborts setup before it advertises success. The last successful mode is recorded in owner-only `~/.local/state/trails/exposure.json` and never substitutes for live inspection. Without a CLI, a fresh installation reports loopback access with **unverified** Tailscale exposure; a saved Tailscale mode blocks setup until the CLI is available. Keep the exposure flags on upgrades to retain remote access.
 
 The installer bootouts, bootstraps, and kickstarts only its exact labels. Trails invokes the chosen harness but never edits or reads its provider configuration or credential files.
 

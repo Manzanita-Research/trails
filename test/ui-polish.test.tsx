@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createApp } from "../server/app"
+import { createApp } from "./authenticated-app"
 import type { HarnessControl } from "../server/harnesses/control"
 import { openDatabase, type TrailsDb } from "../server/db"
 import { DAY_SYSTEM, SESSION_SYSTEM } from "../shared/prompts"
@@ -32,7 +32,7 @@ const sessions: IngestRequestV2 = {
       source: "omp",
       cwd: "/Users/tester/code/acme/very-long-project-name",
       branch: "feat/clarity",
-      start: "2026-07-01T15:55:00.000Z",
+      start: "2026-07-01T15:00:00.000Z",
       end: "2026-07-01T16:10:00.000Z",
       events: 8,
       userEvents: 4,
@@ -129,7 +129,7 @@ async function makeLoadedHarness({
   const harness = harnessRuntime(summarization === "effective")
   const db = openDatabase(":memory:", { defaultTimezone: "America/Los_Angeles" })
   databases.add(db)
-  const app = createApp({
+  const app = createApp({ trustedOrigins: ["http://trails.test"],
     db,
     now: () => fixedNow,
     harnesses: harness.control,

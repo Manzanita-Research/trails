@@ -1,9 +1,13 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { createHash } from "node:crypto"
 import { normalizeCwd } from "../shared/domain"
+import { IngestCapturesRequestV1Schema } from "../shared/protocol"
 import type { IngestCaptureV1, IngestCapturesRequestV1 } from "../shared/protocol"
+import type { Credential } from "./auth"
+import { checkDisk, checkQueue, checkStorage } from "./resources"
 import type { TrailsDb } from "./db"
 import type { IngestResult } from "./ingest"
+import { CaptureImageValidationError, validateCaptureImages } from "./capture-images"
 
 export class CaptureIngestError extends Error {
   readonly _tag = "CaptureIngestError"
@@ -12,7 +16,13 @@ export class CaptureIngestError extends Error {
   }
 }
 
+export class CaptureOwnershipError extends Error {
+  readonly _tag = "CaptureOwnershipError"
+  constructor() { super("capture ownership does not permit this write") }
+}
+
 type ExistingCapture = {
+  readonly owner_machine_id: string
   readonly id: number
   readonly machine_id: string
   readonly project: string | null
@@ -53,12 +63,25 @@ export function captureContentHash(capture: IngestCaptureV1): string {
 export function ingestCaptures(
   db: TrailsDb,
   input: IngestCapturesRequestV1,
+  credential: Credential,
   now = Date.now(),
-): Effect.Effect<IngestResult, CaptureIngestError> {
-  return Effect.try({
+): Effect.Effect<IngestResult, CaptureIngestError | CaptureOwnershipError | CaptureImageValidationError> {
+  return Effect.tryPromise({
+    try: () => validateCaptureImages(input),
+    catch: (cause) => cause instanceof CaptureImageValidationError ? cause : new CaptureIngestError(cause),
+  }).pipe(Effect.flatMap((images) => Effect.try({
     try: () =>
       db.sqlite.transaction(() => {
         const sqlite = db.sqlite
+        Schema.decodeUnknownSync(IngestCapturesRequestV1Schema)(input)
+        if (credential.role !== "collector" || credential.deviceId !== input.device.id) {
+          throw new CaptureOwnershipError()
+        }
+        const deviceId = credential.deviceId
+        if (!sqlite.query("SELECT 1 FROM hub_credentials WHERE id = ? AND role = 'collector' AND device_id = ?")
+          .get(credential.id, deviceId)) {
+          throw new CaptureOwnershipError()
+        }
         let accepted = 0
         let unchanged = 0
         let changed = false
@@ -88,13 +111,22 @@ export function ingestCaptures(
         )
 
         for (const capture of input.captures) {
+          // Scope comes only from hub-owner configuration, never from provider payloads.
+          const binding = sqlite.query(
+            "SELECT account_id FROM capture_device_accounts WHERE source = ? AND device_id = ?",
+          ).get(capture.source, deviceId) as { account_id: string } | null
+          const accountId = binding?.account_id ?? ""
           const contentHash = captureContentHash(capture)
           const requestedProject = capture.project === null ? null : normalizeCwd(capture.project)
           const existing = sqlite
             .query(
-              "SELECT id, machine_id, project, content_hash FROM captures WHERE source = ? AND source_record_id = ?",
+              "SELECT id, owner_machine_id, machine_id, project, content_hash FROM captures WHERE account_id = ? AND source = ? AND source_record_id = ?",
             )
-            .get(capture.source, capture.sourceRecordId) as ExistingCapture | null
+            .get(accountId, capture.source, capture.sourceRecordId) as ExistingCapture | null
+          // Even an identical replay must be authorized, before attribution or child writes.
+          if (existing && accountId === "" && existing.owner_machine_id !== deviceId) {
+            throw new CaptureOwnershipError()
+          }
           const project = requestedProject ?? existing?.project ?? null
           const contentChanged = existing?.content_hash !== contentHash
           const provenanceChanged = existing?.machine_id !== input.device.id
@@ -104,6 +136,8 @@ export function ingestCaptures(
             unchanged++
             continue
           }
+
+          if (accepted === 0) checkDisk(db)
 
           const payloadJson = JSON.stringify(providerPayload(capture))
           let captureId: number
@@ -134,12 +168,14 @@ export function ingestCaptures(
           } else {
             const inserted = sqlite
               .query(
-                `INSERT INTO captures(machine_id, source, source_record_id, project, project_hint, title,
+                `INSERT INTO captures(machine_id, owner_machine_id, account_id, source, source_record_id, project, project_hint, title,
                    started_at, ended_at, summary_input, provider_payload, content_hash, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
               )
               .get(
-                input.device.id,
+                deviceId,
+                deviceId,
+                accountId,
                 capture.source,
                 capture.sourceRecordId,
                 project,
@@ -158,7 +194,7 @@ export function ingestCaptures(
           if (!existing || contentChanged) {
             for (const utcMinute of capture.attentionMinutes) insertAttention.run(captureId, utcMinute)
             for (const image of capture.images) {
-              const bytes = Buffer.from(image.bytes, "base64")
+              const bytes = images.get(image.bytes)!
               insertImage.run(
                 captureId,
                 image.index,
@@ -174,6 +210,11 @@ export function ingestCaptures(
           changed = true
         }
 
+        if (accepted > 0) {
+          checkStorage(db, input.device.id)
+          checkQueue(db, input.device.id)
+        }
+
         const revisionRow = sqlite.query("SELECT value FROM meta WHERE key = 'state_revision'").get() as {
           value: string
         }
@@ -183,7 +224,7 @@ export function ingestCaptures(
           sqlite.query("UPDATE meta SET value = ? WHERE key = 'state_revision'").run(String(revision))
         }
         return { accepted, unchanged, revision }
-      })(),
-    catch: (cause) => new CaptureIngestError(cause),
-  })
+      }).immediate(),
+    catch: (cause) => cause instanceof CaptureOwnershipError ? cause : new CaptureIngestError(cause),
+  })))
 }
