@@ -1,5 +1,5 @@
 import { createAuthentication, credentialFor, type Credential } from "./auth"
-import { Effect, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 import { Blob as NodeBlob } from "node:buffer"
 import { constants } from "node:fs"
 import { lstat, open, realpath } from "node:fs/promises"
@@ -163,7 +163,7 @@ async function readJson(request: Request, maximumBytes: number): Promise<unknown
   }
 }
 
-function decodeBody<S extends Schema.Schema.AnyNoContext>(schema: S, input: unknown): Schema.Schema.Type<S> {
+function decodeBody<S extends Schema.Decoder<unknown>>(schema: S, input: unknown): S["Type"] {
   try {
     return decodeExact(schema, input)
   } catch {
@@ -581,9 +581,9 @@ function checkTupleCounts(input: unknown, key: string, activityKey: string, maxi
 }
 
 async function runIngest<A>(effect: Effect.Effect<A, { readonly cause: unknown }>): Promise<A> {
-  const result = await Effect.runPromise(Effect.either(effect))
-  if (result._tag === "Left") throw result.left.cause
-  return result.right
+  const result = await Effect.runPromise(Effect.result(effect))
+  if (Result.isFailure(result)) throw result.failure.cause
+  return result.success
 }
 
 async function apiResponse(options: AppOptions, request: Request, url: URL, now: number, credential: Credential): Promise<Response> {
@@ -611,18 +611,18 @@ async function apiResponse(options: AppOptions, request: Request, url: URL, now:
     checkTupleCounts(input, "captures", "attentionMinutes", 20)
     const body = decodeBody(IngestCapturesRequestV1Schema, input)
     requireDevice(credential, body.device.id)
-    const result = await Effect.runPromise(Effect.either(ingestCaptures(db, body, credential, now)))
-    if (result._tag === "Left") {
-      if (result.left._tag === "CaptureOwnershipError") {
+    const result = await Effect.runPromise(Effect.result(ingestCaptures(db, body, credential, now)))
+    if (Result.isFailure(result)) {
+      if (result.failure._tag === "CaptureOwnershipError") {
         throw new ApiError("forbidden", "capture ownership does not permit this write", 403)
       }
-      if (result.left._tag === "CaptureImageValidationError") {
-        throw new ApiError("invalid_request", result.left.message, 400)
+      if (result.failure._tag === "CaptureImageValidationError") {
+        throw new ApiError("invalid_request", result.failure.message, 400)
       }
       // Let the shared handler map quota and disk failures (507/429) like /api/ingest.
-      throw result.left.cause
+      throw result.failure.cause
     }
-    return jsonResponse(result.right)
+    return jsonResponse(result.success)
   }
   if (url.pathname.startsWith("/api/capture-images/")) {
     if (request.method !== "GET" && request.method !== "HEAD") {

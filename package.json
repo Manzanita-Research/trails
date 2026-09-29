@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@imagemagick/magick-wasm": "0.0.43",
-    "effect": "^3.22.0",
+    "effect": "4.0.0-rc.117",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

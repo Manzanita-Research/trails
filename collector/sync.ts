@@ -1,5 +1,5 @@
 import { INGEST_LIMITS } from "../shared/limits"
-import { Effect } from "effect"
+import { Effect, Result } from "effect"
 import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
@@ -86,7 +86,7 @@ function inspectChangedFile(file: SourceFile): Effect.Effect<ParsedFile, never> 
       error: null,
     }
   }).pipe(
-    Effect.catchAll((cause) =>
+    Effect.catch((cause) =>
       Effect.succeed({
         file,
         fingerprint: { size: 0, mtimeMs: 0 },
@@ -205,18 +205,18 @@ function collectionProgram(
         index++
       }
       const sessions = batch.map((item) => decodeExact(IngestSessionV2Schema, item.session))
-      const outcome = yield* Effect.either(
+      const outcome = yield* Effect.result(
         Effect.tryPromise({
           try: (signal) => uploadBatch(target, sessions, fetcher, sleep, options.token, signal, options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS),
           catch: (cause) => (cause instanceof Error ? cause : new Error("upload_error")),
         }),
       )
-      if (outcome._tag === "Left") {
-        errors.push(outcome.left instanceof Error ? outcome.left.message : "upload_error")
+      if (Result.isFailure(outcome)) {
+        errors.push(outcome.failure instanceof Error ? outcome.failure.message : "upload_error")
         firstErrorCode ??= "upload_error"
         continue
       }
-      revision = outcome.right
+      revision = outcome.success
       uploaded += batch.length
       for (const item of batch) {
         if (item.stable) nextFiles[item.file.path] = item.fingerprint
@@ -297,19 +297,19 @@ function ownedCollectionProgram(
   target: CollectorTarget,
 ): Effect.Effect<CollectionResult, Error | CollectorError> {
   return Effect.gen(function* () {
-    const outcome = yield* Effect.either(collectionProgram(options, target))
+    const outcome = yield* Effect.result(collectionProgram(options, target))
     const fetcher = options.fetch ?? globalThis.fetch
-    if (outcome._tag === "Right") {
+    if (Result.isSuccess(outcome)) {
       yield* reportCollectorStatus(
         target,
-        { status: "processed", metrics: metricsOf(outcome.right), error: null },
+        { status: "processed", metrics: metricsOf(outcome.success), error: null },
         fetcher,
         options.token,
         options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
       )
-      return outcome.right
+      return outcome.success
     }
-    const failure = outcome.left
+    const failure = outcome.failure
     yield* reportCollectorStatus(
       target,
       {
@@ -340,9 +340,9 @@ export function runCollection(options: CollectionOptions): Effect.Effect<Collect
     Effect.flatMap((target) => {
       const statePath = resolve(options.statePath ?? DEFAULT_STATE_PATH)
       return withCollectorLock(statePath, ownedCollectionProgram(options, target).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: options.cycleTimeoutMs ?? CYCLE_TIMEOUT_MS,
-          onTimeout: () => new Error("collector cycle timed out"),
+          orElse: () => Effect.fail(new Error("collector cycle timed out")),
         }),
       ))
     }),

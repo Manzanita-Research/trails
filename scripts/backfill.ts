@@ -61,7 +61,7 @@ const download = (key: string, rec: Uploaded) =>
     if (hash !== rec.sha256) return yield* Effect.fail(new Error(`sha mismatch for ${key}`))
     return "downloaded"
   }).pipe(
-    Effect.retry(Schedule.exponential("2 seconds").pipe(Schedule.compose(Schedule.recurs(3)))),
+    Effect.retry(Schedule.exponential("2 seconds").pipe(Schedule.upTo({ times: 3 }))),
     Effect.timeout("120 seconds"),
   )
 
@@ -89,7 +89,7 @@ const main = Effect.gen(function* () {
             if (done % 25 === 0) console.log(`  ${done}/${mains.length}`)
           }),
         ),
-        Effect.catchAll((e) =>
+        Effect.catch((e) =>
           Effect.sync(() => {
             console.error(`  FAILED ${key}: ${e}`)
             return "failed" as const
