@@ -167,9 +167,9 @@ printf '%s\\n' "\${OPENCODE_CONFIG_CONTENT-unset}"
         executable: "/fake/omp",
         runner: async () => processResult({ exitCode: 1, stderr: item.stderr, timedOut: item.timedOut }),
       })
-      const outcome = await Effect.runPromise(Effect.either(summarizer.summarize("session", "digest")))
-      expect(outcome._tag).toBe("Left")
-      if (outcome._tag === "Left") expect(outcome.left.errorClass).toBe(item.expected)
+      const outcome = await Effect.runPromise(Effect.result(summarizer.summarize("session", "digest")))
+      expect(outcome._tag).toBe("Failure")
+      if (outcome._tag === "Failure") expect(outcome.failure.errorClass).toBe(item.expected)
     }
   })
 })
