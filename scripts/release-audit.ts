@@ -10,6 +10,16 @@ export const fonts = [
   "switzer-300", "switzer-400", "switzer-500", "switzer-600",
 ].map((name) => `fonts/${name}.woff2`)
 export const digest = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex")
+// Server runtime files embedded beside the client. Pinned so a dependency
+// update fails closed until the new bytes are reviewed.
+export const runtimeAssets = [{
+  file: "magick.wasm",
+  module: "@imagemagick/magick-wasm/magick.wasm",
+  size: 14_828_458,
+  sha256: "5a4ed1017eda113144c86ae839c22c610afebcfebfa22b1da18e00e98d78b0f7",
+}] as const
+// Emscripten's virtual filesystem home in the ImageMagick glue; not a host path.
+const emscriptenHome = "/home/web_user"
 export const record = (file: string, bytes: Uint8Array): FileRecord => ({ file, size: bytes.length, sha256: digest(bytes) })
 export function requireAudit(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`release audit: ${message}`)
@@ -41,10 +51,10 @@ export function auditPrivacy(bytes: Uint8Array, personalPaths = true): void {
     // No such exception applies to the embedded product graph.
     const paths = text.match(/(?:\/Users\/|\/home\/|[A-Z]:\\Users\\)[^\s\x00"'<>]+/g) ?? []
     const upstream = /^\/Users\/(?:runner\/work\/_temp\/webkit-release\/[A-Za-z0-9_./-]+\.(?:h|cpp)(?::[0-9]+:[0-9]+\)\])?|administrator\/(?:Library\/Services\/buildkite-agent\/builds\/darwin-aarch64-15-1-1\/bun\/bun\/vendor\/lolhtml\/src\/[A-Za-z0-9_./-]+\.rs|\.cargo\/registry\/src\/index\.crates\.io-1949cf8c6b5b557f\/[A-Za-z0-9_./-]+\.rs|\.rustup\/toolchains\/nightly-2025-12-10-x86_64-apple-darwin\/lib\/rustlib\/src\/rust\/library\/[A-Za-z0-9_./-]+\.rs))$/
-    for (const path of paths) requireAudit(upstream.test(path), "unexpected native personal path (withheld)")
+    for (const path of paths) requireAudit(upstream.test(path) || path === emscriptenHome, "unexpected native personal path (withheld)")
   }
   if (personalPaths) rules.push(
-    ["personal path", /(?:\/Users\/|\/home\/|[A-Z]:\\Users\\)[A-Za-z0-9_.-]+/],
+    ["personal path", /(?:\/Users\/|\/home\/(?!web_user(?![A-Za-z0-9_.-]))|[A-Z]:\\Users\\)[A-Za-z0-9_.-]+/],
     ["source map", /[#@]\s*sourceMappingURL\s*=|"sourcesContent"\s*:/],
     ["transcript", /"(?:session_meta|event_msg|response_item)"\s*[,}]|"(?:digest|transcript)"\s*:\s*"[^"\n]{32,}"/],
     ["source history", /(?:^|\n)(?:commit [a-f0-9]{40}\n|ref: refs\/heads\/)/],
@@ -87,6 +97,23 @@ export async function auditClient(root: string): Promise<FileRecord[]> {
   requireAudit(files.length === fonts.length + 3 && [...fonts, "index.html"].every((name) => files.some((f) => f.file === name)) &&
     ["js", "css"].every((ext) => files.filter((f) => f.file.endsWith(`.${ext}`)).length === 1), "incomplete or duplicate client assets")
   return files.sort((a, b) => a.file.localeCompare(b.file))
+}
+
+export async function auditRuntimeAssets(): Promise<FileRecord[]> {
+  const files: FileRecord[] = []
+  for (const asset of runtimeAssets) {
+    const bytes = await readFile(Bun.resolveSync(asset.module, import.meta.dir))
+    auditPrivacy(bytes)
+    const found = record(asset.file, bytes)
+    requireAudit(found.size === asset.size && found.sha256 === asset.sha256, "runtime asset changed; review and update the pinned policy")
+    files.push(found)
+  }
+  return files
+}
+
+/** Every file the compiled binary may embed besides its entry. */
+export async function auditEmbeddedAssets(clientRoot: string): Promise<FileRecord[]> {
+  return [...await auditClient(clientRoot), ...await auditRuntimeAssets()]
 }
 
 export function auditVersion(version: unknown): asserts version is string {

@@ -1,4 +1,4 @@
-import { auditClient, regularPath } from "./release-audit"
+import { auditClient, auditRuntimeAssets, regularPath } from "./release-audit"
 import { auditBinary } from "./binary-audit"
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
@@ -15,6 +15,7 @@ await mkdir(resolve("dist"), { recursive: true })
 const clientRoot = resolve("dist/client")
 const compiledEntry = resolve("dist/compiled-entry.ts")
 const assets = await auditClient(clientRoot)
+const embedded = [...assets, ...await auditRuntimeAssets()]
 const assetImports = assets.map(({ file }) => `import ${JSON.stringify(`./client/${file}`)} with { type: "file" }`)
 await safeOutput(compiledEntry)
 await writeFile(
@@ -57,7 +58,7 @@ for (const build of targets) {
   }
   const info = await stat(build.output)
   if (!info.isFile() || info.size === 0) throw new Error(`${build.output} was not created`)
-  auditBinary(await readFile(build.output), build.target === "bun-darwin-arm64" ? "darwin-arm64" : "darwin-x64", assets)
+  auditBinary(await readFile(build.output), build.target === "bun-darwin-arm64" ? "darwin-arm64" : "darwin-x64", embedded)
   await chmod(build.output, 0o755)
   if (((await stat(build.output)).mode & 0o111) === 0) throw new Error(`${build.output} is not executable`)
   console.log(`built ${build.output}`)

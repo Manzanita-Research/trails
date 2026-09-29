@@ -2,7 +2,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFi
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { auditBinary } from "./binary-audit"
-import { architectures, auditClient, auditPrivacy, auditVersion, digest, record, regularPath, requireAudit, type FileRecord } from "./release-audit"
+import { architectures, auditEmbeddedAssets, auditPrivacy, auditVersion, digest, record, regularPath, requireAudit, type FileRecord } from "./release-audit"
 
 const origin = "https://releases.manzanita.dev/"
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
@@ -63,7 +63,7 @@ export async function stageRelease(root = process.cwd()) {
   await regularPath(packagePath)
   const { version } = JSON.parse(await readFile(packagePath, "utf8"))
   auditVersion(version) // Before constructing or removing any version-derived path.
-  const assets = await auditClient(join(root, "dist/client"))
+  const assets = await auditEmbeddedAssets(join(root, "dist/client"))
   const artifacts: Record<string, FileRecord & { path: string; contentType: string }> = {}
   for (const architecture of architectures) {
     const file = `trails-${architecture}`, path = join(root, "dist", file)
@@ -113,7 +113,7 @@ if (import.meta.main) {
     const directory = resolve(process.argv[3] ?? "")
     requireAudit(process.argv.length === 4, "usage: stage-release.ts --audit <staging-directory>")
     const { version } = JSON.parse(await readFile(join(directory, "release-input.json"), "utf8"))
-    const report = await auditStaged(directory, await auditClient(resolve("dist/client")), version)
+    const report = await auditStaged(directory, await auditEmbeddedAssets(resolve("dist/client")), version)
     await regularPath(join(directory, "release-audit.json"))
     requireAudit(await readFile(join(directory, "release-audit.json"), "utf8") === json(report), "audit report mismatch")
     console.log("release audit verified")

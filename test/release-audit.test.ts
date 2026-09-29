@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { auditBinary } from "../scripts/binary-audit"
-import { architectures, auditClient, auditPrivacy, fonts, type Architecture, type FileRecord } from "../scripts/release-audit"
+import { architectures, auditClient, auditPrivacy, auditRuntimeAssets, fonts, runtimeAssets, type Architecture, type FileRecord } from "../scripts/release-audit"
 import { auditStaged, stageRelease } from "../scripts/stage-release"
 
 const roots: string[] = []
@@ -48,9 +48,11 @@ async function fixture() {
   for (const file of [...fonts, "index.html", "assets/index-12345678.js", "assets/index-12345678.css"]) {
     await writeFile(join(root, "dist/client", file), file.endsWith("woff2") ? "wOF2fixture" : "public product content")
   }
-  const assets = await auditClient(join(root, "dist/client"))
+  const client = await auditClient(join(root, "dist/client"))
+  const assets = [...client, ...await auditRuntimeAssets()]
   const files = [{ name: "/$bunfs/root/compiled-entry.js", content: Buffer.from("console.log('product')") }]
-  for (const asset of assets) files.push({ name: `/$bunfs/root/${asset.file.split("/").at(-1)}`, content: await readFile(join(root, "dist/client", asset.file)) })
+  for (const asset of client) files.push({ name: `/$bunfs/root/${asset.file.split("/").at(-1)}`, content: await readFile(join(root, "dist/client", asset.file)) })
+  for (const asset of runtimeAssets) files.push({ name: `/$bunfs/root/${asset.file}`, content: await readFile(Bun.resolveSync(asset.module, process.cwd())) })
   for (const arch of architectures) await writeFile(join(root, "dist", `trails-${arch}`), binary(arch, files))
   return { root, assets, files }
 }
@@ -179,6 +181,20 @@ test("private text in an allowed client filename fails before compilation", asyn
   const child = Bun.spawn([process.execPath, join(process.cwd(), "scripts/build-binaries.ts")], { cwd: root, stdout: "pipe", stderr: "pipe" })
   expect(await child.exited).not.toBe(0)
   expect(await new Response(child.stderr).text()).toContain("forbidden private fixture")
+})
+
+test("only the exact Emscripten virtual home is exempt from personal path checks", () => {
+  expect(() => auditPrivacy(Buffer.from('ENV.HOME="/home/web_user";'))).not.toThrow()
+  expect(() => auditPrivacy(Buffer.from('ENV.HOME="/home/web_user";'), false)).not.toThrow()
+  for (const path of ["/home/web_user2", "/home/web_user.bak", "/home/private-person", "/Users/web_user"]) {
+    expect(() => auditPrivacy(Buffer.from(`"${path}"`))).toThrow("personal path")
+    expect(() => auditPrivacy(Buffer.from(`"${path}"`), false)).toThrow("personal path")
+  }
+})
+
+test("the embedded image decoder is pinned by size and hash", async () => {
+  const [decoder] = await auditRuntimeAssets()
+  expect(decoder).toEqual({ file: runtimeAssets[0].file, size: runtimeAssets[0].size, sha256: runtimeAssets[0].sha256 })
 })
 
 test("known upstream native paths remain forbidden in product payloads", () => {
