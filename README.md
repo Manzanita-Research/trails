@@ -43,6 +43,8 @@ The hub prints a private HTTPS URL similar to:
 https://your-hub.your-tailnet.ts.net/
 ```
 
+Keep `--tailscale` (or `--service`) when rerunning hub setup to retain remote access. Running `trails setup hub` or `trails install server` without either flag intentionally returns to local access: it removes recognized Trails Serve roots and verifies the result, preserving unrelated routes. Custom Trails routes or inspection/removal failures stop setup for manual review. If the Tailscale CLI is unavailable, setup reports exposure as unverified; a previously recorded Tailscale installation requires the CLI to reconcile access.
+
 Run the installer on each additional Mac—each a **spoke**—using that URL:
 
 ```bash
@@ -100,6 +102,27 @@ TRAILS_HERDR_SERVER_URL=http://127.0.0.1:7414/ \
 ```
 
 `TRAILS_HERDR_SERVER_URL` is an ephemeral override for development. A durable plugin-only override may instead be stored as `{"server":"https://…"}` in `config.json` under the directory printed by `herdr plugin config-dir manzanita.trails`; this also leaves the Trails collector configuration untouched.
+
+## View Trails in BB
+
+The BB plugin adds a **Trails** sidebar page with working days, project sessions, and collector/summary health, plus `bb trails` commands and a `trails_query` agent tool. It reads the existing connection on an enrolled BB machine, so the browser and BB server do not need direct access to the hub.
+
+```sh
+cd plugins/bb-plugin-trails
+npm ci --include=dev
+bb plugin build
+bb plugin install . --yes
+```
+
+Open **Trails** in BB and choose the machine with your collector configuration. In a project thread, choose **Trails** from the right panel's new-tab launcher for repository-scoped sessions grouped by workday, with day summaries and known worktrees included. Commands inside a BB thread use that thread's machine:
+
+```sh
+bb trails days --limit 7
+bb trails projects --date 2026-09-16 --json
+bb trails status
+```
+
+The plugin is read-only. Activity queries include private project names, paths, first prompts, and summaries in BB; agent queries also include them in the conversation. Full transcripts, digests, source session identifiers, and capture payloads are excluded. See [the plugin README](plugins/bb-plugin-trails/README.md) for machine selection, connection overrides, pagination, and development checks.
 
 ## Optional summaries
 
@@ -163,6 +186,10 @@ Only the hub has server and backup logs.
 Transcript parsing happens on the Mac where each session was created. Trails sends the hub only normalized observations: source, session identifier, working directory, branch, timestamps, event counts, first prompt, minute activity, and a bounded digest.
 
 Trails does **not** send transcript paths or transcript bodies to the hub. The web app receives neither source session identifiers nor digests. The hub service listens only on loopback; optional Tailscale Serve access exposes it privately to the tailnet rather than the LAN or public internet.
+
+The hub rejects HTTP authorities outside its configured allowlist before serving any API or web content. Local access allows `127.0.0.1`, `localhost`, and `[::1]` at the selected port. Tailscale setup records the exact node or service HTTPS origin in the server LaunchAgent. Rerun setup with the same exposure options after upgrading an older installation or changing its Tailscale name. For manual source-mode serving, repeat `--trusted-origin https://hub.example.ts.net` for each public origin; wildcard hosts are not supported. Proxies must preserve Host; forwarding headers do not establish trust.
+
+Browser mutations require a matching origin when Origin is present and reject cross-site or same-site Fetch Metadata. Native collectors without browser headers remain supported. These checks defend the HTTP/browser boundary; they do not authenticate local processes or tailnet peers. `bun run dev` explicitly allows the local Vite origin at port 7412 and keeps its Host when proxying to the API on port 7413.
 
 When you explicitly activate a summary harness, the provider already configured in that harness receives only the bounded digest input and Trails-owned system prompt needed for the selected job—not complete transcripts, source files, database contents, collector traffic, or unrelated environment values. Session input is capped at 9,000 characters and day input at 12,000 characters.
 

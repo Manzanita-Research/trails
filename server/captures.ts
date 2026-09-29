@@ -1,6 +1,7 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { createHash } from "node:crypto"
 import { normalizeCwd } from "../shared/domain"
+import { IngestCapturesRequestV1Schema } from "../shared/protocol"
 import type { IngestCaptureV1, IngestCapturesRequestV1 } from "../shared/protocol"
 import type { TrailsDb } from "./db"
 import type { IngestResult } from "./ingest"
@@ -59,6 +60,7 @@ export function ingestCaptures(
     try: () =>
       db.sqlite.transaction(() => {
         const sqlite = db.sqlite
+        Schema.decodeUnknownSync(IngestCapturesRequestV1Schema)(input)
         let accepted = 0
         let unchanged = 0
         let changed = false

@@ -3,6 +3,7 @@ import { localParts, type Source, type UtcActivityTuple } from "../shared/domain
 import type { IngestSessionV2 } from "../shared/protocol"
 import { rebuildDaySummaryJobs } from "./day-jobs"
 import { sessionContentHash } from "./ingest"
+import { recoverInvalidTimestamps, TIMESTAMP_QUARANTINE_SQL } from "./timestamp-recovery"
 
 export interface MigrationContext {
   readonly defaultTimezone: string
@@ -344,5 +345,10 @@ export const MIGRATIONS: ReadonlyArray<Migration> = [
       CREATE INDEX captures_project ON captures(project);
       CREATE INDEX capture_attention_utc ON capture_attention(utc_minute, capture_id);
     `,
+  },
+  {
+    version: 7,
+    sql: TIMESTAMP_QUARANTINE_SQL,
+    afterSql: recoverInvalidTimestamps,
   },
 ]

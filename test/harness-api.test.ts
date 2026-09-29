@@ -36,7 +36,7 @@ describe("harness API", () => {
     const harnesses = createHarnessControl({ manager, configPath, resolver })
     const database = openDatabase(":memory:")
     databases.add(database)
-    const app = createApp({ db: database, summarization: manager, harnesses })
+    const app = createApp({ trustedOrigins: ["https://hub.test"], db: database, summarization: manager, harnesses })
 
     let response = await app(new Request("https://hub.test/api/harnesses"))
     expect(response.status).toBe(200)
@@ -62,7 +62,7 @@ describe("harness API", () => {
   test("old provider routes are gone", async () => {
     const database = openDatabase(":memory:")
     databases.add(database)
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["https://hub.test"], db: database })
     expect((await app(new Request("https://hub.test/api/connectors"))).status).toBe(404)
     expect((await app(new Request("https://hub.test/api/connect/openrouter/start", { method: "POST" }))).status).toBe(404)
   })

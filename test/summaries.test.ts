@@ -20,22 +20,19 @@ function session(
   digest: string,
   options: { readonly cwd?: string; readonly date?: string; readonly minute?: number } = {},
 ): IngestSessionV2 {
+  const utcMinute = Math.floor(Date.parse(`${options.date ?? "2026-08-01"}T00:00:00-07:00`) / 60_000) +
+    (options.minute ?? 600)
   return {
     sourceSessionId,
     source: "omp",
     cwd: options.cwd ?? `/Users/jem/${PROJECT}`,
     branch: "feat/tests",
-    start: "2026-08-01T12:00:00.000Z",
-    end: "2026-08-01T12:05:00.000Z",
+    start: new Date(utcMinute * 60_000).toISOString(),
+    end: new Date((utcMinute + 5) * 60_000).toISOString(),
     events: 2,
     userEvents: 1,
     firstPrompt: `Prompt for ${sourceSessionId}`,
-    activity: [[
-      Math.floor(Date.parse(`${options.date ?? "2026-08-01"}T00:00:00-07:00`) / 60_000) +
-        (options.minute ?? 600),
-      2,
-      1,
-    ]],
+    activity: [[utcMinute, 2, 1]],
     digest,
   }
 }

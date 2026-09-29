@@ -6,6 +6,7 @@ import { parseSourceRoot } from "../collector/sources"
 import { configureCollector, loadCollectorConfig, normalizeCollectorServer } from "./config"
 import { join, resolve } from "node:path"
 import { createApp, setAdvertisedHubUrl } from "../server/app"
+import { localOrigins, normalizeTrustedOrigin } from "../server/request-boundary"
 import { createSummarizerManager } from "../server/harnesses/manager"
 import { createHarnessControl } from "../server/harnesses/control"
 import { DEFAULT_DB_PATH, openDatabase } from "../server/db"
@@ -42,7 +43,7 @@ function printUsage(): void {
 Commands:
   setup hub [--name NAME] [--tailscale] [--service svc:NAME]
   setup join URL [--name NAME]
-  serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH]
+  serve [--db PATH] [--port PORT] [--api-only] [--static-dir PATH] [--trusted-origin ORIGIN ...]
   collect --once [--server URL] [--device-id ID] [--device-name NAME] [--state PATH]
   summaries [status | use auto|omp|claude|codex|opencode|pi | off]
   configure collector --server URL [--name NAME] [--reset-device-id]
@@ -57,6 +58,8 @@ async function serve(args: string[]): Promise<void> {
     throw new Error("trails serve only binds to a loopback host")
   }
   const port = parsePort(valueAfter(args, "--port") ?? process.env.TRAILS_PORT ?? "7412")
+  const trustedOrigins = [...localOrigins(port), ...valuesAfter(args, "--trusted-origin").map(normalizeTrustedOrigin)]
+  if (args.at(-1) === "--trusted-origin") throw new Error("--trusted-origin requires an HTTP(S) origin")
   const dbPath = valueAfter(args, "--db") ?? process.env.TRAILS_DB_PATH ?? DEFAULT_DB_PATH
   const apiOnly = args.includes("--api-only")
   const staticOverride = valueAfter(args, "--static-dir")
@@ -80,7 +83,7 @@ async function serve(args: string[]): Promise<void> {
   const summarization = createSummarizerManager()
   const harnesses = createHarnessControl({ manager: summarization })
   const db = openDatabase(dbPath)
-  const app = createApp({ db, staticRoot, staticAssets, summarization, harnesses })
+  const app = createApp({ db, trustedOrigins, staticRoot, staticAssets, summarization, harnesses })
   const server = Bun.serve({ hostname: host, port, fetch: app })
   const summaryFiber = Effect.runFork(
     summarySupervisor({ db, summarizer: () => summarization.current(), status: summarization.status }),

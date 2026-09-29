@@ -199,7 +199,7 @@ describe("database opening and ordered migrations", () => {
     const path = join(root, "nested", "trails.sqlite")
     const database = trackedDatabase(path)
 
-    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(MIGRATIONS.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7])
     expect(new Set(MIGRATIONS.map(({ version }) => version)).size).toBe(MIGRATIONS.length)
     expect(MIGRATIONS.every((migration, index) => index === 0 || MIGRATIONS[index - 1]!.version < migration.version)).toBe(true)
     expect(database.path).toBe(resolve(path))
@@ -207,7 +207,7 @@ describe("database opening and ordered migrations", () => {
     const journalMode = database.sqlite.query("PRAGMA journal_mode").get() as { journal_mode: string }
     const foreignKeys = database.sqlite.query("PRAGMA foreign_keys").get() as { foreign_keys: number }
     const busyTimeout = database.sqlite.query("PRAGMA busy_timeout").get() as Record<string, number>
-    expect(userVersion.user_version).toBe(6)
+    expect(userVersion.user_version).toBe(7)
     expect(journalMode.journal_mode).toBe("wal")
     expect(foreignKeys.foreign_keys).toBe(1)
     expect(Object.values(busyTimeout)[0]).toBe(5000)
@@ -250,7 +250,7 @@ describe("database opening and ordered migrations", () => {
     closeDatabase(database)
     const reopened = trackedDatabase(path)
     const reopenedVersion = reopened.sqlite.query("PRAGMA user_version").get() as { user_version: number }
-    expect(reopenedVersion.user_version).toBe(6)
+    expect(reopenedVersion.user_version).toBe(7)
     expect(
       reopened.sqlite
         .query("SELECT boundary, halo, onboarding_version, hub_url, timezone FROM settings WHERE id = 1")
@@ -271,7 +271,7 @@ describe("database opening and ordered migrations", () => {
     const database = openDatabase(path, { defaultTimezone: "Europe/Rome", now: migrationNow })
     databases.add(database)
 
-    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(database.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(database.sqlite.query("SELECT timezone FROM settings WHERE id = 1").get()).toEqual({
       timezone: "Europe/Rome",
     })
@@ -315,7 +315,7 @@ describe("database opening and ordered migrations", () => {
       activity: [[repeatedMinute, 2, 1]],
       digest: null,
     }
-    const app = createApp({ db: database, now: () => migrationNow + 1_000 })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, now: () => migrationNow + 1_000 })
     let response = await request(
       app,
       "POST",
@@ -338,6 +338,7 @@ describe("database opening and ordered migrations", () => {
         [
           {
             ...migratedSession,
+            start: "2026-11-01T08:30:00.000Z",
             activity: [
               [Math.floor(Date.parse("2026-11-01T08:30:00.000Z") / 60_000), 1, 1],
               [repeatedMinute, 1, 0],
@@ -396,7 +397,7 @@ describe("database opening and ordered migrations", () => {
     legacy.close()
 
     const migrated = trackedDatabase(path)
-    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+    expect(migrated.sqlite.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     expect(migrated.sqlite.query("SELECT halo FROM settings WHERE id = 1").get()).toEqual({ halo: 15 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM captures").get()).toEqual({ count: 0 })
     expect(migrated.sqlite.query("SELECT count(*) AS count FROM sessions").get()).toEqual({ count: 1 })
@@ -408,7 +409,7 @@ describe("advertised hub URL", () => {
   test("publishes the setup URL and revisions only visible changes", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     const url = "https://trails.example.ts.net/"
 
     expect(setAdvertisedHubUrl(database, url)).toBe(1)
@@ -424,7 +425,7 @@ describe("collector status and machine topology", () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "machines.sqlite"))
     let now = Date.parse("2026-08-04T10:00:00.000Z")
-    const app = createApp({ db: database, now: () => now })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, now: () => now })
     const metrics = { discovered: 2, changed: 1, uploaded: 1, ignored: 0, unchanged: 1 }
     const status = (
       device: { id: string; name: string },
@@ -542,13 +543,13 @@ describe("summarization status", () => {
   test("returns disabled and locally described states without network calls", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "summarization.sqlite"))
-    const disabled = createApp({ db: database })
+    const disabled = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     expect(await json(await request(disabled, "GET", "/api/summarization"))).toEqual({
       enabled: false,
       metadata: null,
     })
 
-    const enabled = createApp({
+    const enabled = createApp({ trustedOrigins: ["http://trails.test"],
       db: database,
       summarization: { describe: () => ({ selection: "auto", harness: "codex" }) },
     })
@@ -561,13 +562,13 @@ describe("summarization status", () => {
       },
     })
 
-    const off = createApp({ db: database, summarization: { describe: () => null } })
+    const off = createApp({ trustedOrigins: ["http://trails.test"], db: database, summarization: { describe: () => null } })
     expect(await json(await request(off, "GET", "/api/summarization"))).toEqual({
       enabled: false,
       metadata: null,
     })
 
-    const unavailable = createApp({
+    const unavailable = createApp({ trustedOrigins: ["http://trails.test"],
       db: database,
       summarization: { describe: () => ({ selection: "omp", harness: null }) },
     })
@@ -582,7 +583,7 @@ describe("ingest and bootstrap", () => {
   test("upserts by machine/source/session, replaces activity, and revisions only visible changes", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     const original = session("hidden-source-session", { digest: "PRIVATE TRANSCRIPT DIGEST" })
 
     let response = await request(app, "POST", "/api/ingest", ingestBody([original]))
@@ -681,7 +682,7 @@ describe("ingest and bootstrap", () => {
   test("accepts the 50-session boundary and rejects 51 before changing the database", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     const legacy = { ...ingestBody([session("legacy")]), protocolVersion: 1 }
     let response = await request(app, "POST", "/api/ingest", legacy)
     expect(response.status).toBe(400)
@@ -712,7 +713,7 @@ describe("ingest and bootstrap", () => {
   test("rolls back the whole HTTP batch when a later upsert fails", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     database.sqlite.exec(`
       CREATE TRIGGER fail_selected_session BEFORE INSERT ON sessions
       WHEN NEW.source_session_id = 'force-rollback'
@@ -745,7 +746,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
   test("is idempotent, preserves null reconciliation attribution, and replaces children atomically", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database, now: () => Date.parse("2026-08-03T18:00:00.000Z") })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, now: () => Date.parse("2026-08-03T18:00:00.000Z") })
     const original = capture("job-private")
 
     let response = await request(app, "POST", "/api/captures", captureBody([original]))
@@ -778,8 +779,12 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
     const valid = capture("job-valid")
-    const duplicateImages = capture("job-invalid").images.map((image) => ({ ...image, index: 0 }))
-    const invalid = capture("job-invalid", { images: duplicateImages })
+    database.sqlite.exec(`
+      CREATE TRIGGER fail_capture_image BEFORE INSERT ON capture_images
+      WHEN NEW.capture_id = 2
+      BEGIN SELECT RAISE(ABORT, 'injected image failure'); END
+    `)
+    const invalid = capture("job-invalid")
 
     await expect(Effect.runPromise(ingestCaptures(database, captureBody([valid, invalid])))).rejects.toThrow(
       "capture ingestion failed",
@@ -792,7 +797,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
     const now = Date.parse("2026-08-03T18:00:00.000Z")
-    const app = createApp({ db: database, now: () => now })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, now: () => now })
     const parent = capture("job-private")
     const child = capture("variation-private", {
       startedAt: "2026-08-03T17:01:00.000Z",
@@ -854,7 +859,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
   test("accepts project preferences for a capture-only project", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     await request(app, "POST", "/api/captures", captureBody([capture("job-project")]))
 
     const response = await request(app, "PUT", "/api/projects", {
@@ -870,7 +875,7 @@ describe("capture ingest, bootstrap privacy, and image API", () => {
   test("rejects invalid and oversized capture requests without partial state", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     const invalid = { ...captureBody([capture("job-invalid")]), privateToken: "nope" }
     expect((await request(app, "POST", "/api/captures", invalid)).status).toBe(400)
     const oversized = new Request("http://trails.test/api/captures", {
@@ -887,7 +892,7 @@ describe("state mutation API", () => {
   test("enforces mutation status, validation, field presence, and exact no-op revisions", async () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     let response = await request(app, "POST", "/api/ingest", ingestBody([session("seed")]))
     expect(await json(response)).toEqual({ accepted: 1, unchanged: 0, revision: 1 })
 
@@ -999,7 +1004,7 @@ describe("state mutation API", () => {
     const root = await temporaryRoot()
     const database = trackedDatabase(join(root, "timezone.sqlite"))
     const now = Date.parse("2026-08-04T12:00:00.000Z")
-    const app = createApp({ db: database, now: () => now })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, now: () => now })
     const utcMinute = Math.floor(Date.parse("2026-08-04T08:00:00.000Z") / 60_000)
     const timed = session("timezone", {
       start: "2026-08-04T08:00:00.000Z",
@@ -1060,7 +1065,7 @@ describe("static and method routing", () => {
     await writeFile(join(staticRoot, "plain.css"), "body{}")
     await writeFile(join(root, "outside.txt"), "must not escape")
     const database = trackedDatabase(join(root, "trails.sqlite"))
-    const app = createApp({ db: database, staticRoot })
+    const app = createApp({ trustedOrigins: ["http://trails.test"], db: database, staticRoot })
 
     let response = await request(app, "GET", "/")
     expect(response.status).toBe(200)
@@ -1102,7 +1107,7 @@ describe("static and method routing", () => {
     expect(response.status).toBe(405)
     expect(await json(response)).toEqual({ error: { code: "method_not_allowed", message: "method not allowed" } })
 
-    const apiOnly = createApp({ db: database })
+    const apiOnly = createApp({ trustedOrigins: ["http://trails.test"], db: database })
     response = await request(apiOnly, "GET", "/anything")
     expect(response.status).toBe(404)
     expect(await json(response)).toEqual({ error: { code: "not_found", message: "static serving is disabled" } })

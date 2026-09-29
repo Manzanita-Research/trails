@@ -28,7 +28,7 @@ const session = () => ({
   events: 2,
   userEvents: 1,
   firstPrompt: "Ship it",
-  activity: [[1, 2, 1]],
+  activity: [[Math.floor(Date.parse("2026-07-01T17:00:00.000Z") / 60_000), 2, 1]],
   digest: "A bounded digest",
 })
 
@@ -205,6 +205,8 @@ describe("ingest protocol v2", () => {
     }
 
     const edge = changed(request(), (copy) => {
+      copy.sessions[0].start = "1970-01-01T00:00:00.000Z"
+      copy.sessions[0].end = "1970-01-01T00:02:00.000Z"
       copy.sessions[0].activity = [[0, 1, 1], [2, 1, 0]]
     })
     expect(JSON.stringify(decodeExact(IngestRequestV2Schema, edge).sessions[0].activity)).toBe(
