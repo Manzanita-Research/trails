@@ -22,6 +22,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      # Astro requires Node >=22.12; the Blacksmith image ships an older Node.
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
