@@ -55,4 +55,6 @@ Trails uses Effect v4. `effect` is pinned to an exact 4.0.0 release candidate in
 
 ## Repository discipline
 
+Any PR with a visible change includes before/after screenshots of the same view.
+
 Respect unrelated changes and other worktrees. Stage only task-owned files or hunks. Commit each coherent, verified change. Never commit generated release directories, binaries, downloaded verification artifacts, `.env` files, credentials, private operational output, or local hook logs.
