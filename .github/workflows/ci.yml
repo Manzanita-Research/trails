@@ -40,6 +40,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # The BB plugin has its own npm lockfile; root typecheck and tests import it.
+      - name: Install BB plugin dependencies
+        run: npm ci --include=dev
+        working-directory: plugins/bb-plugin-trails
+
       - name: Typecheck
         run: bun run check
 
