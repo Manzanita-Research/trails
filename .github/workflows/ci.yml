@@ -27,7 +27,7 @@ jobs:
         with:
           # The release audit inspects Bun's compiled-binary format and fails
           # closed on unfamiliar versions, so CI pins the version it was written for.
-          bun-version: 1.3.9
+          bun-version: 1.3.14
 
       - name: Cache Bun packages
         uses: useblacksmith/cache@v5
@@ -44,6 +44,16 @@ jobs:
       - name: Install BB plugin dependencies
         run: npm ci --include=dev
         working-directory: plugins/bb-plugin-trails
+
+      # The private-path checks reject ancestors that are foreign-owned or
+      # group/other-writable. Show the runner's state, then make it conform.
+      - name: Normalize runner config directory
+        run: |
+          mkdir -p "$HOME/.config"
+          stat -c '%U:%G %a %n' "$HOME" "$HOME/.config"
+          sudo chown "$(id -u):$(id -g)" "$HOME/.config"
+          chmod 755 "$HOME/.config"
+          stat -c '%U:%G %a %n' "$HOME/.config"
 
       - name: Typecheck
         run: bun run check
