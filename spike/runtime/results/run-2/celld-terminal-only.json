@@ -1,0 +1,10 @@
+{
+  "route": "celld",
+  "run": "mvf2bn8j",
+  "port": 8792,
+  "bundle": "dist/terminal-only",
+  "version": "celld 0.6.2",
+  "coldStartMs": 416.5,
+  "works": false,
+  "error": "Operation timed out after '20s'"
+}

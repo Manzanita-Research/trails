@@ -1,0 +1,10 @@
+{
+  "route": "workerd",
+  "run": "mvf2ktk7",
+  "port": 8793,
+  "bundle": "dist/as-built",
+  "version": "workerd 2026-09-18",
+  "coldStartMs": 208.3,
+  "depositMs": 23.3,
+  "works": true
+}

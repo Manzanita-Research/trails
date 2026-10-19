@@ -1,0 +1,16 @@
+{
+  "name": "proxy-rpc-probe",
+  "main": "index.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "NoCtor", "class_name": "NoCtor" },
+      { "name": "CtorOnly", "class_name": "CtorOnly" },
+      { "name": "CtorBcw", "class_name": "CtorBcw" },
+      { "name": "Proxied", "class_name": "Proxied" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["NoCtor", "CtorOnly", "CtorBcw", "Proxied"] }]
+}
