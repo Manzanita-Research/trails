@@ -1,0 +1,10 @@
+{
+  "route": "workerd",
+  "run": "mvf2cmqy",
+  "port": 8793,
+  "bundle": "dist/as-built",
+  "version": "workerd 2026-09-18",
+  "coldStartMs": 237.6,
+  "depositMs": 27.1,
+  "works": true
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@trails/spike-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.10.1",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node build.ts",
+    "spike": "./run.sh",
+    "typecheck": "tsc --noEmit",
+    "format": "oxfmt server build.ts driver probes/proxy-rpc/index.js",
+    "format:check": "oxfmt --check server build.ts driver probes/proxy-rpc/index.js"
+  },
+  "dependencies": {
+    "alchemy": "https://pkg.alchemy.run/alchemy/9e3c058",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.5",
+    "@types/node": "24.19.1",
+    "oxfmt": "0.72.0",
+    "rolldown": "1.2.13",
+    "typescript": "7.0.2",
+    "workerd": "1.20260918.1"
+  }
+}

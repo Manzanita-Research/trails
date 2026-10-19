@@ -1,0 +1,9 @@
+{
+  "route": "celld",
+  "run": "mvf2je4v",
+  "port": 8792,
+  "bundle": "dist/as-built",
+  "version": "celld 0.6.2",
+  "works": false,
+  "error": "celld did not answer /health within 20 s"
+}

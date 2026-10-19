@@ -1,0 +1,7 @@
+{
+  "version": "v0.6.2",
+  "asset": "celld-aarch64-apple-darwin.gz",
+  "sha256": "b81a38299800679e9651fd7c1544540185682dcb59eed1a24c8cc36c6b31e76d",
+  "source": "https://github.com/denoland/celld/releases/tag/v0.6.2",
+  "license": "Apache-2.0"
+}

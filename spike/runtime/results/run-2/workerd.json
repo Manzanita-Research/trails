@@ -1,0 +1,93 @@
+{
+  "route": "workerd",
+  "run": "mvf2ii9n",
+  "port": 8793,
+  "bundle": "dist/shimmed",
+  "version": "workerd 2026-09-18",
+  "coldStartMs": 223.2,
+  "registerViaPoliciesAndWatch": {
+    "n": 10,
+    "p50": 43.5,
+    "p95": 95.7,
+    "p99": 95.7,
+    "max": 95.7
+  },
+  "transferViaSagaAndWatch": {
+    "n": 4,
+    "p50": 47.9,
+    "p95": 61.2,
+    "p99": 61.2,
+    "max": 61.2
+  },
+  "rssIdleMiB": 134.7,
+  "commandLatencyMs": {
+    "n": 400,
+    "p50": 13.3,
+    "p95": 17.3,
+    "p99": 26.4,
+    "max": 60.4
+  },
+  "underLoad": {
+    "concurrency": 8,
+    "latencyMs": {
+      "n": 400,
+      "p50": 52.2,
+      "p95": 71.7,
+      "p99": 81.5,
+      "max": 81.8
+    },
+    "commandsPerSecond": 148.3,
+    "rssPeakMiB": 228.9,
+    "rssMedianMiB": 224.4
+  },
+  "watchPushMs": {
+    "n": 40,
+    "p50": 6.8,
+    "p95": 11.8,
+    "p99": 28.5,
+    "max": 28.5,
+    "note": "deposit sent → dashboard balance pushed over the WebSocket"
+  },
+  "export": {
+    "streams": 34,
+    "events": 906,
+    "bytes": 310641,
+    "ms": 44.6,
+    "consistent": true,
+    "problems": []
+  },
+  "cleanRestart": {
+    "stopMs": 21.5,
+    "stopNeededSigkill": false,
+    "readyMs": 107.6,
+    "identicalExport": true,
+    "consistent": true,
+    "lostAcknowledged": 0,
+    "firstCommandAfterMs": 32.4,
+    "problems": []
+  },
+  "kill9": {
+    "acknowledgedBeforeKill": 153,
+    "inFlightAtKill": 7,
+    "readyMs": 97.4,
+    "lostAcknowledged": 0,
+    "consistentAfterKill": true,
+    "retriedInFlight": 7,
+    "exactlyOnceAfterRetry": true,
+    "consistentAfterRetry": true,
+    "viewsConvergedWithoutNewCommands": true,
+    "viewsConvergedMs": 115.5,
+    "viewsStuckUntilNextCommand": 0,
+    "viewsConvergedAfterOneNewCommand": null,
+    "problems": []
+  },
+  "finalExport": {
+    "streams": 34,
+    "events": 1067,
+    "bytes": 364391,
+    "ms": 20.8
+  },
+  "stateOnDiskKiB": 242896,
+  "works": true,
+  "stateOnDiskAfterStopKiB": 242896
+}

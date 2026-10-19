@@ -1,0 +1,10 @@
+{
+  "route": "workerd",
+  "run": "mvf24o8o",
+  "port": 8793,
+  "bundle": "dist/as-built",
+  "version": "workerd 2026-09-18",
+  "coldStartMs": 205.9,
+  "depositMs": 32.2,
+  "works": true
+}

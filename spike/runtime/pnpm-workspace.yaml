@@ -1,0 +1,30 @@
+# A standalone pnpm root inside the (bun) trails repo, so nothing here touches
+# the alpha's install. Pins match the lab (Manzanita-Research/manzanita-research).
+packages:
+  - .
+
+minimumReleaseAge: 10080 # minutes
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types'
+  - effect
+  - '@effect/*'
+  - '@distilled.cloud/*'
+  - '@alchemy.run/*'
+
+# alchemy/Domain is not on npm yet: the preview tarball names its sibling
+# preview packages by pkg.alchemy.run URL.
+blockExoticSubdeps: false
+
+overrides:
+  mime: 4.1.0
+  workerd: 1.20260918.1
+  effect: 4.0.5
+  '@effect/vitest': 4.0.5
+  '@effect/sql-d1': 4.0.5
+  '@effect/sql-sqlite-do': 4.0.5
+  '@effect/platform-node': 4.0.5
+  '@effect/platform-node-shared': 4.0.5
+
+# Route C runs workerd from npm.
+allowBuilds:
+  workerd: true
